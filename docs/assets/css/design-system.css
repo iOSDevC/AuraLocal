@@ -1,0 +1,228 @@
+/* ============================================================
+   AURALOCAL DESIGN SYSTEM
+   Shared tokens, typography, components, and utilities
+   used by both landing.html and docs.html layouts.
+============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ---- Tokens ------------------------------------------------ */
+:root {
+  --bg:            #09090b;
+  --surface:       #0f0f11;
+  --surface-2:     #18181b;
+  --border:        rgba(255, 255, 255, 0.07);
+  --border-hover:  rgba(255, 255, 255, 0.13);
+  --text:          #fafafa;
+  --text-2:        #a1a1aa;
+  --text-3:        #52525b;
+  --accent:        #818cf8;
+  --accent-dim:    rgba(129, 140, 248, 0.12);
+  --green:         #4ade80;
+  --orange:        #fb923c;
+  --purple:        #c084fc;
+  --blue:          #60a5fa;
+  --red:           #f87171;
+  --font-sans:     -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono:     "SF Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+  --radius:        12px;
+  --radius-sm:     8px;
+  --radius-xs:     6px;
+  --nav-h:         60px;
+  --sidebar-w:     248px;
+  --max-w:         1100px;
+}
+
+/* ---- Base -------------------------------------------------- */
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { opacity: 0.82; }
+
+/* ---- Shared nav ------------------------------------------- */
+.ds-nav {
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  height: var(--nav-h);
+  border-bottom: 1px solid var(--border);
+  background: rgba(9, 9, 11, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.ds-nav-inner {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 0 24px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ds-nav-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text);
+  flex-shrink: 0;
+  margin-right: 14px;
+}
+
+.ds-nav-logo svg { color: var(--accent); flex-shrink: 0; }
+
+.ds-nav-links {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+}
+
+.ds-nav-links a {
+  padding: 6px 12px;
+  border-radius: var(--radius-xs);
+  font-size: 14px;
+  color: var(--text-2);
+  transition: color 0.15s, background 0.15s;
+}
+
+.ds-nav-links a:hover,
+.ds-nav-links a.active {
+  color: var(--text);
+  background: var(--surface-2);
+  opacity: 1;
+}
+
+.ds-nav-github {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-hover);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.ds-nav-github:hover {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.22);
+  background: var(--surface-2);
+  opacity: 1;
+}
+
+/* ---- Shared footer ---------------------------------------- */
+.ds-footer {
+  border-top: 1px solid var(--border);
+  padding: 36px 24px;
+  background: var(--surface);
+}
+
+.ds-footer-inner {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.ds-footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.ds-footer-links {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+
+.ds-footer-links a {
+  font-size: 13px;
+  color: var(--text-3);
+  transition: color 0.15s;
+}
+
+.ds-footer-links a:hover { color: var(--text-2); opacity: 1; }
+
+.ds-footer-copy {
+  font-size: 12px;
+  color: var(--text-3);
+  width: 100%;
+}
+
+/* ---- Buttons ---------------------------------------------- */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 22px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.btn-primary:hover { opacity: 0.86; color: #fff; transform: translateY(-1px); }
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 22px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-hover);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 500;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.btn-secondary:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--text);
+  background: var(--surface-2);
+  opacity: 1;
+}
+
+/* ---- Model / backend badges ------------------------------- */
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.tag-mlx    { background: rgba(96,165,250,0.10); color: var(--blue); border: 1px solid rgba(96,165,250,0.18); }
+.tag-gguf   { background: rgba(192,132,252,0.10); color: var(--purple); border: 1px solid rgba(192,132,252,0.18); }
+.tag-stream { background: rgba(251,146,60,0.10); color: var(--orange); border: 1px solid rgba(251,146,60,0.18); }
+.tag-new    { background: rgba(74,222,128,0.10); color: var(--green); border: 1px solid rgba(74,222,128,0.18); }

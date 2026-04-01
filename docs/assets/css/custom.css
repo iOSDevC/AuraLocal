@@ -1,0 +1,53 @@
+/* AuraLocal custom styles */
+
+/* Accent color — matches MLX purple */
+:root {
+  --link-color: #a78bfa;
+  --btn-primary-color: #a78bfa;
+}
+
+/* Badge pills used in model tables */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.badge-mlx     { background: #1d4ed8; color: #fff; }
+.badge-gguf    { background: #7c3aed; color: #fff; }
+.badge-stream  { background: #c2410c; color: #fff; }
+.badge-new     { background: #065f46; color: #d1fae5; }
+
+/* Hero section on landing page */
+.hero {
+  text-align: center;
+  padding: 2rem 0 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 2rem;
+}
+.hero h1 { font-size: 2.4rem; }
+.hero .subtitle {
+  font-size: 1.1rem;
+  color: var(--body-text-color-secondary);
+  max-width: 600px;
+  margin: 0.5rem auto 1.5rem;
+}
+.hero .btn-group {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* Platform chips */
+.platform-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.25rem 0 1rem; }
+.chip {
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 0.78rem;
+  background: var(--sidebar-color);
+  border: 1px solid var(--border-color);
+}

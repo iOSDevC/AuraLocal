@@ -6,3 +6,7 @@
 DerivedData/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
+
+Sources/AuraExample/AuraExample.xcodeproj/xcuserdata/
+
+Sources/AuraExample/AuraExample.xcodeproj/project.xcworkspace/xcuserdata/

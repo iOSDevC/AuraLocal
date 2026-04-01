@@ -1,0 +1,1552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ page.title | default: site.title }}</title>
+  {% seo %}
+  {% include head_custom.html %}
+  <style>
+    /* ============================================================
+       DESIGN TOKENS
+    ============================================================ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:              #09090b;
+      --surface:         #0f0f11;
+      --surface-2:       #18181b;
+      --border:          rgba(255, 255, 255, 0.07);
+      --border-hover:    rgba(255, 255, 255, 0.13);
+      --text:            #fafafa;
+      --text-2:          #a1a1aa;
+      --text-3:          #52525b;
+      --accent:          #818cf8;
+      --accent-dim:      rgba(129, 140, 248, 0.12);
+      --green:           #4ade80;
+      --orange:          #fb923c;
+      --purple:          #c084fc;
+      --blue:            #60a5fa;
+      --font-sans:       -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+      --font-mono:       "SF Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+      --radius:          12px;
+      --radius-sm:       8px;
+      --radius-xs:       6px;
+      --max-w:           1100px;
+      --nav-h:           60px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 16px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+
+    /* ============================================================
+       NAV
+    ============================================================ */
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      height: var(--nav-h);
+      border-bottom: 1px solid var(--border);
+      background: rgba(9, 9, 11, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 0 24px;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text);
+      flex-shrink: 0;
+      margin-right: 16px;
+    }
+
+    .nav-logo svg { color: var(--accent); flex-shrink: 0; }
+
+    .nav-links {
+      display: flex;
+      gap: 2px;
+      flex: 1;
+    }
+
+    .nav-links a {
+      padding: 6px 12px;
+      border-radius: var(--radius-xs);
+      font-size: 14px;
+      color: var(--text-2);
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .nav-links a:hover {
+      color: var(--text);
+      background: var(--surface-2);
+    }
+
+    .nav-github {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: var(--radius-xs);
+      border: 1px solid var(--border-hover);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-2);
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+      flex-shrink: 0;
+    }
+
+    .nav-github:hover {
+      color: var(--text);
+      border-color: rgba(255, 255, 255, 0.2);
+      background: var(--surface-2);
+    }
+
+    /* ============================================================
+       HERO
+    ============================================================ */
+    .hero {
+      position: relative;
+      padding: 100px 24px 88px;
+      text-align: center;
+      overflow: hidden;
+    }
+
+    .hero-glow {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 80% 55% at 50% -5%,
+        rgba(129, 140, 248, 0.14) 0%,
+        transparent 65%);
+      pointer-events: none;
+    }
+
+    .hero-inner {
+      position: relative;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 16px;
+      border-radius: 999px;
+      border: 1px solid var(--border-hover);
+      background: var(--surface);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-2);
+      margin-bottom: 32px;
+      letter-spacing: 0.02em;
+    }
+
+    .badge-pulse {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      flex-shrink: 0;
+    }
+
+    .hero h1 {
+      font-size: clamp(38px, 6.5vw, 64px);
+      font-weight: 700;
+      line-height: 1.08;
+      letter-spacing: -0.035em;
+      color: var(--text);
+      margin-bottom: 22px;
+    }
+
+    .hero h1 em {
+      font-style: normal;
+      background: linear-gradient(135deg, #a78bfa 0%, #818cf8 45%, #60a5fa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: 18px;
+      color: var(--text-2);
+      line-height: 1.65;
+      max-width: 540px;
+      margin: 0 auto 40px;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 44px;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 11px 24px;
+      border-radius: var(--radius-sm);
+      background: var(--accent);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+
+    .btn-primary:hover { opacity: 0.86; color: #fff; transform: translateY(-1px); }
+
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 11px 24px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-hover);
+      background: var(--surface);
+      color: var(--text-2);
+      font-size: 14px;
+      font-weight: 500;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+
+    .btn-secondary:hover {
+      border-color: rgba(255, 255, 255, 0.22);
+      color: var(--text);
+      background: var(--surface-2);
+    }
+
+    /* Install box */
+    .install-box {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 13px 18px;
+      background: var(--surface);
+      border: 1px solid var(--border-hover);
+      border-radius: var(--radius);
+      text-align: left;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .install-label {
+      color: var(--text-3);
+      flex-shrink: 0;
+      user-select: none;
+      font-size: 11px;
+      font-family: var(--font-sans);
+      font-weight: 500;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .install-code {
+      color: var(--green);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .copy-btn {
+      background: var(--surface-2);
+      border: 1px solid var(--border-hover);
+      color: var(--text-2);
+      font-family: var(--font-sans);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 5px 12px;
+      border-radius: var(--radius-xs);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .copy-btn:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+
+    /* ============================================================
+       PLATFORM STRIP
+    ============================================================ */
+    .platform-strip {
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      padding: 0 24px;
+    }
+
+    .platform-strip-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    .platform-item {
+      padding: 16px 28px;
+      font-size: 13px;
+      color: var(--text-3);
+      white-space: nowrap;
+      border-right: 1px solid var(--border);
+    }
+
+    .platform-item:last-child { border-right: none; }
+    .platform-item strong { color: var(--text-2); font-weight: 600; }
+
+    /* ============================================================
+       SECTION COMMONS
+    ============================================================ */
+    section { padding: 88px 24px; }
+
+    .section-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 56px;
+    }
+
+    .section-label {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 14px;
+    }
+
+    .section-header h2 {
+      font-size: clamp(26px, 4vw, 38px);
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      color: var(--text);
+      margin-bottom: 14px;
+      line-height: 1.15;
+    }
+
+    .section-header p {
+      font-size: 17px;
+      color: var(--text-2);
+      max-width: 500px;
+      margin: 0 auto;
+      line-height: 1.65;
+    }
+
+    /* ============================================================
+       ARCHITECTURE
+    ============================================================ */
+    .arch-section {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .arch-diagram {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .arch-top {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .arch-node {
+      padding: 11px 28px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-hover);
+      background: var(--surface-2);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      text-align: center;
+      min-width: 160px;
+      font-family: var(--font-mono);
+    }
+
+    .arch-node.router {
+      border-color: rgba(129, 140, 248, 0.35);
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+
+    .arch-line-v {
+      width: 1px;
+      height: 28px;
+      background: var(--border-hover);
+    }
+
+    .arch-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      width: 100%;
+      max-width: 820px;
+      position: relative;
+    }
+
+    /* Horizontal connector at top of branches */
+    .arch-row::before {
+      content: "";
+      position: absolute;
+      top: -1px;
+      left: calc(50% / 3 + 8px);
+      right: calc(50% / 3 + 8px);
+      height: 1px;
+      background: var(--border-hover);
+    }
+
+    .arch-branch {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .arch-card {
+      width: 100%;
+      padding: 22px 20px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg);
+      transition: border-color 0.2s;
+    }
+
+    .arch-card:hover { border-color: var(--border-hover); }
+
+    .arch-tag {
+      display: inline-block;
+      padding: 3px 9px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    .arch-tag.t-mlx    { background: rgba(96,165,250,0.13); color: var(--blue); border: 1px solid rgba(96,165,250,0.22); }
+    .arch-tag.t-gguf   { background: rgba(192,132,252,0.13); color: var(--purple); border: 1px solid rgba(192,132,252,0.22); }
+    .arch-tag.t-stream { background: rgba(251,146,60,0.13); color: var(--orange); border: 1px solid rgba(251,146,60,0.22); }
+
+    .arch-card h4 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 10px;
+      font-family: var(--font-mono);
+    }
+
+    .arch-card-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .arch-card-meta span {
+      font-size: 12px;
+      color: var(--text-3);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .arch-card-meta span::before {
+      content: "";
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: var(--text-3);
+      flex-shrink: 0;
+    }
+
+    /* ============================================================
+       FEATURES GRID
+    ============================================================ */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      gap: 1px;
+    }
+
+    .feature-card {
+      background: var(--bg);
+      padding: 30px 28px;
+      transition: background 0.2s;
+    }
+
+    .feature-card:hover { background: var(--surface); }
+
+    .feature-icon {
+      width: 38px;
+      height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius-sm);
+      background: var(--accent-dim);
+      border: 1px solid rgba(129, 140, 248, 0.2);
+      margin-bottom: 18px;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+
+    .feature-card h3 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+    }
+
+    .feature-card p {
+      font-size: 14px;
+      color: var(--text-2);
+      line-height: 1.65;
+    }
+
+    /* ============================================================
+       CODE SECTION
+    ============================================================ */
+    .code-section {
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .code-layout {
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 48px;
+      align-items: start;
+    }
+
+    .code-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      position: sticky;
+      top: calc(var(--nav-h) + 24px);
+    }
+
+    .code-nav-item {
+      padding: 8px 12px;
+      border-radius: var(--radius-xs);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-2);
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s;
+      user-select: none;
+    }
+
+    .code-nav-item:hover {
+      color: var(--text);
+      background: var(--surface-2);
+    }
+
+    .code-nav-item.active {
+      color: var(--text);
+      background: var(--accent-dim);
+      border-color: rgba(129, 140, 248, 0.22);
+    }
+
+    .code-panels { min-width: 0; }
+
+    .code-panel { display: none; }
+    .code-panel.active { display: block; }
+
+    .code-panel-title {
+      font-size: 19px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+
+    .code-panel-desc {
+      font-size: 14px;
+      color: var(--text-2);
+      margin-bottom: 20px;
+    }
+
+    /* Code block chrome */
+    .code-block {
+      background: var(--bg);
+      border: 1px solid var(--border-hover);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .code-chrome {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-2);
+    }
+
+    .chrome-dots { display: flex; gap: 5px; }
+    .chrome-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .chrome-dot.r { background: #ff5f57; }
+    .chrome-dot.y { background: #ffbd2e; }
+    .chrome-dot.g { background: #28ca41; }
+
+    .chrome-file {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-3);
+      margin-left: 6px;
+    }
+
+    .code-block pre {
+      padding: 22px;
+      overflow-x: auto;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.75;
+      color: var(--text-2);
+      tab-size: 4;
+    }
+
+    /* Syntax tokens */
+    .k  { color: #fb923c; }  /* keywords: import, let, var, func, for, in, try, await, switch, case */
+    .t  { color: #60a5fa; }  /* types: AuraLocal, Model, ModelManager */
+    .s  { color: #4ade80; }  /* strings */
+    .c  { color: #3f3f46; }  /* comments */
+    .n  { color: #c084fc; }  /* numbers, enum cases */
+    .f  { color: #818cf8; }  /* function / method calls */
+    .p  { color: #fafafa; }  /* punctuation / plain */
+
+    /* ============================================================
+       MODEL TABLE
+    ============================================================ */
+    .models-section {
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg);
+    }
+
+    .model-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    .model-table th {
+      padding: 13px 18px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-3);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      background: var(--surface);
+    }
+
+    .model-table td {
+      padding: 13px 18px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-2);
+      white-space: nowrap;
+    }
+
+    .model-table tr:last-child td { border-bottom: none; }
+    .model-table tbody tr:hover td { background: var(--surface); }
+
+    .model-table td:first-child {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text);
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .tag-mlx    { background: rgba(96,165,250,0.10); color: var(--blue); border: 1px solid rgba(96,165,250,0.18); }
+    .tag-gguf   { background: rgba(192,132,252,0.10); color: var(--purple); border: 1px solid rgba(192,132,252,0.18); }
+    .tag-stream { background: rgba(251,146,60,0.10); color: var(--orange); border: 1px solid rgba(251,146,60,0.18); }
+
+    .star { color: var(--accent); font-size: 10px; margin-left: 5px; vertical-align: middle; }
+
+    .table-footer {
+      text-align: center;
+      margin-top: 24px;
+    }
+
+    /* ============================================================
+       MODULES
+    ============================================================ */
+    .modules-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .module-card {
+      padding: 28px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      transition: border-color 0.2s, background 0.2s;
+      color: inherit;
+    }
+
+    .module-card:hover {
+      border-color: var(--border-hover);
+      background: var(--surface-2);
+    }
+
+    .module-top {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .module-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .module-card h3 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.01em;
+    }
+
+    .module-name {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-3);
+      margin-top: 1px;
+    }
+
+    .module-card p {
+      font-size: 14px;
+      color: var(--text-2);
+      line-height: 1.65;
+    }
+
+    .module-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--accent);
+      margin-top: auto;
+    }
+
+    /* ============================================================
+       FOOTER
+    ============================================================ */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 24px;
+      background: var(--surface);
+    }
+
+    .footer-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 20px;
+      row-gap: 16px;
+    }
+
+    .footer-brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-2);
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .footer-links a {
+      font-size: 13px;
+      color: var(--text-3);
+      transition: color 0.15s;
+    }
+
+    .footer-links a:hover { color: var(--text-2); }
+
+    .footer-copy {
+      font-size: 12px;
+      color: var(--text-3);
+      width: 100%;
+    }
+
+    /* ============================================================
+       RESPONSIVE
+    ============================================================ */
+    @media (max-width: 900px) {
+      .features-grid { grid-template-columns: repeat(2, 1fr); }
+      .arch-row { grid-template-columns: 1fr; max-width: 400px; }
+      .arch-row::before { display: none; }
+    }
+
+    @media (max-width: 720px) {
+      .nav-links { display: none; }
+      .code-layout { grid-template-columns: 1fr; gap: 24px; }
+      .code-nav { flex-direction: row; flex-wrap: wrap; position: static; }
+      .modules-grid { grid-template-columns: 1fr; }
+      .platform-item { padding: 12px 14px; font-size: 12px; }
+      section { padding: 64px 16px; }
+      .hero { padding: 72px 16px 64px; }
+    }
+
+    @media (max-width: 540px) {
+      .features-grid { grid-template-columns: 1fr; background: none; border: none; gap: 10px; }
+      .feature-card { border: 1px solid var(--border); border-radius: var(--radius); }
+      .hero h1 { letter-spacing: -0.025em; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ============================================================
+       NAV
+  ============================================================ -->
+  <header class="nav" role="banner">
+    <div class="nav-inner">
+      <a href="{{ '/' | relative_url }}" class="nav-logo" aria-label="AuraLocal home">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        AuraLocal
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="{{ '/guide/quickstart' | relative_url }}">Quick Start</a>
+        <a href="{{ '/guide/' | relative_url }}">Guide</a>
+        <a href="{{ '/api/' | relative_url }}">API</a>
+        <a href="{{ '/guide/models' | relative_url }}">Models</a>
+        <a href="{{ '/guide/benchmarks' | relative_url }}">Benchmarks</a>
+      </nav>
+      <a href="https://github.com/iOSDevC/AuraLocal" class="nav-github" target="_blank" rel="noopener" aria-label="View on GitHub">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.2c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/>
+          <path d="M9 18c-4.51 2-5-2-7-2"/>
+        </svg>
+        GitHub
+      </a>
+    </div>
+  </header>
+
+  <!-- ============================================================
+       HERO
+  ============================================================ -->
+  <section class="hero" aria-labelledby="hero-heading">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="hero-inner">
+
+      <div class="hero-badge" role="status">
+        <span class="badge-pulse" aria-hidden="true"></span>
+        Swift Package Manager &nbsp;&middot;&nbsp; iOS 18+ &nbsp;&middot;&nbsp; macOS 15+ &nbsp;&middot;&nbsp; MIT
+      </div>
+
+      <h1 id="hero-heading">
+        On-device inference.<br>
+        <em>No cloud. No keys.</em>
+      </h1>
+
+      <p class="hero-sub">
+        Run Llama, Qwen, Mistral, and Gemma entirely on iPhone, iPad, and Mac.
+        MLX for small models on GPU. llama.cpp for large models up to 70B.
+        Your data never leaves the device.
+      </p>
+
+      <div class="hero-actions">
+        <a href="{{ '/guide/quickstart' | relative_url }}" class="btn-primary">
+          Get Started
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+          </svg>
+        </a>
+        <a href="{{ '/guide/models' | relative_url }}" class="btn-secondary">Browse Models</a>
+      </div>
+
+      <div class="install-box" role="region" aria-label="Install command">
+        <span class="install-label">Package.swift</span>
+        <code class="install-code">.package(url: "https://github.com/iOSDevC/AuraLocal", branch: "main")</code>
+        <button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy install command">Copy</button>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================================================
+       PLATFORM STRIP
+  ============================================================ -->
+  <div class="platform-strip" role="complementary" aria-label="Platform support">
+    <div class="platform-strip-inner">
+      <div class="platform-item"><strong>iOS</strong> 18+</div>
+      <div class="platform-item"><strong>macOS</strong> 15+</div>
+      <div class="platform-item"><strong>visionOS</strong> 2+</div>
+      <div class="platform-item"><strong>Swift</strong> 6.0</div>
+      <div class="platform-item"><strong>MLX</strong> + llama.cpp</div>
+      <div class="platform-item"><strong>MIT</strong> License</div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       ARCHITECTURE
+  ============================================================ -->
+  <section class="arch-section" aria-labelledby="arch-heading">
+    <div class="section-inner">
+
+      <div class="section-header">
+        <span class="section-label">Architecture</span>
+        <h2 id="arch-heading">One API. Two engines. Zero configuration.</h2>
+        <p>BackendRouter inspects model format and device memory to select the optimal engine automatically.</p>
+      </div>
+
+      <div class="arch-diagram" role="img" aria-label="Backend routing diagram">
+
+        <div class="arch-top">
+          <div class="arch-node">Your App</div>
+          <div class="arch-line-v"></div>
+          <div class="arch-node router">BackendRouter</div>
+          <div class="arch-line-v"></div>
+        </div>
+
+        <div class="arch-row">
+
+          <div class="arch-branch">
+            <div class="arch-line-v"></div>
+            <div class="arch-card">
+              <span class="arch-tag t-mlx">MLX</span>
+              <h4>MLXBackend</h4>
+              <div class="arch-card-meta">
+                <span>Apple Silicon GPU</span>
+                <span>0.5B &ndash; 4B models</span>
+                <span>iOS + macOS</span>
+                <span>20 &ndash; 45 tok/s</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="arch-branch">
+            <div class="arch-line-v"></div>
+            <div class="arch-card">
+              <span class="arch-tag t-gguf">GGUF</span>
+              <h4>LlamaCppBackend</h4>
+              <div class="arch-card-meta">
+                <span>Full Metal offload</span>
+                <span>7B &ndash; 70B models</span>
+                <span>macOS primary</span>
+                <span>8 &ndash; 20 tok/s</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="arch-branch">
+            <div class="arch-line-v"></div>
+            <div class="arch-card">
+              <span class="arch-tag t-stream">Streaming</span>
+              <h4>LayerStreaming</h4>
+              <div class="arch-card-meta">
+                <span>mmap demand-paging</span>
+                <span>7B &ndash; 13B on iOS</span>
+                <span>Peak RAM &le; 750 MB</span>
+                <span>2 &ndash; 6 tok/s</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       FEATURES
+  ============================================================ -->
+  <section aria-labelledby="features-heading">
+    <div class="section-inner">
+
+      <div class="section-header">
+        <span class="section-label">Features</span>
+        <h2 id="features-heading">Everything you need for on-device AI</h2>
+      </div>
+
+      <div class="features-grid">
+
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <h3>Fully Private</h3>
+          <p>Every inference call runs on-device. Prompts, images, and documents never touch a server or leave the device.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+          </div>
+          <h3>GPU-Accelerated</h3>
+          <p>MLX backend runs entirely on Apple Silicon GPU. Up to 45 tok/s for 1.7B models on iPhone 15 Pro.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+              <polyline points="2 17 12 22 22 17"/>
+              <polyline points="2 12 12 17 22 12"/>
+            </svg>
+          </div>
+          <h3>Layer Streaming</h3>
+          <p>Run 7B models on a 6 GB iPhone with peak RAM under 750 MB. The OS pages weights from disk on demand.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m18 16 4-4-4-4"/>
+              <path d="m6 8-4 4 4 4"/>
+              <path d="m14.5 4-5 16"/>
+            </svg>
+          </div>
+          <h3>Swift 6 API</h3>
+          <p>@MainActor-isolated, fully async/await with AsyncThrowingStream for token streaming. Zero data races by design.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" x2="12" y1="19" y2="22"/>
+            </svg>
+          </div>
+          <h3>Voice Pipeline</h3>
+          <p>Full-duplex voice with on-device STT, LLM streaming, and sentence-level TTS pipelining. Zero network calls.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
+              <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+              <line x1="10" x2="16" y1="13" y2="13"/>
+              <line x1="10" x2="16" y1="17" y2="17"/>
+              <line x1="10" x2="13" y1="9" y2="9"/>
+            </svg>
+          </div>
+          <h3>Document RAG</h3>
+          <p>Index PDF, DOCX, and images locally. FTS5 keyword pre-filter plus cosine re-ranking. No external database.</p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       CODE EXAMPLES
+  ============================================================ -->
+  <section class="code-section" aria-labelledby="code-heading">
+    <div class="section-inner">
+
+      <div class="section-header">
+        <span class="section-label">API</span>
+        <h2 id="code-heading">Clean, composable Swift API</h2>
+        <p>The same async/await interface across all backends and model sizes.</p>
+      </div>
+
+      <div class="code-layout">
+
+        <nav class="code-nav" aria-label="Code examples">
+          <div class="code-nav-item active" role="tab" aria-selected="true"  onclick="switchTab('text',    this)">Text Chat</div>
+          <div class="code-nav-item"        role="tab" aria-selected="false" onclick="switchTab('gguf',    this)">Large Model</div>
+          <div class="code-nav-item"        role="tab" aria-selected="false" onclick="switchTab('vision',  this)">Vision &amp; OCR</div>
+          <div class="code-nav-item"        role="tab" aria-selected="false" onclick="switchTab('voice',   this)">Voice</div>
+          <div class="code-nav-item"        role="tab" aria-selected="false" onclick="switchTab('rag',     this)">Document RAG</div>
+        </nav>
+
+        <div class="code-panels" aria-live="polite">
+
+          <!-- TEXT -->
+          <div class="code-panel active" id="panel-text" role="tabpanel">
+            <p class="code-panel-title">Text generation</p>
+            <p class="code-panel-desc">MLX backend. GPU-accelerated on Apple Silicon, 20&ndash;45 tok/s.</p>
+            <div class="code-block">
+              <div class="code-chrome">
+                <div class="chrome-dots"><span class="chrome-dot r"></span><span class="chrome-dot y"></span><span class="chrome-dot g"></span></div>
+                <span class="chrome-file">ContentView.swift</span>
+              </div>
+              <pre><code><span class="k">import</span> <span class="t">AuraCore</span>
+
+<span class="c">// One-liner</span>
+<span class="k">let</span> reply = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">chat</span>(<span class="s">"Summarize my expenses"</span>)
+
+<span class="c">// Reusable instance — model loaded once</span>
+<span class="k">let</span> llm = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">text</span>(.<span class="n">qwen3_1_7b</span>) { progress <span class="k">in</span>
+    print(progress)  <span class="c">// "Fetching model: 42%"</span>
+}
+
+<span class="c">// Streaming</span>
+<span class="k">for</span> <span class="k">try</span> <span class="k">await</span> token <span class="k">in</span> llm.<span class="f">stream</span>(<span class="s">"Explain this transaction"</span>) {
+    print(token, terminator: <span class="s">""</span>)
+}
+
+<span class="c">// With system prompt</span>
+<span class="k">let</span> reply = <span class="k">try</span> <span class="k">await</span> llm.<span class="f">chat</span>(
+    <span class="s">"What is the VAT rate?"</span>,
+    systemPrompt: <span class="s">"You are a finance assistant."</span>
+)</code></pre>
+            </div>
+          </div>
+
+          <!-- GGUF -->
+          <div class="code-panel" id="panel-gguf" role="tabpanel">
+            <p class="code-panel-title">Large model &mdash; GGUF</p>
+            <p class="code-panel-desc">llama.cpp backend. Download tracked automatically by ModelManager.</p>
+            <div class="code-block">
+              <div class="code-chrome">
+                <div class="chrome-dots"><span class="chrome-dot r"></span><span class="chrome-dot y"></span><span class="chrome-dot g"></span></div>
+                <span class="chrome-file">ContentView.swift</span>
+              </div>
+              <pre><code><span class="k">import</span> <span class="t">AuraCore</span>
+
+<span class="c">// ModelManager handles download + backend selection</span>
+<span class="k">let</span> llm = <span class="k">try</span> <span class="k">await</span> <span class="t">ModelManager</span>.shared.<span class="f">load</span>(.<span class="n">llama3_1_8b_gguf</span>)
+
+<span class="c">// Observe state in SwiftUI</span>
+<span class="k">@ObservedObject</span> <span class="k">var</span> manager = <span class="t">ModelManager</span>.shared
+
+<span class="k">switch</span> manager.<span class="f">state</span>(for: .<span class="n">llama3_1_8b_gguf</span>) {
+<span class="k">case</span> .idle:                       <span class="c">// not started</span>
+<span class="k">case</span> .downloading(<span class="k">let</span> progress):  <span class="c">// "Downloading: 62%"</span>
+<span class="k">case</span> .loading:                    <span class="c">// initializing session</span>
+<span class="k">case</span> .ready:                      <span class="c">// ready for inference</span>
+<span class="k">case</span> .failed(<span class="k">let</span> error):          <span class="c">// handle error</span>
+}
+
+<span class="c">// Same streaming API regardless of backend</span>
+<span class="k">for</span> <span class="k">try</span> <span class="k">await</span> token <span class="k">in</span> llm.<span class="f">stream</span>(<span class="s">"Write a short story."</span>) {
+    print(token, terminator: <span class="s">""</span>)
+}</code></pre>
+            </div>
+          </div>
+
+          <!-- VISION -->
+          <div class="code-panel" id="panel-vision" role="tabpanel">
+            <p class="code-panel-title">Vision &amp; OCR</p>
+            <p class="code-panel-desc">Multimodal image analysis and structured document extraction.</p>
+            <div class="code-block">
+              <div class="code-chrome">
+                <div class="chrome-dots"><span class="chrome-dot r"></span><span class="chrome-dot y"></span><span class="chrome-dot g"></span></div>
+                <span class="chrome-file">ScannerView.swift</span>
+              </div>
+              <pre><code><span class="k">import</span> <span class="t">AuraCore</span>
+
+<span class="c">// Vision model — free-form analysis</span>
+<span class="k">let</span> vlm = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">vision</span>(.<span class="n">qwen35_0_8b</span>)
+<span class="k">let</span> desc = <span class="k">try</span> <span class="k">await</span> vlm.<span class="f">analyze</span>(<span class="s">"What's in this photo?"</span>, image: photo)
+
+<span class="c">// Receipt extraction — structured JSON output</span>
+<span class="k">let</span> ocr = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">specialized</span>(.<span class="n">fastVLM_0_5b_fp16</span>)
+<span class="k">let</span> json = <span class="k">try</span> <span class="k">await</span> ocr.<span class="f">extractDocument</span>(receiptImage)
+<span class="c">// → {"store":"OXXO","total":125.50,"items":[...]}</span>
+
+<span class="c">// One-liner</span>
+<span class="k">let</span> json = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">extractDocument</span>(receiptImage)</code></pre>
+            </div>
+          </div>
+
+          <!-- VOICE -->
+          <div class="code-panel" id="panel-voice" role="tabpanel">
+            <p class="code-panel-title">Voice pipeline</p>
+            <p class="code-panel-desc">On-device STT &rarr; LLM &rarr; TTS. Sentence-level pipelining, zero network calls.</p>
+            <div class="code-block">
+              <div class="code-chrome">
+                <div class="chrome-dots"><span class="chrome-dot r"></span><span class="chrome-dot y"></span><span class="chrome-dot g"></span></div>
+                <span class="chrome-file">VoiceView.swift</span>
+              </div>
+              <pre><code><span class="k">import</span> <span class="t">AuraVoice</span>
+
+<span class="c">// Drop-in button — manages its own session</span>
+<span class="t">VoiceButton</span>(llm: llm)
+
+<span class="c">// Full control with an external session</span>
+<span class="k">@StateObject</span> <span class="k">var</span> session = <span class="t">VoiceSession</span>(llm: llm)
+
+<span class="t">VStack</span> {
+    <span class="t">Text</span>(session.transcript)   <span class="c">// live STT transcript</span>
+    <span class="t">Text</span>(session.response)     <span class="c">// live LLM response</span>
+    <span class="t">VoiceButton</span>(session: session)
+}
+
+<span class="c">// Manual control</span>
+<span class="k">try</span> <span class="k">await</span> session.<span class="f">startListening</span>()
+session.<span class="f">interrupt</span>()   <span class="c">// stop TTS mid-sentence</span>
+session.<span class="f">cancel</span>()      <span class="c">// cancel everything</span></code></pre>
+            </div>
+          </div>
+
+          <!-- RAG -->
+          <div class="code-panel" id="panel-rag" role="tabpanel">
+            <p class="code-panel-title">Document RAG</p>
+            <p class="code-panel-desc">FTS5 + cosine re-ranking in SQLite. No external vector database required.</p>
+            <div class="code-block">
+              <div class="code-chrome">
+                <div class="chrome-dots"><span class="chrome-dot r"></span><span class="chrome-dot y"></span><span class="chrome-dot g"></span></div>
+                <span class="chrome-file">LibrarySetup.swift</span>
+              </div>
+              <pre><code><span class="k">import</span> <span class="t">AuraDocs</span>
+
+<span class="k">let</span> library = <span class="t">DocumentLibrary</span>.shared
+<span class="k">await</span> library.<span class="f">configure</span>(embeddingProvider: <span class="t">AutoEmbeddingProvider</span>(), llm: llm)
+<span class="k">try</span> <span class="k">await</span> library.<span class="f">open</span>()
+
+<span class="c">// Index a PDF</span>
+<span class="k">try</span> <span class="k">await</span> library.<span class="f">add</span>(url: pdfURL) { progress <span class="k">in</span>
+    print(progress)  <span class="c">// "Embedding Contract: 67%"</span>
+}
+<span class="k">await</span> library.<span class="f">refreshCorpus</span>()
+
+<span class="c">// Ask a question</span>
+<span class="k">let</span> answer = <span class="k">try</span> <span class="k">await</span> library.<span class="f">ask</span>(<span class="s">"What is the total contract value?"</span>)
+print(answer.text)
+
+<span class="k">for</span> source <span class="k">in</span> answer.sources {
+    print(<span class="s">"[\(source.documentTitle) p.\(source.pageNumber)]"</span>)
+}</code></pre>
+            </div>
+          </div>
+
+        </div><!-- .code-panels -->
+      </div><!-- .code-layout -->
+    </div>
+  </section>
+
+  <!-- ============================================================
+       MODEL TABLE
+  ============================================================ -->
+  <section class="models-section" aria-labelledby="models-heading">
+    <div class="section-inner">
+
+      <div class="section-header">
+        <span class="section-label">Models</span>
+        <h2 id="models-heading">Curated model catalog</h2>
+        <p>Models download automatically on first use and are cached locally across app launches.</p>
+      </div>
+
+      <div class="table-wrap" role="region" aria-label="Model catalog">
+        <table class="model-table">
+          <thead>
+            <tr>
+              <th scope="col">Model</th>
+              <th scope="col">Backend</th>
+              <th scope="col">Size</th>
+              <th scope="col">Best for</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>.qwen3_1_7b<span class="star" aria-label="recommended">&#9733;</span></td>
+              <td><span class="tag tag-mlx">MLX</span></td>
+              <td>1.0 GB</td>
+              <td>Default text, balanced</td>
+            </tr>
+            <tr>
+              <td>.qwen3_0_6b</td>
+              <td><span class="tag tag-mlx">MLX</span></td>
+              <td>400 MB</td>
+              <td>Ultra-fast responses</td>
+            </tr>
+            <tr>
+              <td>.qwen3_4b</td>
+              <td><span class="tag tag-mlx">MLX</span></td>
+              <td>2.5 GB</td>
+              <td>Higher quality text</td>
+            </tr>
+            <tr>
+              <td>.qwen35_0_8b<span class="star" aria-label="recommended">&#9733;</span></td>
+              <td><span class="tag tag-mlx">MLX</span></td>
+              <td>625 MB</td>
+              <td>Default vision, iPhone</td>
+            </tr>
+            <tr>
+              <td>.fastVLM_0_5b_fp16<span class="star" aria-label="recommended">&#9733;</span></td>
+              <td><span class="tag tag-mlx">MLX</span></td>
+              <td>1.25 GB</td>
+              <td>Receipt / document OCR</td>
+            </tr>
+            <tr>
+              <td>.llama3_1_8b_gguf<span class="star" aria-label="recommended">&#9733;</span></td>
+              <td><span class="tag tag-gguf">GGUF</span>&nbsp;<span class="tag tag-stream">Stream</span></td>
+              <td>4.7 GB</td>
+              <td>Large model &mdash; Mac and iOS</td>
+            </tr>
+            <tr>
+              <td>.mistral_7b_gguf</td>
+              <td><span class="tag tag-gguf">GGUF</span>&nbsp;<span class="tag tag-stream">Stream</span></td>
+              <td>4.1 GB</td>
+              <td>Fast, efficient</td>
+            </tr>
+            <tr>
+              <td>.llama3_1_70b_gguf</td>
+              <td><span class="tag tag-gguf">GGUF</span></td>
+              <td>40 GB</td>
+              <td>Mac Pro / Mac Studio</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-footer">
+        <a href="{{ '/guide/models' | relative_url }}" class="btn-secondary">View full catalog</a>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================================================
+       MODULES
+  ============================================================ -->
+  <section aria-labelledby="modules-heading">
+    <div class="section-inner">
+
+      <div class="section-header">
+        <span class="section-label">Modules</span>
+        <h2 id="modules-heading">Import only what you need</h2>
+        <p>Start with AuraCore and add capabilities incrementally.</p>
+      </div>
+
+      <div class="modules-grid">
+
+        <a href="{{ '/api/core' | relative_url }}" class="module-card">
+          <div class="module-top">
+            <div class="module-icon" style="background:rgba(129,140,248,0.1);border:1px solid rgba(129,140,248,0.2);color:var(--accent);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="16" rx="2"/>
+                <rect x="9" y="9" width="6" height="6"/>
+                <line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/>
+                <line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/>
+                <line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/>
+                <line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/>
+              </svg>
+            </div>
+            <div>
+              <h3>AuraCore</h3>
+              <p class="module-name">import AuraCore</p>
+            </div>
+          </div>
+          <p>Inference engine, model management, conversation persistence, and hardware analysis. Required by all other modules.</p>
+          <span class="module-link">
+            API Reference
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </span>
+        </a>
+
+        <a href="{{ '/api/ui' | relative_url }}" class="module-card">
+          <div class="module-top">
+            <div class="module-icon" style="background:rgba(96,165,250,0.1);border:1px solid rgba(96,165,250,0.2);color:var(--blue);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <path d="M3 9h18"/><path d="M9 21V9"/>
+              </svg>
+            </div>
+            <div>
+              <h3>AuraUI</h3>
+              <p class="module-name">import AuraUI</p>
+            </div>
+          </div>
+          <p>Drop-in SwiftUI tabbed interface covering Text Chat, Vision, OCR, and Models browser. Zero configuration needed.</p>
+          <span class="module-link">
+            API Reference
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </span>
+        </a>
+
+        <a href="{{ '/api/voice' | relative_url }}" class="module-card">
+          <div class="module-top">
+            <div class="module-icon" style="background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.18);color:var(--green);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" x2="12" y1="19" y2="22"/>
+              </svg>
+            </div>
+            <div>
+              <h3>AuraVoice</h3>
+              <p class="module-name">import AuraVoice</p>
+            </div>
+          </div>
+          <p>Full-duplex voice pipeline. SFSpeechRecognizer &rarr; LLM streaming &rarr; AVSpeechSynthesizer, with sentence-level pipelining.</p>
+          <span class="module-link">
+            API Reference
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </span>
+        </a>
+
+        <a href="{{ '/api/rag' | relative_url }}" class="module-card">
+          <div class="module-top">
+            <div class="module-icon" style="background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.18);color:var(--orange);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
+                <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+                <line x1="10" x2="16" y1="13" y2="13"/>
+                <line x1="10" x2="16" y1="17" y2="17"/>
+              </svg>
+            </div>
+            <div>
+              <h3>AuraDocs</h3>
+              <p class="module-name">import AuraDocs</p>
+            </div>
+          </div>
+          <p>Local RAG pipeline. Index PDF, DOCX, and images. FTS5 + cosine re-ranking stored in SQLite. No external dependencies.</p>
+          <span class="module-link">
+            API Reference
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </span>
+        </a>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       FOOTER
+  ============================================================ -->
+  <footer role="contentinfo">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent)" aria-hidden="true">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        AuraLocal
+      </div>
+      <nav class="footer-links" aria-label="Footer">
+        <a href="{{ '/guide/quickstart' | relative_url }}">Quick Start</a>
+        <a href="{{ '/guide/installation' | relative_url }}">Installation</a>
+        <a href="{{ '/guide/models' | relative_url }}">Models</a>
+        <a href="{{ '/guide/benchmarks' | relative_url }}">Benchmarks</a>
+        <a href="https://github.com/iOSDevC/AuraLocal" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <p class="footer-copy">MIT License &copy; 2026 iOSDevC &nbsp;&middot;&nbsp; Built with Swift 6.0 on Apple Silicon.</p>
+    </div>
+  </footer>
+
+  <!-- ============================================================
+       JAVASCRIPT
+  ============================================================ -->
+  <script>
+    // Tab switching for code examples
+    function switchTab(id, el) {
+      document.querySelectorAll(".code-panel").forEach(function(p) {
+        p.classList.remove("active");
+      });
+      document.querySelectorAll(".code-nav-item").forEach(function(n) {
+        n.classList.remove("active");
+        n.setAttribute("aria-selected", "false");
+      });
+      document.getElementById("panel-" + id).classList.add("active");
+      el.classList.add("active");
+      el.setAttribute("aria-selected", "true");
+    }
+
+    // Copy install command to clipboard
+    function copyInstall(btn) {
+      var text = '.package(url: "https://github.com/iOSDevC/AuraLocal", branch: "main")';
+      navigator.clipboard.writeText(text).then(function() {
+        var original = btn.textContent;
+        btn.textContent = "Copied";
+        setTimeout(function() { btn.textContent = original; }, 2000);
+      }).catch(function() {
+        btn.textContent = "Failed";
+        setTimeout(function() { btn.textContent = "Copy"; }, 2000);
+      });
+    }
+  </script>
+
+</body>
+</html>

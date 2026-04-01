@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://iosdevc.github.io/AuraLocal/sitemap.xml
