@@ -1,0 +1,8 @@
+.*
+!.gitignore
+.build/
+.swiftpm/
+.claude/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
