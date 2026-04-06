@@ -1,3 +1,4 @@
+#if !targetEnvironment(simulator)
 import Foundation
 import LocalLLMClient
 import LocalLLMClientLlama
@@ -185,3 +186,4 @@ final class LayerStreamingBackend: InferenceBackend {
         #endif
     }
 }
+#endif

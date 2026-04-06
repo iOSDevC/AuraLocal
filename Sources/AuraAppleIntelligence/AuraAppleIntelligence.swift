@@ -40,7 +40,7 @@ public enum AISessionError: LocalizedError {
 // §Fix #22: Stream emits deltas instead of accumulated content.
 
 @available(iOS 26, macOS 26, *)
-public final class AISession {
+public final class AISession: @unchecked Sendable {
 
     // MARK: - Public state
 
@@ -183,7 +183,8 @@ public final class AISession {
                         options: options
                     )
                     for try await partial in stream {
-                        continuation.yield(partial.content)
+                        nonisolated(unsafe) let value = partial.content
+                        continuation.yield(value)
                     }
                     continuation.finish()
                 } catch {
@@ -278,7 +279,7 @@ public struct AIAgent {
 // Analogous to CrewAI's Crew with Process.sequential.
 
 @available(iOS 26, macOS 26, *)
-public final class AIPipeline {
+public final class AIPipeline: @unchecked Sendable {
 
     public let agents: [AIAgent]
 
@@ -310,7 +311,7 @@ public final class AIPipeline {
     /// All agents except the last run to completion first.
     public func stream(
         input: String,
-        onStep: ((String, String) -> Void)? = nil
+        onStep: (@Sendable (String, String) -> Void)? = nil
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {

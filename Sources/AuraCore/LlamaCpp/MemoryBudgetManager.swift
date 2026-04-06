@@ -1,3 +1,4 @@
+#if !targetEnvironment(simulator)
 import Foundation
 #if os(iOS) || os(tvOS) || os(watchOS)
 import UIKit
@@ -169,3 +170,4 @@ enum QuantizationLevel: String, Sendable {
         }
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if !targetEnvironment(simulator)
 import Foundation
 
 // MARK: - GGUFModelDownloader
@@ -184,3 +185,4 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
         }
     }
 }
+#endif

@@ -76,7 +76,10 @@ public final class ModelManager: ObservableObject {
     private var inFlight: [Model: Task<AuraLocal, Error>] = [:]
 
     /// GGUF downloader instance (shared across downloads).
+    /// Only available on real devices — GGUF is not supported on the iOS Simulator.
+    #if !targetEnvironment(simulator)
     public let ggufDownloader = GGUFModelDownloader()
+    #endif
 
     /// Max models to keep in RAM simultaneously (adaptive, based on device RAM).
     public private(set) var memoryBudget: Int
@@ -216,8 +219,12 @@ public final class ModelManager: ObservableObject {
         do {
             // GGUF models: download first if needed
             if model.format == .gguf {
+                #if !targetEnvironment(simulator)
                 states[model] = .downloading(progress: "Checking \(model.displayName)...")
                 _ = try await ggufDownloader.download(model: model, onProgress: progress)
+                #else
+                throw AuraError.invalidResponse("GGUF models are not supported on the iOS Simulator. Use MLX models instead.")
+                #endif
             }
 
             states[model] = .loading

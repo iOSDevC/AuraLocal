@@ -1,3 +1,4 @@
+#if !targetEnvironment(simulator)
 import Foundation
 import LocalLLMClient
 import LocalLLMClientLlama
@@ -159,3 +160,4 @@ final class LlamaCppBackend: InferenceBackend {
         #endif
     }
 }
+#endif

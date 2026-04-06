@@ -36,6 +36,7 @@ public enum BackendRouter {
             return MLXBackend(model: model, temperature: temperature)
 
         case .gguf:
+            #if !targetEnvironment(simulator)
             let assessment = HardwareAnalyzer.assess(model, profile: profile)
 
             switch assessment.fitLevel {
@@ -52,6 +53,9 @@ public enum BackendRouter {
                 // Return llama.cpp anyway; it will fail with a clear error at load time
                 return LlamaCppBackend(model: model, temperature: temperature)
             }
+            #else
+            fatalError("GGUF models are not supported on the iOS Simulator. Use MLX models instead.")
+            #endif
         }
     }
 
@@ -65,8 +69,12 @@ public enum BackendRouter {
         case .mlx:
             return .mlx
         case .gguf:
+            #if !targetEnvironment(simulator)
             let assessment = HardwareAnalyzer.assess(model, profile: profile)
             return assessment.fitLevel == .streamingRequired ? .layerStreaming : .llamaCpp
+            #else
+            return .llamaCpp  // placeholder — GGUF not available on simulator
+            #endif
         }
     }
 }

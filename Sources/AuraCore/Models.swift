@@ -31,7 +31,7 @@ public enum Model: String, CaseIterable, Sendable {
     case qwen35_2b    = "mlx-community/Qwen3.5-2B-4bit"
     case smolvlm_500m = "mlx-community/SmolVLM-500M-Instruct-bf16"
     case smolvlm_2b   = "mlx-community/SmolVLM-Instruct-4bit"
-    
+
     // MARK: Vision · Specialized
     case fastVLM_0_5b_fp16   = "mlx-community/FastVLM-0.5B-bf16"
     case fastVLM_1_5b_int8   = "InsightKeeper/FastVLM-1.5B-MLX-8bit"
