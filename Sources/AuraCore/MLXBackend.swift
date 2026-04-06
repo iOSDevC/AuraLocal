@@ -3,6 +3,7 @@ import MLX
 import MLXLLM
 import MLXVLM
 import MLXLMCommon
+import Tokenizers
 
 #if canImport(UIKit)
 import UIKit
@@ -53,15 +54,14 @@ final class MLXBackend: InferenceBackend {
         MLX.GPU.set(cacheLimit: cacheLimitBytes)
 
         let config = ModelConfiguration(id: model.rawValue)
-
-        let downloader = HFSnapshotDownloader()
-        let tokenizerLoader = JSONTokenizerLoader()
+        let downloader = AuraHFDownloader()
+        let tokenizer = AuraTokenizerLoader()
 
         switch model.purpose {
         case .text:
             modelContainer = try await LLMModelFactory.shared.loadContainer(
                 from: downloader,
-                using: tokenizerLoader,
+                using: tokenizer,
                 configuration: config
             ) { [model] progress in
                 let pct = Int(progress.fractionCompleted * 100)
@@ -73,7 +73,7 @@ final class MLXBackend: InferenceBackend {
         case .vision, .visionSpecialized:
             modelContainer = try await VLMModelFactory.shared.loadContainer(
                 from: downloader,
-                using: tokenizerLoader,
+                using: tokenizer,
                 configuration: config
             ) { [model] progress in
                 let pct = Int(progress.fractionCompleted * 100)
@@ -180,34 +180,25 @@ final class MLXBackend: InferenceBackend {
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        let stream: AsyncStream<Generation> = try await container.perform { (context: ModelContext) in
+        let params = self.generateParameters
+        return try await container.perform { (context: ModelContext) async throws -> sending String in
             let input = try await prepareInput(context)
-            return try MLXLMCommon.generate(
+            let result = try MLXLMCommon.generate(
                 input: input,
-                parameters: self.generateParameters,
+                parameters: params,
                 context: context
-            )
-        }
-        var fullText = ""
-        var tokenCount = 0
-        for await generation in stream {
-            guard !Task.isCancelled else { break }
-            switch generation {
-            case .chunk(let text):
-                fullText += text
-                tokenCount += 1
+            ) { tokens in
+                guard !Task.isCancelled else { return .stop }
+
+                let partial = context.tokenizer.decode(tokenIds: tokens)
                 Task { @MainActor in
                     guard !Task.isCancelled else { return }
-                    onToken(text)
+                    onToken(partial)
                 }
-                if tokenCount >= maxTokens { break }
-            case .info:
-                break
-            default:
-                break
+                return tokens.count >= maxTokens ? .stop : .more
             }
+            return context.tokenizer.decode(tokenIds: result.tokens)
         }
-        return fullText
     }
 
     // MARK: - Helpers
@@ -227,148 +218,77 @@ final class MLXBackend: InferenceBackend {
     }
 }
 
-// MARK: - HuggingFace Snapshot Downloader
+// MARK: - HuggingFace Downloader (MLXLMCommon.Downloader)
 
-/// Downloads model snapshots from HuggingFace Hub using URLSession.
-/// Caches downloaded files in `~/Library/Caches/huggingface/hub/`.
-struct HFSnapshotDownloader: Downloader {
-
-    private static let baseURL = "https://huggingface.co"
-    private static let cacheRoot: URL = {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appending(path: "huggingface/hub", directoryHint: .isDirectory)
-    }()
+/// Downloads model snapshots from HuggingFace Hub.
+struct AuraHFDownloader: Downloader {
+    private static let base = "https://huggingface.co"
 
     func download(
-        id: String,
-        revision: String?,
-        matching patterns: [String],
-        useLatest: Bool,
-        progressHandler: @Sendable @escaping (Progress) -> Void
+        id: String, revision: String?, matching patterns: [String],
+        useLatest: Bool, progressHandler: @Sendable @escaping (Progress) -> Void
     ) async throws -> URL {
-        let sanitizedID = id.replacingOccurrences(of: "/", with: "--")
-        let modelDir = Self.cacheRoot
-            .appending(path: "models--\(sanitizedID)/snapshots/main", directoryHint: .isDirectory)
+        let sanitized = id.replacingOccurrences(of: "/", with: "--")
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appending(path: "huggingface/hub/models--\(sanitized)/snapshots/main")
 
-        // Return cached directory if it exists and we're not forcing latest
-        if !useLatest, FileManager.default.fileExists(atPath: modelDir.path()) {
-            return modelDir
-        }
+        if !useLatest, FileManager.default.fileExists(atPath: dir.path()) { return dir }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
-        try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
-
-        // Determine which files to download from the model's file list
         let rev = revision ?? "main"
-        let apiURL = URL(string: "\(Self.baseURL)/api/models/\(id)/tree/\(rev)")!
-        let (apiData, _) = try await URLSession.shared.data(from: apiURL)
+        let (data, _) = try await URLSession.shared.data(
+            from: URL(string: "\(Self.base)/api/models/\(id)/tree/\(rev)")!)
 
-        struct HFFile: Codable { let rfilename: String }
-        let files = (try? JSONDecoder().decode([HFFile].self, from: apiData)) ?? []
+        struct F: Codable { let path: String?; let type: String? }
+        let files = ((try? JSONDecoder().decode([F].self, from: data)) ?? [])
+            .filter { $0.type == "file" }
+            .compactMap(\.path)
 
-        let matchedFiles = files.map(\.rfilename).filter { filename in
-            patterns.isEmpty || patterns.contains { pattern in
-                matchGlob(pattern: pattern, string: filename)
+        let progress = Progress(totalUnitCount: Int64(files.count))
+        for name in files {
+            let dest = dir.appending(path: name)
+            guard !FileManager.default.fileExists(atPath: dest.path()) else {
+                progress.completedUnitCount += 1; progressHandler(progress); continue
             }
+            try FileManager.default.createDirectory(
+                at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let (tmp, _) = try await URLSession.shared.download(
+                from: URL(string: "\(Self.base)/\(id)/resolve/\(rev)/\(name)")!)
+            try FileManager.default.moveItem(at: tmp, to: dest)
+            progress.completedUnitCount += 1; progressHandler(progress)
         }
-
-        let progress = Progress(totalUnitCount: Int64(matchedFiles.count))
-
-        for filename in matchedFiles {
-            let fileURL = modelDir.appending(path: filename)
-            guard !FileManager.default.fileExists(atPath: fileURL.path()) else {
-                progress.completedUnitCount += 1
-                progressHandler(progress)
-                continue
-            }
-
-            // Create parent directory if needed
-            let parent = fileURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-
-            let downloadURL = URL(string: "\(Self.baseURL)/\(id)/resolve/\(rev)/\(filename)")!
-            let (tempURL, _) = try await URLSession.shared.download(from: downloadURL)
-            try FileManager.default.moveItem(at: tempURL, to: fileURL)
-
-            progress.completedUnitCount += 1
-            progressHandler(progress)
-        }
-
-        return modelDir
-    }
-
-    private func matchGlob(pattern: String, string: String) -> Bool {
-        let regexPattern = "^" + NSRegularExpression.escapedPattern(for: pattern)
-            .replacingOccurrences(of: "\\*", with: ".*")
-            .replacingOccurrences(of: "\\?", with: ".") + "$"
-        return string.range(of: regexPattern, options: .regularExpression) != nil
+        return dir
     }
 }
 
-// MARK: - JSON Tokenizer Loader
+// MARK: - Tokenizer Loader (MLXLMCommon.TokenizerLoader)
 
-struct JSONTokenizerLoader: TokenizerLoader {
+/// Loads tokenizer via swift-transformers and bridges to MLXLMCommon.Tokenizer.
+struct AuraTokenizerLoader: TokenizerLoader {
+    func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
+        let t = try await Tokenizers.AutoTokenizer.from(modelFolder: directory)
+        return Bridge(t)
+    }
 
-    func load(from directory: URL) async throws -> any Tokenizer {
-        let configURL = directory.appending(path: "tokenizer.json")
-        guard FileManager.default.fileExists(atPath: configURL.path()) else {
-            throw AuraError.modelNotLoaded
+    private struct Bridge: MLXLMCommon.Tokenizer, @unchecked Sendable {
+        let t: any Tokenizers.Tokenizer
+        init(_ t: any Tokenizers.Tokenizer) { self.t = t }
+        var bosToken: String? { t.bosToken }
+        var eosToken: String? { t.eosToken }
+        var unknownToken: String? { t.unknownToken }
+        func encode(text: String, addSpecialTokens: Bool) -> [Int] {
+            t.encode(text: text, addSpecialTokens: addSpecialTokens)
         }
-        return try SimpleTokenizer(directory: directory)
-    }
-}
-
-private final class SimpleTokenizer: Tokenizer, @unchecked Sendable {
-    private let vocab: [String: Int]
-    private let reverseVocab: [Int: String]
-    private let _bosToken: String?
-    private let _eosToken: String?
-
-    var bosToken: String? { _bosToken }
-    var eosToken: String? { _eosToken }
-    var unknownToken: String? { nil }
-
-    init(directory: URL) throws {
-        let configURL = directory.appending(path: "tokenizer_config.json")
-        let vocabURL = directory.appending(path: "tokenizer.json")
-
-        var bos: String?
-        var eos: String?
-        if let configData = try? Data(contentsOf: configURL),
-           let config = try? JSONSerialization.jsonObject(with: configData) as? [String: Any] {
-            bos = config["bos_token"] as? String
-            eos = config["eos_token"] as? String
+        func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
+            t.decode(tokens: tokenIds, skipSpecialTokens: skipSpecialTokens)
         }
-        _bosToken = bos
-        _eosToken = eos
-
-        var tempVocab: [String: Int] = [:]
-        if let vocabData = try? Data(contentsOf: vocabURL),
-           let json = try? JSONSerialization.jsonObject(with: vocabData) as? [String: Any],
-           let model = json["model"] as? [String: Any],
-           let v = model["vocab"] as? [String: Int] {
-            tempVocab = v
+        func convertTokenToId(_ token: String) -> Int? { t.convertTokenToId(token) }
+        func convertIdToToken(_ id: Int) -> String? { t.convertIdToToken(id) }
+        func applyChatTemplate(
+            messages: [[String: any Sendable]], tools: [[String: any Sendable]]?,
+            additionalContext: [String: any Sendable]?
+        ) throws -> [Int] {
+            try t.applyChatTemplate(messages: messages, tools: tools, additionalContext: additionalContext)
         }
-        vocab = tempVocab
-        reverseVocab = Dictionary(uniqueKeysWithValues: tempVocab.map { ($1, $0) })
-    }
-
-    func encode(text: String, addSpecialTokens: Bool) -> [Int] {
-        text.split(separator: " ").compactMap { vocab[String($0)] }
-    }
-
-    func decode(tokenIds: [Int], skipSpecialTokens: Bool) -> String {
-        tokenIds.compactMap { reverseVocab[$0] }.joined(separator: "")
-    }
-
-    func convertTokenToId(_ token: String) -> Int? { vocab[token] }
-    func convertIdToToken(_ id: Int) -> String? { reverseVocab[id] }
-
-    func applyChatTemplate(
-        messages: [[String: any Sendable]],
-        tools: [[String: any Sendable]]?,
-        additionalContext: [String: any Sendable]?
-    ) throws -> [Int] {
-        let text = messages.compactMap { $0["content"] as? String }.joined(separator: "\n")
-        return encode(text: text)
     }
 }

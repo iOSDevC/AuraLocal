@@ -111,12 +111,47 @@ struct AgentCrewInlineView: View {
 // MARK: - Models Tab
 
 struct ModelsTab: View {
+    private let profile = HardwareProfile.current()
+
+    /// Only show models that can actually run on this device.
+    private var runnableText: [Model] {
+        Model.textModels.filter { HardwareAnalyzer.assess($0, profile: profile).fitLevel.isRunnable }
+    }
+    private var runnableVision: [Model] {
+        Model.visionModels.filter { HardwareAnalyzer.assess($0, profile: profile).fitLevel.isRunnable }
+    }
+    private var runnableOCR: [Model] {
+        Model.specializedModels.filter { HardwareAnalyzer.assess($0, profile: profile).fitLevel.isRunnable }
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                ModelSection(title: "Text",            icon: "text.bubble",    color: .green,  models: Model.textModels)
-                ModelSection(title: "Vision",          icon: "eye",            color: .blue,   models: Model.visionModels)
-                ModelSection(title: "Specialized OCR", icon: "doc.viewfinder", color: .orange, models: Model.specializedModels)
+                if !runnableOCR.isEmpty {
+                    ModelSection(title: "Specialized OCR", icon: "doc.viewfinder", color: .orange, models: runnableOCR)
+                }
+                if !runnableVision.isEmpty {
+                    ModelSection(title: "Vision",          icon: "eye",            color: .blue,   models: runnableVision)
+                }
+                if !runnableText.isEmpty {
+                    ModelSection(title: "Text",            icon: "text.bubble",    color: .green,  models: runnableText)
+                }
+
+                // Device info
+                Section {
+                    LabeledContent("Device", value: profile.deviceName)
+                        .font(.subheadline)
+                    LabeledContent("Memory", value: String(format: "%.1f GB", profile.totalMemoryGB))
+                        .font(.subheadline)
+                    LabeledContent("Available", value: String(format: "%.1f GB", profile.availableMemoryGB))
+                        .font(.subheadline)
+                    LabeledContent("Compatible models", value: "\(runnableText.count + runnableVision.count + runnableOCR.count)")
+                        .font(.subheadline)
+                } header: {
+                    Label("Device", systemImage: "iphone")
+                } footer: {
+                    Text("Only models compatible with this device are shown. Download uses parallel chunks for large files.")
+                }
             }
             .navigationTitle("Models")
         }

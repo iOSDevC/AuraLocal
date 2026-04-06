@@ -24,6 +24,10 @@ let package = Package(
             url: "https://github.com/tattn/LocalLLMClient.git",
             branch: "main"
         ),
+        .package(
+            url: "https://github.com/huggingface/swift-transformers",
+            branch: "main"
+        ),
     ],
     targets: [
         // MARK: - Core
@@ -35,6 +39,7 @@ let package = Package(
                 .product(name: "MLXLMCommon",     package: "mlx-swift-lm"),
                 .product(name: "LocalLLMClient",      package: "LocalLLMClient"),
                 .product(name: "LocalLLMClientLlama", package: "LocalLLMClient"),
+                .product(name: "Tokenizers",          package: "swift-transformers"),
             ],
             path: "Sources/AuraCore",
             swiftSettings: [
