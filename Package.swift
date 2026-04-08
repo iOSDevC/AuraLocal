@@ -42,6 +42,9 @@ let package = Package(
                 .product(name: "Tokenizers",          package: "swift-transformers"),
             ],
             path: "Sources/AuraCore",
+            resources: [
+                .process("Resources")
+            ],
             swiftSettings: [
                 .interoperabilityMode(.Cxx)
             ]

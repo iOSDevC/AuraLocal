@@ -3,7 +3,7 @@ import Foundation
 // MARK: - ModelFormat
 
 /// The weight format of a model, determining which backend can load it.
-public enum ModelFormat: String, Sendable {
+public enum ModelFormat: String, Sendable, Codable {
     /// MLX safetensors format — loaded by ``MLXBackend``.
     case mlx
     /// GGUF quantized format — loaded by ``LlamaCppBackend`` or ``LayerStreamingBackend``.

@@ -162,18 +162,8 @@ public extension Model {
     /// Approximation: total weights / num_layers (assumes ~95% of weights are in layers).
     var estimatedPerLayerGB: Double {
         let weightsGB = Double(approximateSizeMB) / 1024.0
-        let numLayers: Double
-        switch self {
-        case .llama3_1_8b_gguf:  numLayers = 32
-        case .qwen2_5_7b_gguf:   numLayers = 28
-        case .mistral_7b_gguf:   numLayers = 32
-        case .phi3_medium_gguf:  numLayers = 40
-        case .gemma2_9b_gguf:    numLayers = 42
-        case .llama3_1_70b_gguf: numLayers = 80
-        case .qwen2_5_32b_gguf:  numLayers = 64
-        default:                 numLayers = 32  // reasonable default
-        }
-        return (weightsGB * 0.95) / numLayers
+        let layers = Double(max(numLayers, 1))
+        return (weightsGB * 0.95) / layers
     }
 
     /// GQA-aware KV cache estimate in GB.
@@ -181,31 +171,13 @@ public extension Model {
     /// Modern models (Llama 3, Mistral, Qwen2) use grouped-query attention
     /// with fewer KV heads than query heads, reducing KV cache by 4-8x.
     /// Formula: `2 * n_layers * n_kv_heads * head_dim * seq_len * bytes / 1 GB`
+    ///
+    /// For MLX models (kvHeads == 0), returns a flat 0.15 GB estimate.
     func estimatedKVCacheGB(contextLength: Int) -> Double {
-        let kvHeads: Int
-        let headDim: Int
-        let numLayers: Int
-
-        switch self {
-        case .llama3_1_8b_gguf:
-            kvHeads = 8; headDim = 128; numLayers = 32    // GQA 8 groups
-        case .qwen2_5_7b_gguf:
-            kvHeads = 4; headDim = 128; numLayers = 28    // GQA 4 groups
-        case .mistral_7b_gguf:
-            kvHeads = 8; headDim = 128; numLayers = 32    // GQA 8 groups
-        case .phi3_medium_gguf:
-            kvHeads = 8; headDim = 96; numLayers = 40     // GQA
-        case .gemma2_9b_gguf:
-            kvHeads = 4; headDim = 256; numLayers = 42    // GQA 4 groups
-        case .llama3_1_70b_gguf:
-            kvHeads = 8; headDim = 128; numLayers = 80    // GQA 8 groups
-        case .qwen2_5_32b_gguf:
-            kvHeads = 8; headDim = 128; numLayers = 64    // GQA 8 groups
-        default:
-            // MLX models are small enough that a flat estimate is fine
+        // MLX models use a flat estimate (managed differently at runtime)
+        guard kvHeads > 0, headDim > 0 else {
             return 0.15
         }
-
         // 2 (K+V) * layers * kv_heads * head_dim * seq_len * 2 bytes (fp16)
         let bytes = 2 * numLayers * kvHeads * headDim * contextLength * 2
         return Double(bytes) / 1_073_741_824  // to GB
@@ -234,7 +206,7 @@ public enum HardwareAnalyzer {
     /// Within the same fit level, downloaded models appear first,
     /// then sorted by memory utilization (most efficient first).
     public static func compatibleModels(
-        from models: [Model] = Model.allCases,
+        from models: [Model] = Model.allModels,
         profile: HardwareProfile = .current()
     ) -> [ModelCompatibility] {
         models
