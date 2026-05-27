@@ -193,6 +193,24 @@ public extension Model {
     static let ministral_3b     = ModelRegistry.shared.model(id: "ministral_3b")!
     static let qwen35_2b_text   = ModelRegistry.shared.model(id: "qwen35_2b_text")!
     static let smollm3_3b       = ModelRegistry.shared.model(id: "smollm3_3b")!
+
+    // MARK: Domain-specialized (medical / financial)
+
+    /// MedGemma 4B IT 4-bit — Google fine-tuned para razonamiento clínico
+    /// multimodal (texto + imagen médica). Licencia HAI-DEF — propagar
+    /// use restrictions a downstream users. Vision model: load con
+    /// `AuraLocal.vision(.medgemma_4b)` aunque se use text-only.
+    static let medgemma_4b = ModelRegistry.shared.model(id: "medgemma_4b")!
+
+    /// FinGPT MT (Llama 3 8B base) — multi-task financial assistant:
+    /// sentiment, FAQ financiero, headline classification, NER financiero.
+    /// GGUF Q4_K_M, ~5 GB. Requiere device con 6 GB+ RAM efectiva.
+    static let fingpt_mt_llama3_8b_gguf = ModelRegistry.shared.model(id: "fingpt_mt_llama3_8b_gguf")!
+
+    /// FinGPT Sentiment LFM2 1.2B — lightweight financial sentiment-only.
+    /// GGUF Q4_K_M, ~900 MB. Para clasificación de sentiment en news/reports;
+    /// NO usar para chat general — está RL-tuneado para single-token outputs.
+    static let fingpt_sentiment_lfm2_1_2b_gguf = ModelRegistry.shared.model(id: "fingpt_sentiment_lfm2_1_2b_gguf")!
 }
 
 // MARK: - Convenience collections

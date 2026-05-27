@@ -646,6 +646,51 @@
       "numLayers": 30,
       "kvHeads": 0,
       "headDim": 0
+    },
+    {
+      "id": "medgemma_4b",
+      "repoID": "mlx-community/medgemma-4b-it-4bit",
+      "displayName": "MedGemma 4B",
+      "category": "vision",
+      "docTags": false,
+      "format": "mlx",
+      "approximateSizeMB": 3000,
+      "isUncensored": false,
+      "ggufFilename": null,
+      "defaultDocumentPrompt": null,
+      "numLayers": 34,
+      "kvHeads": 0,
+      "headDim": 0
+    },
+    {
+      "id": "fingpt_mt_llama3_8b_gguf",
+      "repoID": "second-state/FinGPT-MT-Llama-3-8B-LoRA-GGUF",
+      "displayName": "FinGPT MT 8B (Llama 3)",
+      "category": "text",
+      "docTags": false,
+      "format": "gguf",
+      "approximateSizeMB": 5000,
+      "isUncensored": false,
+      "ggufFilename": "FinGPT-MT-Llama-3-8B-LoRA-Q4_K_M.gguf",
+      "defaultDocumentPrompt": null,
+      "numLayers": 32,
+      "kvHeads": 8,
+      "headDim": 128
+    },
+    {
+      "id": "fingpt_sentiment_lfm2_1_2b_gguf",
+      "repoID": "mradermacher/LFM2-1.2B-FinGPT-Sentiment-RL-GGUF",
+      "displayName": "FinGPT Sentiment 1.2B",
+      "category": "text",
+      "docTags": false,
+      "format": "gguf",
+      "approximateSizeMB": 900,
+      "isUncensored": false,
+      "ggufFilename": "LFM2-1.2B-FinGPT-Sentiment-RL.Q4_K_M.gguf",
+      "defaultDocumentPrompt": null,
+      "numLayers": 16,
+      "kvHeads": 8,
+      "headDim": 64
     }
   ]
 }
