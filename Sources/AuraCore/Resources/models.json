@@ -466,7 +466,6 @@
       "kvHeads": 8,
       "headDim": 128
     },
-
     {
       "id": "granite4_tiny",
       "repoID": "mlx-community/granite-4.0-tiny-preview-4bit",
@@ -646,6 +645,21 @@
       "numLayers": 30,
       "kvHeads": 0,
       "headDim": 0
+    },
+    {
+      "id": "medgemma_4b",
+      "repoID": "mlx-community/medgemma-4b-it-4bit",
+      "displayName": "MedGemma 4B",
+      "category": "vision",
+      "docTags": false,
+      "format": "mlx",
+      "approximateSizeMB": 3400,
+      "isUncensored": false,
+      "ggufFilename": null,
+      "defaultDocumentPrompt": null,
+      "numLayers": 34,
+      "kvHeads": 4,
+      "headDim": 256
     }
   ]
 }

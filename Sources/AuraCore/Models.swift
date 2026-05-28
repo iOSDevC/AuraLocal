@@ -99,14 +99,26 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
             .appendingPathComponent(repoID)
     }
 
-    /// Returns `true` if the model directory exists on disk.
+    /// `true` when the snapshot is fully downloaded on disk.
+    /// MLX models check the `.complete` marker at the `AuraHFDownloader` path
+    /// (`$Caches/huggingface/hub/models--<sanitized>/snapshots/main/.complete`);
+    /// GGUF models check `cacheDirectory` (legacy path).
     public var isDownloaded: Bool {
-        var isDir: ObjCBool = false
-        let exists = FileManager.default.fileExists(
-            atPath: cacheDirectory.path,
-            isDirectory: &isDir
-        )
-        return exists && isDir.boolValue
+        switch format {
+        case .mlx:
+            let sanitized = repoID.replacingOccurrences(of: "/", with: "--")
+            let marker = FileManager.default
+                .urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appending(path: "huggingface/hub/models--\(sanitized)/snapshots/main/.complete")
+            return FileManager.default.fileExists(atPath: marker.path())
+        case .gguf:
+            var isDir: ObjCBool = false
+            let exists = FileManager.default.fileExists(
+                atPath: cacheDirectory.path,
+                isDirectory: &isDir
+            )
+            return exists && isDir.boolValue
+        }
     }
 
     /// Whether this model is recommended for macOS only (too large for typical iOS devices).
