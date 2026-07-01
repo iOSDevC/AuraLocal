@@ -466,7 +466,6 @@
       "kvHeads": 8,
       "headDim": 128
     },
-
     {
       "id": "granite4_tiny",
       "repoID": "mlx-community/granite-4.0-tiny-preview-4bit",
@@ -691,6 +690,36 @@
       "numLayers": 16,
       "kvHeads": 8,
       "headDim": 64
+    },
+    {
+      "id": "gemma4_12b_coder_gguf",
+      "repoID": "yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF",
+      "displayName": "Gemma 4 12B Coder (Fable5\u00b7Composer2.5)",
+      "category": "text",
+      "docTags": false,
+      "format": "gguf",
+      "approximateSizeMB": 7380,
+      "isUncensored": false,
+      "ggufFilename": "gemma4-coding-Q4_K_M.gguf",
+      "defaultDocumentPrompt": null,
+      "numLayers": 48,
+      "kvHeads": 8,
+      "headDim": 256
+    },
+    {
+      "id": "gemma4_12b_agentic_gguf",
+      "repoID": "mfjian/gemma-4-12B-agentic-fable5-composer2.5-v2-3.5x-tau2-GGUF",
+      "displayName": "Gemma 4 12B Agentic (Fable5\u00b7Composer2.5)",
+      "category": "text",
+      "docTags": false,
+      "format": "gguf",
+      "approximateSizeMB": 6870,
+      "isUncensored": false,
+      "ggufFilename": "gemma4-v2-Q4_K_M.gguf",
+      "defaultDocumentPrompt": null,
+      "numLayers": 48,
+      "kvHeads": 8,
+      "headDim": 256
     }
   ]
 }

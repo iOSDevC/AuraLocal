@@ -72,6 +72,11 @@ public final class ModelRegistry: @unchecked Sendable {
             }
             lock.lock()
             models = catalog.models
+            #if !canImport(MLXLLM)
+            // The MLX backend is compiled out (mlx-swift-lm dropped to fix a swift-syntax conflict), so
+            // MLX-format models can't run — hide them rather than surface unrunnable entries.
+            models = models.filter { $0.format != .mlx }
+            #endif
             rebuildIndex()
             lock.unlock()
         } catch {
