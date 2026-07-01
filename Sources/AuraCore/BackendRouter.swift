@@ -33,7 +33,14 @@ public enum BackendRouter {
     ) -> any InferenceBackend {
         switch model.format {
         case .mlx:
+            #if canImport(MLXLLM)
             return MLXBackend(model: model, temperature: temperature)
+            #else
+            // MLX products were dropped to fix a swift-syntax conflict; MLX models are filtered out of the
+            // registry, so this is a defensive fallback that fails clearly if one is selected anyway.
+            return UnavailableBackend(
+                "This is an MLX model, but the MLX backend isn't built. Use a GGUF or Ollama model.")
+            #endif
 
         case .gguf:
             #if !targetEnvironment(simulator)
@@ -77,4 +84,38 @@ public enum BackendRouter {
             #endif
         }
     }
+}
+
+// MARK: - UnavailableBackend
+
+/// A no-op ``InferenceBackend`` for a format whose engine isn't built into this configuration (currently
+/// MLX, compiled out when the mlx-swift products aren't a direct dependency). It never loads and fails with
+/// a clear message, so a stray MLX model degrades gracefully instead of crashing the router.
+@MainActor
+final class UnavailableBackend: InferenceBackend {
+    private let message: String
+    init(_ message: String) { self.message = message }
+
+    var isLoaded: Bool { false }
+
+    func load(onProgress: @escaping @MainActor (String) -> Void) async throws {
+        throw AuraError.invalidResponse(message)
+    }
+
+    func generate(prompt: String, systemPrompt: String?, maxTokens: Int,
+                  onToken: @escaping @MainActor (String) -> Void) async throws -> String {
+        throw AuraError.invalidResponse(message)
+    }
+
+    func generate(prompt: String, image: PlatformImage?, maxTokens: Int,
+                  onToken: @escaping @MainActor (String) -> Void) async throws -> String {
+        throw AuraError.invalidResponse(message)
+    }
+
+    func generate(messages: [[String: String]], maxTokens: Int,
+                  onToken: @escaping @MainActor (String) -> Void) async throws -> String {
+        throw AuraError.invalidResponse(message)
+    }
+
+    func unload() {}
 }

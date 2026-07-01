@@ -16,16 +16,12 @@ let package = Package(
         .library(name: "AuraAppleIntelligence", targets: ["AuraAppleIntelligence"]),
     ],
     dependencies: [
-        .package(
-            url: "https://github.com/ml-explore/mlx-swift-lm",
-            branch: "main"
-        ),
+        // GGUF (llama.cpp) + Ollama-capable local client. mlx-swift-lm and swift-transformers were removed:
+        // they served ONLY the MLX backend, and mlx-swift-lm@main pins swift-syntax 602..<604 which is
+        // incompatible with LocalLLMClient's 600..<601 (hard resolve failure). Target models are GGUF/Ollama,
+        // so the MLX path is compiled out via `#if canImport(MLXLLM)`.
         .package(
             url: "https://github.com/tattn/LocalLLMClient.git",
-            branch: "main"
-        ),
-        .package(
-            url: "https://github.com/huggingface/swift-transformers",
             branch: "main"
         ),
     ],
@@ -34,12 +30,8 @@ let package = Package(
         .target(
             name: "AuraCore",
             dependencies: [
-                .product(name: "MLXVLM",          package: "mlx-swift-lm"),
-                .product(name: "MLXLLM",          package: "mlx-swift-lm"),
-                .product(name: "MLXLMCommon",     package: "mlx-swift-lm"),
                 .product(name: "LocalLLMClient",      package: "LocalLLMClient"),
                 .product(name: "LocalLLMClientLlama", package: "LocalLLMClient"),
-                .product(name: "Tokenizers",          package: "swift-transformers"),
             ],
             path: "Sources/AuraCore",
             resources: [

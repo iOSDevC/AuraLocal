@@ -1,3 +1,8 @@
+// MLX backend — compiled in only when the MLX products (mlx-swift-lm) are a direct dependency. They were
+// dropped from Package.swift because mlx-swift-lm@main pins swift-syntax 602, which conflicts with
+// LocalLLMClient's 600. Target models are GGUF/Ollama, so this whole backend is off by default. Re-enable by
+// adding LocalLLMClientMLX (or a swift-syntax-600-compatible mlx-swift-lm) back to the AuraCore target.
+#if canImport(MLXLLM)
 import Foundation
 import MLX
 import MLXLLM
@@ -518,3 +523,5 @@ struct AuraTokenizerLoader: TokenizerLoader {
         }
     }
 }
+
+#endif
