@@ -223,6 +223,10 @@ public extension Model {
     /// GGUF Q4_K_M, ~900 MB. Para clasificación de sentiment en news/reports;
     /// NO usar para chat general — está RL-tuneado para single-token outputs.
     static let fingpt_sentiment_lfm2_1_2b_gguf = ModelRegistry.shared.model(id: "fingpt_sentiment_lfm2_1_2b_gguf")!
+
+    /// Security SLM Gemma 4 E2B — mobile (iOS/Android) vulnerability triage.
+    /// GGUF Q4_K_M, ~3.4 GB. Triage only, not sole authority (misses some criticals).
+    static let security_gemma_e2b_gguf = ModelRegistry.shared.model(id: "security_gemma_e2b_gguf")!
 }
 
 // MARK: - Convenience collections

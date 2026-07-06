@@ -720,6 +720,21 @@
       "numLayers": 48,
       "kvHeads": 8,
       "headDim": 256
+    },
+    {
+      "id": "security_gemma_e2b_gguf",
+      "repoID": "entrick/Security-SLM-Gemma-4-E2B-it-GGUF",
+      "displayName": "Security SLM Gemma 4 E2B (Mobile Sec)",
+      "category": "text",
+      "docTags": false,
+      "format": "gguf",
+      "approximateSizeMB": 3430,
+      "isUncensored": false,
+      "ggufFilename": "security-gemma-4-e2b-it.Q4_K_M.gguf",
+      "defaultDocumentPrompt": null,
+      "numLayers": 35,
+      "kvHeads": 1,
+      "headDim": 512
     }
   ]
 }
