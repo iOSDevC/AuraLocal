@@ -100,6 +100,10 @@ final class LayerStreamingBackend: InferenceBackend {
             fullPrompt = prompt
         }
 
+        // Stateless per call: the prompt already carries the full conversation, so clear accumulated
+        // history to avoid re-ingesting prior turns (O(N²) growth → context overflow).
+        session.messages = []
+
         var fullText = ""
         var tokenCount = 0
         let responseStream = session.streamResponse(to: fullPrompt)

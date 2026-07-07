@@ -83,13 +83,20 @@ final class LlamaCppBackend: InferenceBackend {
             fullPrompt = prompt
         }
 
+        // Stateless per call: callers (e.g. AuraLocal's `AIProvider` contract) pass the full conversation
+        // as `prompt`, so clear any accumulated session history first — otherwise the model re-ingests
+        // prior turns on top of the transcript (O(N²) growth → context overflow → truncated/empty replies).
+        session.messages = []
+
         var fullText = ""
+        var tokenCount = 0
         let responseStream = session.streamResponse(to: fullPrompt)
         for try await partial in responseStream {
             guard !Task.isCancelled else { break }
             fullText += partial
-            let snapshot = fullText
-            onToken(snapshot)
+            tokenCount += 1
+            onToken(fullText)
+            if tokenCount >= maxTokens { break }   // honor the caller's token budget
         }
 
         return fullText

@@ -114,7 +114,7 @@ public final class AuraLocal {
     ) -> AsyncThrowingStream<String, Error> {
         let engine = self.engine
         return AsyncThrowingStream { continuation in
-            Task { @MainActor in
+            let task = Task { @MainActor in
                 do {
                     var lastLength = 0
                     _ = try await engine.generate(
@@ -131,6 +131,10 @@ public final class AuraLocal {
                     continuation.finish(throwing: error)
                 }
             }
+            // Cancelling the consumer (e.g. the user hits Stop or switches providers) must cancel the
+            // decode — otherwise the orphaned generation runs to EOS and races the shared llama.cpp
+            // context on the next request. `Task.isCancelled` is checked inside the backend loop.
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
     
@@ -159,7 +163,7 @@ public final class AuraLocal {
         let engine = self.engine
         let img = image
         return AsyncThrowingStream { continuation in
-            Task { @MainActor in
+            let task = Task { @MainActor in
                 do {
                     var lastLength = 0
                     _ = try await engine.generate(
@@ -176,6 +180,7 @@ public final class AuraLocal {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
     
