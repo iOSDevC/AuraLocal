@@ -20,7 +20,9 @@ public struct OCRTab: View {
                     PhotosPicker(selection: $pickerItem, matching: .images) {
                         ImagePickerPreview(image: vm.selectedImage)
                     }
+#if !os(macOS)
                     .hoverEffect()
+#endif
                     .onChange(of: pickerItem) { _, item in
                         Task {
                             if let data = try? await item?.loadTransferable(type: Data.self) {

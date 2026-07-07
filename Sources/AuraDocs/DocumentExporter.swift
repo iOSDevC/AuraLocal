@@ -4,7 +4,7 @@ import Compression
 // MARK: - ExportFormat
 
 /// Output format for ``DocumentLibrary/export(documentID:to:format:includeEmbeddings:)``.
-public enum ExportFormat: String, CaseIterable {
+public enum ExportFormat: String, CaseIterable, Sendable {
     /// One JSON object per line, GZip compressed. Compatible with LangChain, HuggingFace, LlamaIndex.
     case jsonlGz = "jsonl.gz"
     /// One JSON object per line, uncompressed.

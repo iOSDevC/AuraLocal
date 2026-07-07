@@ -84,7 +84,9 @@ public struct ChatView: View {
                 .frame(minWidth: 44, minHeight: 44)
                 .contentShape(RoundedRectangle(cornerRadius: 22))
         }
+#if !os(macOS)
         .hoverEffect()
+#endif
         .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !vm.isStreaming)
         .accessibilityLabel(vm.isStreaming ? "Stop generating" : "Send message")
         .accessibilityAction(named: "Send message") { sendCurrentPrompt() }

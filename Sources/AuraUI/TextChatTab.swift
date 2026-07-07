@@ -21,7 +21,9 @@ public struct TextChatTab: View {
                         Button { showConversations = true } label: {
                             Image(systemName: "sidebar.left")
                         }
+#if !os(macOS)
                         .hoverEffect()
+#endif
                     }
                     ToolbarItem(placement: .primaryAction) {
                         Menu {
@@ -44,7 +46,9 @@ public struct TextChatTab: View {
                         } label: {
                             Image(systemName: "square.and.pencil")
                         }
+#if !os(macOS)
                         .hoverEffect()
+#endif
                     }
                 }
                 .sheet(isPresented: $showConversations) {

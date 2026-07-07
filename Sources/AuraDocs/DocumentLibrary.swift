@@ -441,7 +441,7 @@ public final class DocumentChat: ObservableObject {
 /// A single message in a ``DocumentChat`` session — either a user question or a grounded assistant answer.
 public struct DocumentChatMessage: Identifiable, Sendable {
     public let id = UUID()
-    public enum Role { case user, assistant }
+    public enum Role: Sendable { case user, assistant }
     public let role: Role
     public let text: String
     public let sources: [DocumentAnswer.SourceReference]

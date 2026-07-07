@@ -112,6 +112,7 @@ struct AgentCrewInlineView: View {
 
 struct ModelsTab: View {
     private let profile = HardwareProfile.current()
+    @State private var testTarget: DomainTestTarget?
 
     /// Only show models that can actually run on this device.
     private var runnableText: [Model] {
@@ -124,9 +125,32 @@ struct ModelsTab: View {
         Model.specializedModels.filter { HardwareAnalyzer.assess($0, profile: profile).fitLevel.isRunnable }
     }
 
+    private func runnable(_ models: [Model]) -> [Model] {
+        models.filter { HardwareAnalyzer.assess($0, profile: profile).fitLevel.isRunnable }
+    }
+
+    private func color(for domain: Model.Domain) -> Color {
+        switch domain {
+        case .code:     .purple
+        case .security: .red
+        case .finance:  .mint
+        case .medicine: .pink
+        }
+    }
+
     var body: some View {
         NavigationStack {
             List {
+                // Domain-specialized picks (code / security / finance / medicine).
+                ForEach(Model.Domain.allCases) { domain in
+                    let models = runnable(Model.models(in: domain))
+                    if !models.isEmpty {
+                        ModelSection(title: domain.displayName, icon: domain.systemImage, color: color(for: domain), models: models) { model in
+                            testTarget = DomainTestTarget(model: model, domain: domain)
+                        }
+                    }
+                }
+
                 if !runnableOCR.isEmpty {
                     ModelSection(title: "Specialized OCR", icon: "doc.viewfinder", color: .orange, models: runnableOCR)
                 }
@@ -154,6 +178,9 @@ struct ModelsTab: View {
                 }
             }
             .navigationTitle("Models")
+            .sheet(item: $testTarget) { target in
+                DomainTestView(model: target.model, domain: target.domain)
+            }
         }
     }
 }

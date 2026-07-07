@@ -9,12 +9,14 @@ public struct ModelSection: View {
     let color: Color
     let models: [Model]
     let compatibilityMap: [Model: ModelCompatibility]
+    let onTest: ((Model) -> Void)?
 
-    public init(title: String, icon: String, color: Color, models: [Model]) {
+    public init(title: String, icon: String, color: Color, models: [Model], onTest: ((Model) -> Void)? = nil) {
         self.title = title
         self.icon = icon
         self.color = color
         self.models = models
+        self.onTest = onTest
         let results = HardwareAnalyzer.compatibleModels(from: models)
         self.compatibilityMap = Dictionary(uniqueKeysWithValues: results.map { ($0.model, $0) })
     }
@@ -23,7 +25,7 @@ public struct ModelSection: View {
         Section {
             ForEach(models, id: \.self) { model in
                 let compat = compatibilityMap[model]
-                ModelRow(model: model, compatibility: compat)
+                ModelRow(model: model, compatibility: compat, onTest: onTest)
             }
         } header: {
             Label(title, systemImage: icon)
@@ -38,6 +40,7 @@ public struct ModelSection: View {
 struct ModelRow: View {
     let model: Model
     let compatibility: ModelCompatibility?
+    var onTest: ((Model) -> Void)? = nil
 
     @State private var downloadState: DownloadState = .idle
     @State private var downloadPercent: Int = 0
@@ -69,6 +72,18 @@ struct ModelRow: View {
                 }
 
                 Spacer()
+
+                if let onTest {
+                    Button { onTest(model) } label: {
+                        Text("Test")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tint)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .overlay(Capsule().stroke(.tint, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 // Actions
                 actionView

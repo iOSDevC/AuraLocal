@@ -46,7 +46,9 @@ struct RunButton: View {
             .foregroundStyle(.white)
         }
         .buttonStyle(.plain)
+#if !os(macOS)
         .hoverEffect()
+#endif
         .disabled(isLoading)
         .accessibilityLabel("\(title) — \(subtitle)")
         .accessibilityHint(isDownloaded ? "Tap to run" : "Tap to download and run")

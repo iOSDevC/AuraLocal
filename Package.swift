@@ -82,19 +82,9 @@ let package = Package(
             ),
 
         // MARK: - Example App
-        .target(
-            name: "AuraExample",
-            dependencies: [
-                "AuraCore",
-                "AuraUI",
-                "AuraVoice",
-                "AuraDocs",
-                "AuraAppleIntelligence",
-            ],
-            path: "Sources/AuraExample",
-            exclude: ["Package.swift"],
-            swiftSettings: [.interoperabilityMode(.Cxx)]
-        ),
+        // AuraExample is a macOS/iOS app (built via Sources/AuraExample/AuraExample.xcodeproj),
+        // not a library product. It requires macOS 26 (AgentCrew) and is intentionally NOT a
+        // SwiftPM target here, so `swift build`/`swift test` stay green on the macOS-15 package.
 
         // MARK: - Tests
         .testTarget(

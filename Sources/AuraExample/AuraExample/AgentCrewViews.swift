@@ -94,7 +94,9 @@ struct PipelineTab: View {
                         .background(canRun ? Color.blue : Color.gray,
                                     in: RoundedRectangle(cornerRadius: 14))
                 }
+#if !os(macOS)
                 .hoverEffect()
+#endif
                 .disabled(!canRun)
                 .accessibilityLabel("Run pipeline")
                 .accessibilityHint(canRun ? "Starts the agent pipeline" : "Enter a topic first")
@@ -175,7 +177,9 @@ struct PipelineTab: View {
             .frame(minHeight: 60)
             .background(Color.green, in: RoundedRectangle(cornerRadius: 14))
         }
+#if !os(macOS)
         .hoverEffect()
+#endif
         .accessibilityLabel("View report")
     }
 
@@ -227,7 +231,9 @@ private struct AgentCard: View {
                        Color.secondarySystemBackground,
             in: RoundedRectangle(cornerRadius: 12)
         )
+#if !os(macOS)
         .hoverEffect()
+#endif
         .accessibilityLabel("\(name): \(isActive ? "Running" : isDone ? "Complete" : "Waiting")")
     }
 }
@@ -253,7 +259,9 @@ private struct StepOutputCard: View {
                 }
             }
             .buttonStyle(.plain)
+#if !os(macOS)
             .hoverEffect()
+#endif
 
             Text(output)
                 .font(.caption)

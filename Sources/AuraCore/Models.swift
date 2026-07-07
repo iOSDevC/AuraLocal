@@ -22,6 +22,75 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
         case visionSpecialized
     }
 
+    // MARK: - Domain
+
+    /// Optional domain specialization, orthogonal to ``Category`` (a code model is
+    /// still a text model functionally). `nil` means general-purpose.
+    public enum Domain: String, Codable, Sendable, CaseIterable, Identifiable {
+        case code
+        case security
+        case finance
+        case medicine
+
+        public var id: String { rawValue }
+
+        /// Human-readable section title.
+        public var displayName: String {
+            switch self {
+            case .code:     "Code"
+            case .security: "Security"
+            case .finance:  "Finance"
+            case .medicine: "Medicine"
+            }
+        }
+
+        /// SF Symbol representing the domain.
+        public var systemImage: String {
+            switch self {
+            case .code:     "chevron.left.forwardslash.chevron.right"
+            case .security: "lock.shield"
+            case .finance:  "chart.line.uptrend.xyaxis"
+            case .medicine: "cross.case"
+            }
+        }
+
+        /// System prompt that primes a model for this domain when testing it.
+        public var testSystemPrompt: String {
+            switch self {
+            case .code:
+                "You are an expert programming assistant. Answer with correct, concise code."
+            case .security:
+                "You are a mobile application security analyzer. Identify vulnerabilities (with CWE) and give a one-line fix for each. If the code is safe, reply exactly: NO VULNERABILITIES FOUND."
+            case .finance:
+                "You are a financial analysis assistant. Be precise, concise, and factual."
+            case .medicine:
+                "You are a clinical information assistant for EDUCATIONAL use only. You are not a doctor and do not give medical advice; recommend consulting a licensed professional."
+            }
+        }
+
+        /// Curated example prompts to quickly test a model in this domain.
+        public var samplePrompts: [String] {
+            switch self {
+            case .code:
+                ["Write a Swift function that reverses a string without using reversed().",
+                 "Explain the difference between a struct and a class in Swift, with a short example.",
+                 "Refactor to be idiomatic Swift:\nfor i in 0..<arr.count { print(arr[i]) }"]
+            case .security:
+                ["Find the vulnerability and give a fix:\nlet q = \"SELECT * FROM users WHERE name = '\\(name)'\"",
+                 "Is storing a password in UserDefaults secure? What should I use instead?",
+                 "Review for issues:\nwebView.configuration.preferences.javaScriptEnabled = true\nwebView.load(URLRequest(url: untrustedURL))"]
+            case .finance:
+                ["Classify the sentiment (positive/negative/neutral): 'The company missed Q4 earnings and cut its dividend.'",
+                 "Explain briefly what a P/E ratio tells an investor.",
+                 "Summarize the risk of holding a single stock vs an index fund."]
+            case .medicine:
+                ["What are common causes of a persistent dry cough? (educational)",
+                 "Explain what HbA1c measures and its general reference range.",
+                 "What lifestyle changes are generally recommended for high blood pressure?"]
+            }
+        }
+    }
+
     // MARK: - Purpose
 
     /// The functional category of a model, determining which ``AuraLocal``
@@ -49,6 +118,10 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
 
     /// JSON-serializable category.
     public let category: Category
+
+    /// Optional domain specialization (code / security / finance / medicine).
+    /// `nil` = general-purpose. Absent in JSON decodes as `nil`.
+    public let domain: Domain?
 
     /// Whether the model outputs DocTags markup. Only meaningful for ``Category/visionSpecialized``.
     public let docTags: Bool
@@ -148,63 +221,64 @@ extension Model: Hashable {}
 public extension Model {
 
     // MARK: Text (MLX)
-    static let qwen3_0_6b   = ModelRegistry.shared.model(id: "qwen3_0_6b")!
-    static let qwen3_1_7b   = ModelRegistry.shared.model(id: "qwen3_1_7b")!
-    static let qwen3_4b     = ModelRegistry.shared.model(id: "qwen3_4b")!
-    static let gemma3_1b    = ModelRegistry.shared.model(id: "gemma3_1b")!
-    static let phi3_5_mini  = ModelRegistry.shared.model(id: "phi3_5_mini")!
-    static let llama3_2_1b  = ModelRegistry.shared.model(id: "llama3_2_1b")!
-    static let llama3_2_3b  = ModelRegistry.shared.model(id: "llama3_2_3b")!
+    static let qwen3_0_6b   = ModelRegistry.shared.model(id: "qwen3_0_6b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    // Fall back to a runnable GGUF model when MLX models are filtered out (MLX backend removed).
+    static let qwen3_1_7b   = ModelRegistry.shared.model(id: "qwen3_1_7b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let qwen3_4b     = ModelRegistry.shared.model(id: "qwen3_4b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let gemma3_1b    = ModelRegistry.shared.model(id: "gemma3_1b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let phi3_5_mini  = ModelRegistry.shared.model(id: "phi3_5_mini") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let llama3_2_1b  = ModelRegistry.shared.model(id: "llama3_2_1b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let llama3_2_3b  = ModelRegistry.shared.model(id: "llama3_2_3b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     // MARK: Vision (MLX)
-    static let qwen35_0_8b  = ModelRegistry.shared.model(id: "qwen35_0_8b")!
-    static let qwen35_2b    = ModelRegistry.shared.model(id: "qwen35_2b")!
-    static let smolvlm_500m = ModelRegistry.shared.model(id: "smolvlm_500m")!
-    static let smolvlm_2b   = ModelRegistry.shared.model(id: "smolvlm_2b")!
+    static let qwen35_0_8b  = ModelRegistry.shared.model(id: "qwen35_0_8b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let qwen35_2b    = ModelRegistry.shared.model(id: "qwen35_2b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let smolvlm_500m = ModelRegistry.shared.model(id: "smolvlm_500m") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let smolvlm_2b   = ModelRegistry.shared.model(id: "smolvlm_2b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     // MARK: Vision Specialized (MLX)
-    static let fastVLM_0_5b_fp16  = ModelRegistry.shared.model(id: "fastVLM_0_5b_fp16")!
-    static let fastVLM_1_5b_int8  = ModelRegistry.shared.model(id: "fastVLM_1_5b_int8")!
-    static let graniteDocling_258m = ModelRegistry.shared.model(id: "graniteDocling_258m")!
-    static let graniteVision_3_3  = ModelRegistry.shared.model(id: "graniteVision_3_3")!
+    static let fastVLM_0_5b_fp16  = ModelRegistry.shared.model(id: "fastVLM_0_5b_fp16") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let fastVLM_1_5b_int8  = ModelRegistry.shared.model(id: "fastVLM_1_5b_int8") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let graniteDocling_258m = ModelRegistry.shared.model(id: "graniteDocling_258m") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let graniteVision_3_3  = ModelRegistry.shared.model(id: "graniteVision_3_3") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     // MARK: GGUF Standard
-    static let llama3_1_8b_gguf   = ModelRegistry.shared.model(id: "llama3_1_8b_gguf")!
-    static let qwen2_5_7b_gguf    = ModelRegistry.shared.model(id: "qwen2_5_7b_gguf")!
-    static let mistral_7b_gguf    = ModelRegistry.shared.model(id: "mistral_7b_gguf")!
-    static let phi3_medium_gguf   = ModelRegistry.shared.model(id: "phi3_medium_gguf")!
-    static let gemma2_9b_gguf     = ModelRegistry.shared.model(id: "gemma2_9b_gguf")!
+    static let llama3_1_8b_gguf   = ModelRegistry.shared.model(id: "llama3_1_8b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let qwen2_5_7b_gguf    = ModelRegistry.shared.model(id: "qwen2_5_7b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let mistral_7b_gguf    = ModelRegistry.shared.model(id: "mistral_7b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let phi3_medium_gguf   = ModelRegistry.shared.model(id: "phi3_medium_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let gemma2_9b_gguf     = ModelRegistry.shared.model(id: "gemma2_9b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     // MARK: GGUF Large
-    static let llama3_1_70b_gguf  = ModelRegistry.shared.model(id: "llama3_1_70b_gguf")!
-    static let qwen2_5_32b_gguf   = ModelRegistry.shared.model(id: "qwen2_5_32b_gguf")!
+    static let llama3_1_70b_gguf  = ModelRegistry.shared.model(id: "llama3_1_70b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let qwen2_5_32b_gguf   = ModelRegistry.shared.model(id: "qwen2_5_32b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     // MARK: Uncensored (MLX)
-    static let josiefied_qwen3_1_7b = ModelRegistry.shared.model(id: "josiefied_qwen3_1_7b")!
-    static let josiefied_qwen3_4b   = ModelRegistry.shared.model(id: "josiefied_qwen3_4b")!
-    static let josiefied_qwen3_8b   = ModelRegistry.shared.model(id: "josiefied_qwen3_8b")!
-    static let dolphin_qwen2_1_5b   = ModelRegistry.shared.model(id: "dolphin_qwen2_1_5b")!
+    static let josiefied_qwen3_1_7b = ModelRegistry.shared.model(id: "josiefied_qwen3_1_7b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let josiefied_qwen3_4b   = ModelRegistry.shared.model(id: "josiefied_qwen3_4b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let josiefied_qwen3_8b   = ModelRegistry.shared.model(id: "josiefied_qwen3_8b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let dolphin_qwen2_1_5b   = ModelRegistry.shared.model(id: "dolphin_qwen2_1_5b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     // MARK: Uncensored (GGUF)
-    static let dolphin3_qwen25_1_5b_gguf  = ModelRegistry.shared.model(id: "dolphin3_qwen25_1_5b_gguf")!
-    static let dolphin3_qwen25_3b_gguf    = ModelRegistry.shared.model(id: "dolphin3_qwen25_3b_gguf")!
-    static let dolphin3_llama31_8b_gguf   = ModelRegistry.shared.model(id: "dolphin3_llama31_8b_gguf")!
-    static let llama32_3b_uncensored_gguf = ModelRegistry.shared.model(id: "llama32_3b_uncensored_gguf")!
-    static let llama31_8b_abliterated_gguf = ModelRegistry.shared.model(id: "llama31_8b_abliterated_gguf")!
+    static let dolphin3_qwen25_1_5b_gguf  = ModelRegistry.shared.model(id: "dolphin3_qwen25_1_5b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let dolphin3_qwen25_3b_gguf    = ModelRegistry.shared.model(id: "dolphin3_qwen25_3b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let dolphin3_llama31_8b_gguf   = ModelRegistry.shared.model(id: "dolphin3_llama31_8b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let llama32_3b_uncensored_gguf = ModelRegistry.shared.model(id: "llama32_3b_uncensored_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let llama31_8b_abliterated_gguf = ModelRegistry.shared.model(id: "llama31_8b_abliterated_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     // MARK: New Models
-    static let granite4_tiny    = ModelRegistry.shared.model(id: "granite4_tiny")!
-    static let granite4_compact = ModelRegistry.shared.model(id: "granite4_compact")!
-    static let cogito_v1_3b     = ModelRegistry.shared.model(id: "cogito_v1_3b")!
-    static let gemma4_1b        = ModelRegistry.shared.model(id: "gemma4_1b")!
-    static let gemma4_4b        = ModelRegistry.shared.model(id: "gemma4_4b")!
-    static let gemma4_12b       = ModelRegistry.shared.model(id: "gemma4_12b")!
-    static let lfm2_1_2b        = ModelRegistry.shared.model(id: "lfm2_1_2b")!
-    static let lfm25_3_2b       = ModelRegistry.shared.model(id: "lfm25_3_2b")!
-    static let lfm25_vl_1_6b    = ModelRegistry.shared.model(id: "lfm25_vl_1_6b")!
-    static let ministral_3b     = ModelRegistry.shared.model(id: "ministral_3b")!
-    static let qwen35_2b_text   = ModelRegistry.shared.model(id: "qwen35_2b_text")!
-    static let smollm3_3b       = ModelRegistry.shared.model(id: "smollm3_3b")!
+    static let granite4_tiny    = ModelRegistry.shared.model(id: "granite4_tiny") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let granite4_compact = ModelRegistry.shared.model(id: "granite4_compact") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let cogito_v1_3b     = ModelRegistry.shared.model(id: "cogito_v1_3b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let gemma4_1b        = ModelRegistry.shared.model(id: "gemma4_1b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let gemma4_4b        = ModelRegistry.shared.model(id: "gemma4_4b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let gemma4_12b       = ModelRegistry.shared.model(id: "gemma4_12b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let lfm2_1_2b        = ModelRegistry.shared.model(id: "lfm2_1_2b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let lfm25_3_2b       = ModelRegistry.shared.model(id: "lfm25_3_2b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let lfm25_vl_1_6b    = ModelRegistry.shared.model(id: "lfm25_vl_1_6b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let ministral_3b     = ModelRegistry.shared.model(id: "ministral_3b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let qwen35_2b_text   = ModelRegistry.shared.model(id: "qwen35_2b_text") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+    static let smollm3_3b       = ModelRegistry.shared.model(id: "smollm3_3b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     // MARK: Domain-specialized (medical / financial)
 
@@ -212,21 +286,21 @@ public extension Model {
     /// multimodal (texto + imagen médica). Licencia HAI-DEF — propagar
     /// use restrictions a downstream users. Vision model: load con
     /// `AuraLocal.vision(.medgemma_4b)` aunque se use text-only.
-    static let medgemma_4b = ModelRegistry.shared.model(id: "medgemma_4b")!
+    static let medgemma_4b = ModelRegistry.shared.model(id: "medgemma_4b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     /// FinGPT MT (Llama 3 8B base) — multi-task financial assistant:
     /// sentiment, FAQ financiero, headline classification, NER financiero.
     /// GGUF Q4_K_M, ~5 GB. Requiere device con 6 GB+ RAM efectiva.
-    static let fingpt_mt_llama3_8b_gguf = ModelRegistry.shared.model(id: "fingpt_mt_llama3_8b_gguf")!
+    static let fingpt_mt_llama3_8b_gguf = ModelRegistry.shared.model(id: "fingpt_mt_llama3_8b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     /// FinGPT Sentiment LFM2 1.2B — lightweight financial sentiment-only.
     /// GGUF Q4_K_M, ~900 MB. Para clasificación de sentiment en news/reports;
     /// NO usar para chat general — está RL-tuneado para single-token outputs.
-    static let fingpt_sentiment_lfm2_1_2b_gguf = ModelRegistry.shared.model(id: "fingpt_sentiment_lfm2_1_2b_gguf")!
+    static let fingpt_sentiment_lfm2_1_2b_gguf = ModelRegistry.shared.model(id: "fingpt_sentiment_lfm2_1_2b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     /// Security SLM Gemma 4 E2B — mobile (iOS/Android) vulnerability triage.
     /// GGUF Q4_K_M, ~3.4 GB. Triage only, not sole authority (misses some criticals).
-    static let security_gemma_e2b_gguf = ModelRegistry.shared.model(id: "security_gemma_e2b_gguf")!
+    static let security_gemma_e2b_gguf = ModelRegistry.shared.model(id: "security_gemma_e2b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 }
 
 // MARK: - Convenience collections
@@ -291,6 +365,13 @@ public extension Model {
     static var uncensoredModels: [Model] {
         allModels
             .filter { $0.isUncensored }
+            .sorted { $0.isDownloaded && !$1.isDownloaded }
+    }
+
+    /// All models tagged with `domain`, downloaded first.
+    static func models(in domain: Domain) -> [Model] {
+        allModels
+            .filter { $0.domain == domain }
             .sorted { $0.isDownloaded && !$1.isDownloaded }
     }
 }
