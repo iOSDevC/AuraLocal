@@ -183,13 +183,15 @@ public final class ModelManager: ObservableObject {
         states[model] = .idle
     }
 
-    /// Cancels an in-flight load. No-op if already loaded or never started.
+    /// Cancels an in-flight load, including the network download (cancelling the load Task alone doesn't reach
+    /// the URLSession transfer). No-op if already loaded or never started.
     public func cancelLoad(_ model: Model) {
+        ggufDownloader.cancel()
         if let task = inFlight[model] {
             task.cancel()
             inFlight[model] = nil
-            states[model] = .idle
         }
+        states[model] = .idle
     }
 
     /// Evict all loaded models.
