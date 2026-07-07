@@ -150,6 +150,18 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
     /// Head dimension for KV-cache calculation (0 = use flat estimate).
     public let headDim: Int
 
+    /// Explicit download URL for a **user-supplied** model — e.g. a Hugging Face
+    /// `…/resolve/<rev>/<file>.gguf` URL the user pasted. `nil` for catalog models, which derive the URL
+    /// from `repoID`+`ggufFilename` at the pinned `main` revision. When set, the downloader fetches this
+    /// exact URL, honoring any revision / subfolder. Absent in JSON decodes as `nil`. See
+    /// ``fromHuggingFaceURL(_:displayName:)``.
+    public let downloadURL: URL?
+
+    /// A `file://` path to a GGUF the user **already has on disk** (from ollama, LM Studio, a manual download,
+    /// another tool…). When set, the model is loaded IN PLACE — never copied or re-downloaded. `nil` for
+    /// catalog + remote-download models. See ``ModelSource`` / ``fromURL(_:displayName:)``.
+    public let localFileURL: URL?
+
     // MARK: - Computed properties
 
     /// Backward-compatible raw value — returns the HF repository path.
@@ -172,6 +184,15 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
             .appendingPathComponent(repoID)
     }
 
+    /// The on-disk location of this model's GGUF weights: a user's own file loaded in place
+    /// (``localFileURL``), otherwise the download destination under ``cacheDirectory``. `nil` for MLX models
+    /// or a GGUF with no filename. Both the downloader and the llama.cpp backends resolve the file here.
+    public var resolvedFileURL: URL? {
+        if let localFileURL { return localFileURL }
+        guard let ggufFilename else { return nil }
+        return cacheDirectory.appendingPathComponent(ggufFilename)
+    }
+
     /// `true` when the snapshot is fully downloaded on disk.
     /// MLX models check the `.complete` marker at the `AuraHFDownloader` path
     /// (`$Caches/huggingface/hub/models--<sanitized>/snapshots/main/.complete`);
@@ -185,12 +206,12 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
                 .appending(path: "huggingface/hub/models--\(sanitized)/snapshots/main/.complete")
             return FileManager.default.fileExists(atPath: marker.path())
         case .gguf:
-            var isDir: ObjCBool = false
-            let exists = FileManager.default.fileExists(
-                atPath: cacheDirectory.path,
-                isDirectory: &isDir
-            )
-            return exists && isDir.boolValue
+            // Check the actual .gguf FILE (an in-place local file, or the download destination), not just the
+            // cache dir: a partial/interrupted download leaves the dir (and a URLSession temp) but never the
+            // destination file (moved into place only on completion), so a dir-only check reports a partial
+            // download as ready and then fails at load.
+            guard let file = resolvedFileURL else { return false }
+            return FileManager.default.fileExists(atPath: file.path)
         }
     }
 
@@ -215,6 +236,132 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
 // MARK: - Hashable conformance
 
 extension Model: Hashable {}
+
+// MARK: - User-supplied models (bring-your-own from Hugging Face)
+
+public extension Model {
+
+    /// Build a **user-supplied** GGUF model from a Hugging Face file URL. The user is responsible for
+    /// choosing the model and complying with its license — nothing is bundled or curated.
+    ///
+    /// Accepts a canonical HF file URL, either form:
+    /// - `https://huggingface.co/<owner>/<repo>/resolve/<rev>/[<subdir>/]<file>.gguf`
+    /// - `https://huggingface.co/<owner>/<repo>/blob/<rev>/[<subdir>/]<file>.gguf`  (the UI "view file" link)
+    ///
+    /// Returns `nil` for anything that isn't an https `huggingface.co` URL pointing at a `.gguf` file with a
+    /// resolvable `<owner>/<repo>` and revision. The `blob` form is normalised to the `resolve` download URL.
+    ///
+    /// - Parameters:
+    ///   - urlString: the pasted Hugging Face URL.
+    ///   - displayName: optional friendly name; defaults to the file name.
+    static func fromHuggingFaceURL(_ urlString: String, displayName: String? = nil) -> Model? {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let comps = URLComponents(string: trimmed),
+              comps.scheme?.lowercased() == "https",
+              let host = comps.host?.lowercased(),
+              host == "huggingface.co" || host == "www.huggingface.co"
+        else { return nil }
+
+        // /<owner>/<repo>/(resolve|blob)/<rev>/…/<file>.gguf
+        let segs = comps.path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard let kindIdx = segs.firstIndex(where: { $0 == "resolve" || $0 == "blob" }),
+              kindIdx == 2,                                     // exactly owner/repo before it
+              segs.indices.contains(kindIdx + 1),              // a revision follows
+              segs.count >= kindIdx + 2,                       // …and at least a filename after the revision
+              let filename = segs.last,
+              filename.lowercased().hasSuffix(".gguf"),
+              filename.count > ".gguf".count
+        else { return nil }
+
+        let repoID = "\(segs[0])/\(segs[1])"
+
+        // Canonical download URL — normalise `blob` → `resolve`, preserve revision + any subfolder + query.
+        var download = comps
+        download.path = "/" + segs.enumerated()
+            .map { $0.offset == kindIdx ? "resolve" : $0.element }
+            .joined(separator: "/")
+        guard let downloadURL = download.url else { return nil }
+
+        let id = "custom__" + repoID.replacingOccurrences(of: "/", with: "--") + "__" + filename
+        return custom(id: id, repoID: repoID, displayName: displayName ?? filename,
+                      filename: filename, downloadURL: downloadURL, localFileURL: nil)
+    }
+
+    /// Auto-detect the source of a pasted string and build a user-supplied GGUF ``Model``. The user owns the
+    /// model-license choice — nothing is bundled or curated. Recognizes:
+    /// - a `file://` path → an in-place local `.gguf` (never copied or re-downloaded);
+    /// - a `huggingface.co` URL → Hugging Face (nice `<owner>/<repo>` extraction);
+    /// - any other `https` URL ending in `.gguf` → a direct download (GitHub releases, ModelScope, a CDN, a
+    ///   self-hosted server…).
+    /// Returns `nil` for anything not a recognizable `.gguf` source.
+    static func fromURL(_ string: String, displayName: String? = nil) -> Model? {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let comps = URLComponents(string: trimmed) else { return nil }
+        switch comps.scheme?.lowercased() {
+        case "file":
+            guard let url = comps.url else { return nil }
+            return from(.localFile(url), displayName: displayName)
+        case "https":
+            if let host = comps.host?.lowercased(), host == "huggingface.co" || host == "www.huggingface.co" {
+                return from(.huggingFace(url: trimmed), displayName: displayName)
+            }
+            guard let url = comps.url else { return nil }
+            return from(.directURL(url), displayName: displayName)
+        default:
+            return nil
+        }
+    }
+
+    /// Build a user-supplied GGUF ``Model`` from an explicit ``ModelSource`` — the bridge every host app can
+    /// call to add a model from any supported source without knowing the download mechanics.
+    static func from(_ source: ModelSource, displayName: String? = nil) -> Model? {
+        switch source {
+        case .huggingFace(let url):
+            return fromHuggingFaceURL(url, displayName: displayName)
+
+        case .directURL(let url):
+            guard url.scheme?.lowercased() == "https" else { return nil }
+            let filename = url.lastPathComponent
+            guard filename.lowercased().hasSuffix(".gguf"), filename.count > ".gguf".count else { return nil }
+            // Group the cache by host so re-adding the same URL reuses an existing download.
+            let repoID = "url/" + (url.host ?? "download").replacingOccurrences(of: ".", with: "_")
+            let id = "custom__" + repoID.replacingOccurrences(of: "/", with: "--") + "__" + filename
+            return custom(id: id, repoID: repoID, displayName: displayName ?? filename,
+                          filename: filename, downloadURL: url, localFileURL: nil)
+
+        case .localFile(let url):
+            guard url.isFileURL else { return nil }
+            let filename = url.lastPathComponent
+            guard filename.lowercased().hasSuffix(".gguf"), filename.count > ".gguf".count else { return nil }
+            return custom(id: "local__" + filename, repoID: "local", displayName: displayName ?? filename,
+                          filename: filename, downloadURL: nil, localFileURL: url)
+        }
+    }
+
+    /// Whether this is a user-supplied model (remote download URL or in-place local file) vs a curated catalog entry.
+    var isUserSupplied: Bool { downloadURL != nil || localFileURL != nil }
+
+    /// Synthesize a user-supplied GGUF ``Model``, filling the many fixed metadata defaults in one place.
+    private static func custom(id: String, repoID: String, displayName: String, filename: String,
+                               downloadURL: URL?, localFileURL: URL?) -> Model {
+        Model(id: id, repoID: repoID, displayName: displayName, category: .text, domain: nil, docTags: false,
+              format: .gguf, approximateSizeMB: 0, isUncensored: false, ggufFilename: filename,
+              defaultDocumentPrompt: nil, numLayers: 0, kvHeads: 0, headDim: 0,
+              downloadURL: downloadURL, localFileURL: localFileURL)
+    }
+}
+
+// MARK: - ModelSource
+
+/// Where a user-supplied model comes from — the bridge AuraLocal uses to download/load from any source.
+public enum ModelSource: Sendable, Equatable {
+    /// A Hugging Face `.gguf` file URL (`resolve`/`blob` form).
+    case huggingFace(url: String)
+    /// Any direct HTTPS URL to a `.gguf` file (GitHub releases, ModelScope, a CDN, a self-hosted server…).
+    case directURL(URL)
+    /// A `.gguf` the user already has on disk — loaded in place, never copied or re-downloaded.
+    case localFile(URL)
+}
 
 // MARK: - Static constants (backward compatibility)
 

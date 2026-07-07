@@ -44,7 +44,8 @@ final class LayerStreamingBackend: InferenceBackend {
             throw AuraError.invalidResponse("Model \(model.displayName) has no GGUF filename")
         }
 
-        let ggufURL = model.cacheDirectory.appendingPathComponent(filename)
+        // In-place user file (localFileURL), else the download destination under cacheDirectory.
+        let ggufURL = model.localFileURL ?? model.cacheDirectory.appendingPathComponent(filename)
 
         guard FileManager.default.fileExists(atPath: ggufURL.path) else {
             throw AuraError.invalidResponse(

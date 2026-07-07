@@ -31,6 +31,15 @@ public final class GGUFModelDownloader: ObservableObject {
         model: Model,
         onProgress: @escaping @MainActor (String) -> Void
     ) async throws -> URL {
+        // A user-supplied local file is used in place — nothing to download.
+        if let local = model.localFileURL {
+            guard FileManager.default.fileExists(atPath: local.path) else {
+                throw AuraError.invalidResponse("File not found: \(local.path)")
+            }
+            onProgress("\(model.displayName) (local file)")
+            return local
+        }
+
         guard let filename = model.ggufFilename else {
             throw AuraError.invalidResponse("Model \(model.displayName) has no GGUF filename")
         }
@@ -51,7 +60,9 @@ public final class GGUFModelDownloader: ObservableObject {
         )
 
         // Build HuggingFace download URL
-        let hfURL = huggingFaceURL(repo: model.rawValue, filename: filename)
+        // Prefer the model's explicit download URL — user-supplied models carry the exact HF
+        // `resolve/<rev>/…` URL the user pasted; catalog models derive it from repo + filename at `main`.
+        let hfURL = model.downloadURL ?? huggingFaceURL(repo: model.rawValue, filename: filename)
 
         isDownloading = true
         error = nil
