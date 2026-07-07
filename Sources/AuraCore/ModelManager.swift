@@ -1,6 +1,7 @@
 import Foundation
 import Dispatch
 import AuraCore
+import LocalLLMClientCore
 #if os(iOS) || os(tvOS)
 import UIKit
 #endif
@@ -137,8 +138,15 @@ public final class ModelManager: ObservableObject {
     /// if not already present, then loads via the llama.cpp backend.
     public func load(
         _ model: Model,
+        tools: [any LLMTool] = [],
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> AuraLocal {
+        // Tool-enabled sessions are always freshly built and never cached/deduped — a function-calling
+        // instance must not be served from (or pollute) the plain shared cache keyed only by model.
+        guard tools.isEmpty else {
+            return try await performLoad(model, tools: tools, onProgress: onProgress)
+        }
+
         // Return cached immediately
         if let cached = cache[model] {
             touch(model)
@@ -213,6 +221,7 @@ public final class ModelManager: ObservableObject {
 
     private func performLoad(
         _ model: Model,
+        tools: [any LLMTool] = [],
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> AuraLocal {
         // Evict LRU if over budget
@@ -238,12 +247,16 @@ public final class ModelManager: ObservableObject {
 
             states[model] = .loading
 
-            // Create AuraLocal instance — BackendRouter picks the right backend
-            let instance = AuraLocal(model: model)
+            // Create AuraLocal instance — BackendRouter picks the right backend; `tools` (if any) enable
+            // GGUF function-calling.
+            let instance = AuraLocal(model: model, tools: tools)
             try await instance.engine.load(onProgress: progress)
 
-            cache[model] = instance
-            touch(model)
+            // Only plain (tool-less) instances are cached; tool-enabled ones are caller-owned.
+            if tools.isEmpty {
+                cache[model] = instance
+                touch(model)
+            }
             states[model] = .ready
             return instance
         } catch {

@@ -1,4 +1,5 @@
 import Foundation
+import LocalLLMClientCore
 
 #if canImport(UIKit)
 import UIKit
@@ -23,9 +24,9 @@ final class AuraEngine {
 
     // MARK: - Init
 
-    init(model: Model, temperature: Float? = nil) {
+    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = []) {
         self.model = model
-        self.backend = BackendRouter.selectBackend(for: model, temperature: temperature)
+        self.backend = BackendRouter.selectBackend(for: model, temperature: temperature, tools: tools)
     }
 
     /// Create an engine with a specific backend (used by BackendRouter for GGUF models).

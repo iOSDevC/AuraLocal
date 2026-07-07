@@ -1,4 +1,5 @@
 import Foundation
+import LocalLLMClientCore
 
 #if canImport(UIKit)
 import UIKit
@@ -42,11 +43,12 @@ public final class AuraLocal {
     
     // MARK: - Init
 
-    /// Internal init — creates an instance with backend auto-selected by ``BackendRouter``.
-    /// Use ``ModelManager/load(_:onProgress:)`` or factory methods (``text``, ``vision``, ``specialized``) instead.
-    init(model: Model, temperature: Float? = nil) {
+    /// Internal init — creates an instance with backend auto-selected by ``BackendRouter``. `tools` (when
+    /// non-empty) enables GGUF function-calling: the model can invoke them during generation.
+    /// Use ``ModelManager/load(_:tools:onProgress:)`` or factory methods (``text``, ``vision``…) instead.
+    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = []) {
         self.model = model
-        self.engine = AuraEngine(model: model, temperature: temperature)
+        self.engine = AuraEngine(model: model, temperature: temperature, tools: tools)
     }
     
     // MARK: - Factory methods

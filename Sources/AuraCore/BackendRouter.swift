@@ -1,4 +1,5 @@
 import Foundation
+import LocalLLMClientCore
 
 // MARK: - ModelFormat
 
@@ -29,7 +30,8 @@ public enum BackendRouter {
     static func selectBackend(
         for model: Model,
         temperature: Float? = nil,
-        profile: HardwareProfile = .current()
+        profile: HardwareProfile = .current(),
+        tools: [any LLMTool] = []
     ) -> any InferenceBackend {
         switch model.format {
         case .mlx:
@@ -49,16 +51,16 @@ public enum BackendRouter {
             switch assessment.fitLevel {
             case .excellent, .good, .marginal:
                 // Model fits in RAM — use standard llama.cpp load
-                return LlamaCppBackend(model: model, temperature: temperature)
+                return LlamaCppBackend(model: model, temperature: temperature, tools: tools)
 
             case .streamingRequired:
                 // Model too large for monolithic load — use layer streaming
-                return LayerStreamingBackend(model: model, temperature: temperature)
+                return LayerStreamingBackend(model: model, temperature: temperature, tools: tools)
 
             case .tooLarge:
                 // Even streaming can't help (e.g. 70B on iPhone)
                 // Return llama.cpp anyway; it will fail with a clear error at load time
-                return LlamaCppBackend(model: model, temperature: temperature)
+                return LlamaCppBackend(model: model, temperature: temperature, tools: tools)
             }
             #else
             fatalError("GGUF models are not supported on the iOS Simulator. Use MLX models instead.")

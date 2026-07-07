@@ -24,15 +24,19 @@ final class LayerStreamingBackend: InferenceBackend {
     private let model: Model
     private let temperature: Float
     private let memoryManager: MemoryBudgetManager
+    private let tools: [any LLMTool]
 
     var isLoaded: Bool { session != nil }
+    /// Tool names registered for function-calling — a testable view of what was threaded in (empty = none).
+    var registeredToolNames: [String] { tools.map(\.name) }
 
     // MARK: - Init
 
-    init(model: Model, temperature: Float? = nil) {
+    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = []) {
         self.model = model
         self.temperature = temperature ?? 0.7
         self.memoryManager = MemoryBudgetManager(safetyMarginMB: 250)
+        self.tools = tools
     }
 
     // MARK: - InferenceBackend
@@ -68,7 +72,7 @@ final class LayerStreamingBackend: InferenceBackend {
             parameter: parameter
         )
 
-        let newSession = LLMSession(model: localModel)
+        let newSession = LLMSession(model: localModel, tools: tools)
         try await newSession.prewarm()
         session = newSession
 

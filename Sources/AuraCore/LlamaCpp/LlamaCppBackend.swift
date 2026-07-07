@@ -19,14 +19,18 @@ final class LlamaCppBackend: InferenceBackend {
     private var session: LLMSession?
     private let model: Model
     private let temperature: Float
+    private let tools: [any LLMTool]
 
     var isLoaded: Bool { session != nil }
+    /// Tool names registered for function-calling — a testable view of what was threaded in (empty = none).
+    var registeredToolNames: [String] { tools.map(\.name) }
 
     // MARK: - Init
 
-    init(model: Model, temperature: Float? = nil) {
+    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = []) {
         self.model = model
         self.temperature = temperature ?? 0.7
+        self.tools = tools
     }
 
     // MARK: - InferenceBackend
@@ -61,7 +65,9 @@ final class LlamaCppBackend: InferenceBackend {
             parameter: parameter
         )
 
-        let newSession = LLMSession(model: localModel)
+        // Passing `tools` enables automatic function-calling: `session.streamResponse` routes through the
+        // tool-calling path, so the existing generate loop transparently invokes tools and feeds results back.
+        let newSession = LLMSession(model: localModel, tools: tools)
         try await newSession.prewarm()
         session = newSession
 

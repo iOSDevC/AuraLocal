@@ -20,6 +20,10 @@ let package = Package(
         // they served ONLY the MLX backend, and mlx-swift-lm@main pins swift-syntax 602..<604 which is
         // incompatible with LocalLLMClient's 600..<601 (hard resolve failure). Target models are GGUF/Ollama,
         // so the MLX path is compiled out via `#if canImport(MLXLLM)`.
+        // NOTE: kept on branch:"main" deliberately. A hard `revision:` pin re-triggers an unsatisfiable
+        // resolve (localllmclient wants swift-syntax 600..<601 while a transitive mlx-swift-lm wants 602..<604)
+        // — the same conflict that made us drop the MLX products. Tool-calling now depends on this package's
+        // internals, so revisit pinning (e.g. a fork that drops the MLX product deps) before relying on it.
         .package(
             url: "https://github.com/tattn/LocalLLMClient.git",
             branch: "main"
