@@ -258,8 +258,7 @@ public extension Model {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let comps = URLComponents(string: trimmed),
               comps.scheme?.lowercased() == "https",
-              let host = comps.host?.lowercased(),
-              host == "huggingface.co" || host == "www.huggingface.co"
+              let host = comps.host?.lowercased(), HuggingFaceRepo.isHuggingFaceHost(host)
         else { return nil }
 
         // /<owner>/<repo>/(resolve|blob)/<rev>/…/<file>.gguf
@@ -302,7 +301,7 @@ public extension Model {
             guard let url = comps.url else { return nil }
             return from(.localFile(url), displayName: displayName)
         case "https":
-            if let host = comps.host?.lowercased(), host == "huggingface.co" || host == "www.huggingface.co" {
+            if let host = comps.host?.lowercased(), HuggingFaceRepo.isHuggingFaceHost(host) {
                 return from(.huggingFace(url: trimmed), displayName: displayName)
             }
             guard let url = comps.url else { return nil }
