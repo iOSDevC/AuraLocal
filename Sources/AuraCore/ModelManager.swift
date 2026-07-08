@@ -173,6 +173,19 @@ public final class ModelManager: ObservableObject {
         states[model] ?? .idle
     }
 
+    /// Release a specific instance obtained from `load`: unload its llama.cpp context, and — only if it is the
+    /// SHARED cached instance for its model — drop the cache entry so the next `load` rebuilds instead of serving
+    /// a torn-down zombie. A tool-enabled instance is never cached, so this just unloads it (identity check via
+    /// `===` distinguishes the two). Use this from `AuraSession` teardown instead of a bare `unload()`.
+    public func release(_ instance: AuraLocal) {
+        instance.engine.unload()
+        if cache[instance.model] === instance {
+            cache[instance.model] = nil
+            lruOrder.removeAll { $0 == instance.model }
+            states[instance.model] = .idle
+        }
+    }
+
     /// Evict a specific model from memory.
     public func evict(_ model: Model) {
         if let instance = cache[model] {
