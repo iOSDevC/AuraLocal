@@ -194,6 +194,16 @@ public final class ModelManager: ObservableObject {
         states[model] = .idle
     }
 
+    /// Whether the model download (if any) is currently paused.
+    public var isDownloadPaused: Bool { ggufDownloader.isPaused }
+    /// Whether a model file is actively downloading (false while paused).
+    public var isDownloading: Bool { ggufDownloader.isDownloading }
+
+    /// Pause the in-flight model download, retaining progress. The load Task stays suspended in `download(...)`.
+    public func pauseDownload() { ggufDownloader.pause() }
+    /// Resume a paused model download from where it stopped.
+    public func resumeDownload() { ggufDownloader.resume() }
+
     /// Evict all loaded models.
     public func evictAll() {
         for (_, instance) in cache {
@@ -261,6 +271,9 @@ public final class ModelManager: ObservableObject {
             }
             states[model] = .ready
             return instance
+        } catch is CancellationError {
+            states[model] = .idle   // user cancelled the download/load — not a failure
+            throw CancellationError()
         } catch {
             states[model] = .failed(error.localizedDescription)
             throw error
