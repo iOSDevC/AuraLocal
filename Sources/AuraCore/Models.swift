@@ -179,9 +179,7 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
     /// Local cache directory where the model is downloaded.
     /// Mirrors the `<org>/<repo>` folder structure used by mlx-swift.
     public var cacheDirectory: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("models")
-            .appendingPathComponent(repoID)
+        DownloadedModels.modelsDirectory.appendingPathComponent(repoID)
     }
 
     /// The on-disk location of this model's GGUF weights: a user's own file loaded in place
