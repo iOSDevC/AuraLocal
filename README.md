@@ -21,6 +21,10 @@ Lightweight on-device LLM & VLM Swift package for iOS/macOS/visionOS. Run Qwen3,
 - **Hybrid RAG pipeline** — FTS5 keyword pre-filter + Accelerate cosine re-ranking, stored in SQLite. Zero external dependencies.
 - **Local provider detection** — `AuraLocal.detectLocalProviders()` discovers a running Ollama (`:11434`) or llama.cpp `llama-server` (`:8080/v1`) and the models each exposes, via a dependency-free URLSession probe (never throws — a down server is a normal result).
 - **Token-optimized hybrid inference** — A **mixed pipeline**: the same `AuraLocal.stream()` API drives on-device GGUF, your own llama-server/Ollama, or a cloud model — chosen per request. Stay local by default; escalate to a stronger model only when needed, and **cut the tokens sent to the remote** via selective-context compression (**~2–4×**), a response cache (repeat calls cost **$0**), and payload redaction. Every escalation prints a receipt — *"sent 800 of 6,000 tokens · $0.004"*. Fail-closed and consent-gated. See [Hybrid Inference](#hybrid-inference-local--remote).
+- **GitHub Models remote target** — Bring your GitHub/Copilot account into the hybrid line via GitHub's official OpenAI-compatible endpoint (`models.github.ai/inference`) — BYOK with a `models:read` PAT stored in the Keychain, working from iOS, macOS, and visionOS.
+- **Agent orchestration (per-step escalation)** — The agent crew routes each *sub-task* to the cheapest capable executor: a weak local draft transparently escalates to a bigger model through the same compression + consent + cost machinery — not just the top-level answer.
+- **Native on-device tools** — `SystemToolRegistry` discovers Apple-framework tools that support the local SLMs (Vision OCR, NaturalLanguage embeddings) with no model download, availability-checked per device.
+- **`aura` CLI & binaries** — A headless integration harness (`aura providers | tools | ask | ocr`) plus build scripts for a release CLI and a drag-to-Applications `.dmg`. See [CLI & Binaries](#cli--binaries).
 
 ---
 
@@ -184,6 +188,14 @@ let result = try await escalator.routeAndEscalate(
     domain: .security,                 // sensitive domains escalate more readily
     consent: myConsentGate)            // presents the compressed payload for approval
 ```
+
+### Per-step escalation (agent orchestration)
+
+Escalation isn't only for the top-level answer. `HybridEscalator.routeAndEscalate(localAnswer:)`
+routes each **sub-task** to the cheapest capable executor: the agent crew drafts a step
+locally, and only when that draft looks weak (the router's low-confidence trigger) does it
+transparently escalate to a bigger model — reusing the same compression, consent, and cost
+machinery. Fail-closed: any error or a *stay-local* decision keeps the local draft.
 
 ### What's included
 
