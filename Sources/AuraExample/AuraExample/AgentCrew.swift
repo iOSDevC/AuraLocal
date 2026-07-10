@@ -5,6 +5,11 @@ import AuraCore
 import AuraDocs
 import AuraAppleIntelligence
 
+// Disambiguate: AuraCore re-exports LocalLLMClientCore, which (on recent main)
+// also defines `GeneratedContent`, colliding with FoundationModels' type used by
+// the @Generable macro below. Pin the name to FoundationModels here.
+typealias GeneratedContent = FoundationModels.GeneratedContent
+
 // MARK: - AgentMemory
 
 @available(iOS 26, macOS 26, *)
