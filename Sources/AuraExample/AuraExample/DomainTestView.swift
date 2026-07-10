@@ -202,6 +202,9 @@ struct DomainTestView: View {
             if result.redactedPIICount > 0 {
                 receipt += " · redacted \(result.redactedPIICount) PII"
             }
+            if result.fromCache {
+                receipt += " · (cached, $0)"
+            }
             remoteReceipt = receipt
         } catch {
             errorText = error.localizedDescription

@@ -20,6 +20,8 @@ public final class HybridEscalator {
         public let providerName: String
         /// Number of secrets/PII items redacted before sending (0 if redaction off).
         public let redactedPIICount: Int
+        /// `true` when the answer came from the response cache (no remote call, $0).
+        public let fromCache: Bool
     }
 
     // MARK: - Target discovery
@@ -73,10 +75,23 @@ public final class HybridEscalator {
             ? question
             : "Context:\n\(contextText)\n\nQuestion: \(question)"
 
+        // Response cache: don't pay twice for an identical request.
+        if let cached = ResponseCache.shared.lookup(
+            provider: target.provider.id, model: target.modelID, prompt: userContent) {
+            onToken(cached)
+            return Result(
+                answer: cached, compression: compressed, usage: nil,
+                providerName: target.provider.displayName,
+                redactedPIICount: redactedCount, fromCache: true)
+        }
+
         let backend = RemoteBackend(target: target)
         let answer = try await backend.generate(
             prompt: userContent, systemPrompt: systemPrompt,
             maxTokens: maxTokens, onToken: onToken)
+
+        ResponseCache.shared.insert(
+            answer, provider: target.provider.id, model: target.modelID, prompt: userContent)
 
         let didCompress = compressed.originalTokens > compressed.compressedTokens
         ledger.record(
@@ -90,7 +105,8 @@ public final class HybridEscalator {
             compression: compressed,
             usage: backend.lastUsage,
             providerName: target.provider.displayName,
-            redactedPIICount: redactedCount)
+            redactedPIICount: redactedCount,
+            fromCache: false)
     }
 
     // MARK: - Cloud targets (Phase 2)

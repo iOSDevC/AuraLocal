@@ -43,4 +43,27 @@ final class HybridCompressionTests: XCTestCase {
             question: "what is the capital of france")
         XCTAssertGreaterThan(scores[1], scores[0])
     }
+
+    // MARK: - Response cache
+
+    @MainActor
+    func testResponseCacheHitAndMiss() {
+        let cache = ResponseCache(capacity: 4)
+        XCTAssertNil(cache.lookup(provider: "p", model: "m", prompt: "hi"))
+        cache.insert("hello", provider: "p", model: "m", prompt: "hi")
+        XCTAssertEqual(cache.lookup(provider: "p", model: "m", prompt: "hi"), "hello")
+        XCTAssertNil(cache.lookup(provider: "p", model: "m", prompt: "other"))
+        XCTAssertNil(cache.lookup(provider: "p2", model: "m", prompt: "hi"))  // different key
+    }
+
+    @MainActor
+    func testResponseCacheEviction() {
+        let cache = ResponseCache(capacity: 2)
+        cache.insert("a", provider: "p", model: "m", prompt: "1")
+        cache.insert("b", provider: "p", model: "m", prompt: "2")
+        cache.insert("c", provider: "p", model: "m", prompt: "3")   // evicts "1"
+        XCTAssertNil(cache.lookup(provider: "p", model: "m", prompt: "1"))
+        XCTAssertEqual(cache.lookup(provider: "p", model: "m", prompt: "3"), "c")
+        XCTAssertEqual(cache.count, 2)
+    }
 }
