@@ -30,6 +30,12 @@ struct PipelineTab: View {
                                 if crew.isRunning && !crew.streamingOutput.isEmpty {
                                     streamingCard(crew: crew)
                                 }
+                                if let note = crew.escalationNote {
+                                    Label(note, systemImage: "cloud.bolt.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.blue)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
                                 if crew.finalReport != nil {
                                     reportBanner
                                 }

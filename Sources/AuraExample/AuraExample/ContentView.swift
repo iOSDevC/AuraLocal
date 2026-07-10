@@ -74,6 +74,8 @@ struct ContentView: View {
 struct AgentCrewInlineView: View {
     @EnvironmentObject var appState: AppState
     @State private var selectedSection: AgentSection = .pipeline
+    // Present the escalation consent sheet if a crew step escalates to the cloud.
+    @ObservedObject private var consentGate = HybridSettings.shared.consent
 
     enum AgentSection: String, CaseIterable, Identifiable {
         case pipeline   = "Pipeline"
@@ -108,6 +110,9 @@ struct AgentCrewInlineView: View {
             }
             .navigationTitle("Agent Crew")
             .task { await appState.setup() }
+            .sheet(item: $consentGate.pending) { request in
+                ConsentSheet(request: request, gate: consentGate)
+            }
         }
     }
 }

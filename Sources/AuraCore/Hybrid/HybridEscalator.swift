@@ -158,6 +158,10 @@ public final class HybridEscalator {
     /// Consult the router and (if needed) the consent gate, then escalate.
     /// Returns `nil` when the policy/router keeps the request local. Throws
     /// ``AuraError/escalationDeclined`` if the user declines an offer.
+    ///
+    /// Pass `localAnswer` (the local model's draft) to enable the router's
+    /// low-confidence trigger (R5/R6) — without it only size-overflow can escalate.
+    /// `targets` lets callers reuse already-discovered candidates (e.g. tests).
     public func routeAndEscalate(
         policy: EscalationPolicy,
         systemPrompt: String? = nil,
@@ -165,11 +169,18 @@ public final class HybridEscalator {
         question: String,
         domain: Model.Domain? = nil,
         localContextWindow: Int = 8192,
+        localAnswer: String? = nil,
         consent: any ConsentGate = DenyingConsentGate(),
         maxTokens: Int = 1024,
+        targets: [RemoteTarget]? = nil,
         onToken: @escaping @MainActor (String) -> Void = { _ in }
     ) async throws -> Result? {
-        let candidates = await Self.candidateTargets(policy: policy)
+        let candidates: [RemoteTarget]
+        if let targets {
+            candidates = targets
+        } else {
+            candidates = await Self.candidateTargets(policy: policy)
+        }
         guard let target = candidates.first else { return nil }   // R2: no target
 
         let promptTokens = ContextCompressor.estimateTokens((systemPrompt ?? "") + context + question)
@@ -182,7 +193,7 @@ public final class HybridEscalator {
             online: NetworkMonitor.shared.isOnline,
             promptTokens: promptTokens,
             localContextWindow: localContextWindow,
-            localAnswer: nil,
+            localAnswer: localAnswer,
             domain: domain,
             projectedCostUSD: projected))
 

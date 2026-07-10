@@ -134,6 +134,8 @@ final class AgentCrew: ObservableObject {
     @Published var finalReport:    AnalysisReport?
     @Published var exportedURL:    URL?
     @Published var error:          String?
+    /// Set when the Architect step was transparently escalated to a bigger model.
+    @Published var escalationNote: String?
 
     private let store:   ConversationStore
     private let library: DocumentLibrary
@@ -148,7 +150,7 @@ final class AgentCrew: ObservableObject {
     func run(topic: String) async {
         guard !isRunning else { return }
         isRunning = true; stepOutputs = []; streamingOutput = ""
-        finalReport = nil; exportedURL = nil; error = nil
+        finalReport = nil; exportedURL = nil; error = nil; escalationNote = nil
 
         do {
             try await memory.beginRun(topic: topic)
@@ -185,7 +187,11 @@ final class AgentCrew: ObservableObject {
                 instructions: "You are a solution architect. Use readAgentMemory to access prior outputs. Synthesize actionable, prioritized recommendations.",
                 tools: [memoryTool]
             )
-            let architecture = try await architect.run("Propose structured recommendations for '\(topic)'.")
+            let architectLocal = try await architect.run("Propose structured recommendations for '\(topic)'.")
+            // Hybrid: if the local draft looks weak, transparently escalate THIS step
+            // to a bigger model (LAN or GitHub Models), reusing the router's
+            // compression + consent + cost machinery. Fail-closed to the local draft.
+            let architecture = await escalateIfWeak(topic: topic, localAnswer: architectLocal)
             try await memory.write(role: "Architect", content: architecture)
             stepOutputs.append((role: "Architect", output: architecture))
 
@@ -225,6 +231,35 @@ final class AgentCrew: ObservableObject {
             self.error = error.localizedDescription
         }
         isRunning = false; currentAgent = ""
+    }
+
+    /// Escalate the Architect step to a bigger model when the local draft looks weak.
+    /// Reuses HybridEscalator (router + compression + consent + cost). Returns the
+    /// local answer unchanged when the policy is off, the router keeps it local, or
+    /// anything fails.
+    private func escalateIfWeak(topic: String, localAnswer: String) async -> String {
+        let policy = HybridSettings.shared.policy
+        guard policy.mode != .off else { return localAnswer }
+        let reviewerNotes = (try? await memory.read(from: "Reviewer")) ?? ""
+        do {
+            let result = try await HybridEscalator().routeAndEscalate(
+                policy: policy,
+                systemPrompt: "You are a solution architect. Synthesize actionable, prioritized recommendations.",
+                context: reviewerNotes,
+                question: "Propose structured, prioritized recommendations for '\(topic)'.",
+                localAnswer: localAnswer,
+                consent: HybridSettings.shared.consent)
+            if let result, !result.answer.isEmpty {
+                var note = "Architect escalated → \(result.providerName)"
+                if let usage = result.usage { note += " · \(usage.inputTokens)/\(usage.outputTokens) tok" }
+                if result.fromCache { note += " · cached" }
+                escalationNote = note
+                return result.answer
+            }
+        } catch {
+            // Fail-closed: keep the local draft on any escalation error.
+        }
+        return localAnswer
     }
 
     private func exportLatestDocument() async throws -> URL? {
