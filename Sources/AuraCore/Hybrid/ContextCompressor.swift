@@ -19,7 +19,11 @@ public struct CompressionResult: Sendable {
 /// Upgradeable behind this same interface to TF-IDF (AuraDocs) or self-information
 /// scoring (llama.cpp logits) without changing callers.
 public struct ContextCompressor: Sendable {
-    public init() {}
+    private let scorer: SelfInfoScorer
+
+    public init(scorer: SelfInfoScorer = HeuristicScorer()) {
+        self.scorer = scorer
+    }
 
     /// Compress `context` to `budgetTokens`, keeping sentences most relevant to
     /// `question`. Original order is preserved. If `context` already fits, it is
@@ -35,14 +39,10 @@ public struct ContextCompressor: Sendable {
             return CompressionResult(originalTokens: originalTokens, compressedTokens: originalTokens, keptText: context)
         }
 
-        let questionWords = Self.keywords(question)
-        let lastIndex = max(sentences.count - 1, 1)
-
-        // Score: keyword overlap (weighted) + recency (later sentences score higher).
+        // Score each sentence via the pluggable scorer (higher = keep).
+        let scoreValues = scorer.scores(for: sentences, question: question)
         let scored = sentences.enumerated().map { index, sentence -> (index: Int, text: String, score: Double) in
-            let overlap = Double(Self.keywords(sentence).intersection(questionWords).count)
-            let recency = Double(index) / Double(lastIndex)
-            return (index, sentence, overlap * 2.0 + recency)
+            (index, sentence, scoreValues[index])
         }
 
         // Greedily keep highest-scored sentences within budget, then restore order.

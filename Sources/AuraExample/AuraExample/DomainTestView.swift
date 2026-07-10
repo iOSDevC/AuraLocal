@@ -188,7 +188,8 @@ struct DomainTestView: View {
                 systemPrompt: domain.testSystemPrompt,
                 context: "",
                 question: prompt,
-                maxTokens: 512) { response = $0 }
+                maxTokens: 512,
+                redactPII: !target.isLocalNetwork) { response = $0 }
 
             var receipt = "via \(result.providerName) · \(target.modelID)"
             if let usage = result.usage {
@@ -197,6 +198,9 @@ struct DomainTestView: View {
             let c = result.compression
             if c.originalTokens > c.compressedTokens {
                 receipt += " · compressed \(c.originalTokens)→\(c.compressedTokens) (\(String(format: "%.1f", c.factor))×)"
+            }
+            if result.redactedPIICount > 0 {
+                receipt += " · redacted \(result.redactedPIICount) PII"
             }
             remoteReceipt = receipt
         } catch {

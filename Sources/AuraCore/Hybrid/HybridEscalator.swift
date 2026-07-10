@@ -18,6 +18,8 @@ public final class HybridEscalator {
         public let compression: CompressionResult
         public let usage: TokenUsage?
         public let providerName: String
+        /// Number of secrets/PII items redacted before sending (0 if redaction off).
+        public let redactedPIICount: Int
     }
 
     // MARK: - Target discovery
@@ -50,6 +52,7 @@ public final class HybridEscalator {
         context: String,
         question: String,
         maxTokens: Int = 1024,
+        redactPII: Bool = false,
         onToken: @escaping @MainActor (String) -> Void = { _ in }
     ) async throws -> Result {
         // Reserve room for the answer; keep well under the remote context window.
@@ -57,9 +60,18 @@ public final class HybridEscalator {
         let budget = max(256, Int(Double(contextWindow) * 0.5) - maxTokens)
         let compressed = compressor.compress(context: context, question: question, budgetTokens: budget)
 
-        let userContent = compressed.keptText.isEmpty
+        // Optional privacy backstop: strip obvious secrets/PII before sending.
+        var contextText = compressed.keptText
+        var redactedCount = 0
+        if redactPII {
+            let redaction = PIIRedactor().redact(compressed.keptText)
+            contextText = redaction.redacted
+            redactedCount = redaction.count
+        }
+
+        let userContent = contextText.isEmpty
             ? question
-            : "Context:\n\(compressed.keptText)\n\nQuestion: \(question)"
+            : "Context:\n\(contextText)\n\nQuestion: \(question)"
 
         let backend = RemoteBackend(target: target)
         let answer = try await backend.generate(
@@ -77,7 +89,8 @@ public final class HybridEscalator {
             answer: answer,
             compression: compressed,
             usage: backend.lastUsage,
-            providerName: target.provider.displayName)
+            providerName: target.provider.displayName,
+            redactedPIICount: redactedCount)
     }
 
     // MARK: - Cloud targets (Phase 2)
