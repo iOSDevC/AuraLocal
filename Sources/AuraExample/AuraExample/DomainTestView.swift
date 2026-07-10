@@ -21,6 +21,7 @@ struct DomainTestView: View {
     @State private var status = ""
     @State private var errorText: String?
     @State private var isRunning = false
+    @State private var remoteReceipt: String?
 
     private var isDownloaded: Bool { model.isDownloaded }
 
@@ -67,6 +68,22 @@ struct DomainTestView: View {
                         }
                     }
                     .disabled(prompt.isEmpty || isRunning || !isDownloaded)
+                }
+
+                Section {
+                    Button { Task { await runRemote() } } label: {
+                        Label("Ask a bigger model (remote)", systemImage: "cloud.bolt")
+                    }
+                    .disabled(prompt.isEmpty || isRunning)
+                    if let remoteReceipt {
+                        Text(remoteReceipt)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Hybrid escalation")
+                } footer: {
+                    Text("Sends this prompt to your own bigger local model (llama-server / Ollama), compressing context to save tokens. Falls back to nothing if none is running.")
                 }
 
                 if !response.isEmpty {
@@ -116,6 +133,44 @@ struct DomainTestView: View {
             for try await token in llm.stream(prompt, systemPrompt: domain.testSystemPrompt, maxTokens: 512) {
                 response += token
             }
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
+    /// Escalate the prompt to the user's own bigger model (llama-server / Ollama),
+    /// compressing context to save tokens. Fail-closed: shows a hint if none runs.
+    @MainActor
+    private func runRemote() async {
+        isRunning = true
+        response = ""
+        errorText = nil
+        remoteReceipt = nil
+        status = "Finding a bigger local model…"
+        defer { isRunning = false; status = "" }
+
+        guard let target = await HybridEscalator.bestLocalTarget() else {
+            errorText = "No local provider running. Start Ollama or llama-server, then retry."
+            return
+        }
+        status = "Asking \(target.provider.displayName)…"
+        do {
+            let result = try await HybridEscalator().escalate(
+                to: target,
+                systemPrompt: domain.testSystemPrompt,
+                context: "",
+                question: prompt,
+                maxTokens: 512) { response = $0 }
+
+            var receipt = "via \(result.providerName) · \(target.modelID)"
+            if let usage = result.usage {
+                receipt += " · \(usage.inputTokens) in / \(usage.outputTokens) out"
+            }
+            let c = result.compression
+            if c.originalTokens > c.compressedTokens {
+                receipt += " · compressed \(c.originalTokens)→\(c.compressedTokens) (\(String(format: "%.1f", c.factor))×)"
+            }
+            remoteReceipt = receipt
         } catch {
             errorText = error.localizedDescription
         }
