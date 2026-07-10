@@ -17,17 +17,17 @@ let package = Package(
         .executable(name: "aura", targets: ["aura"]),
     ],
     dependencies: [
-        // GGUF (llama.cpp) + Ollama-capable local client. mlx-swift-lm and swift-transformers were removed:
-        // they served ONLY the MLX backend, and mlx-swift-lm@main pins swift-syntax 602..<604 which is
-        // incompatible with LocalLLMClient's 600..<601 (hard resolve failure). Target models are GGUF/Ollama,
-        // so the MLX path is compiled out via `#if canImport(MLXLLM)`.
-        // NOTE: kept on branch:"main" deliberately. A hard `revision:` pin re-triggers an unsatisfiable
-        // resolve (localllmclient wants swift-syntax 600..<601 while a transitive mlx-swift-lm wants 602..<604)
-        // — the same conflict that made us drop the MLX products. Tool-calling now depends on this package's
-        // internals, so revisit pinning (e.g. a fork that drops the MLX product deps) before relying on it.
+        // GGUF (llama.cpp) + Ollama-capable local client. AuraLocal uses only its
+        // LocalLLMClient + LocalLLMClientLlama products; the MLX path is compiled out
+        // via `#if canImport(MLXLLM)`.
+        // Pinned by `revision:` (not `branch:"main"`) for reproducible resolves and to
+        // avoid breaking changes when upstream main moves. This is the commit main had
+        // resolved to; it builds cleanly (graph resolves swift-syntax 600.0.1 — the
+        // 602..<604 conflict that once forced dropping the MLX products does not occur
+        // here). Bump this SHA deliberately after verifying a build.
         .package(
             url: "https://github.com/tattn/LocalLLMClient.git",
-            branch: "main"
+            revision: "d420bc8b3ceab709bc370efa48afe960223d3267"
         ),
     ],
     targets: [
