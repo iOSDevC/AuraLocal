@@ -19,6 +19,8 @@ Lightweight on-device LLM & VLM Swift package for iOS/macOS/visionOS. Run Qwen3,
 - **Swift 6 concurrency** — All public APIs are `@MainActor`-isolated or `Sendable`, with `actor`-based stores for data-race safety.
 - **OOM prevention** — `os_proc_available_memory()` monitoring with `DispatchSource` pressure listeners; `MemoryBudgetManager` performs adaptive context sizing and per-generation jetsam checks.
 - **Hybrid RAG pipeline** — FTS5 keyword pre-filter + Accelerate cosine re-ranking, stored in SQLite. Zero external dependencies.
+- **Local provider detection** — `AuraLocal.detectLocalProviders()` discovers a running Ollama (`:11434`) or llama.cpp `llama-server` (`:8080/v1`) and the models each exposes, via a dependency-free URLSession probe (never throws — a down server is a normal result).
+- **Token-optimized hybrid inference** — A **mixed pipeline**: the same `AuraLocal.stream()` API drives on-device GGUF, your own llama-server/Ollama, or a cloud model — chosen per request. Stay local by default; escalate to a stronger model only when needed, and **cut the tokens sent to the remote** via selective-context compression (**~2–4×**), a response cache (repeat calls cost **$0**), and payload redaction. Every escalation prints a receipt — *"sent 800 of 6,000 tokens · $0.004"*. Fail-closed and consent-gated. See [Hybrid Inference](#hybrid-inference-local--remote).
 
 ---
 
@@ -101,6 +103,111 @@ let backend = BackendRouter.recommendedBackend(for: .llama3_1_8b_gguf)
 // → .llamaCpp (on a Mac with 16 GB)
 // → .layerStreaming (on a 6 GB iPhone)
 ```
+
+---
+
+## Hybrid Inference (local + remote)
+
+AuraLocal is **local-first**: everything runs on-device by default. Hybrid inference is a
+**mixed pipeline** — the *same* `AuraLocal.stream()` API drives on-device GGUF, your own
+`llama-server`/Ollama box, or a cloud model (Anthropic / OpenAI), selected **per request**.
+When a task exceeds the local model it **escalates**, but only after **shrinking the payload**
+so the remote (often paid) call sends far fewer tokens. Escalation is **opt-in, consent-gated,
+and fail-closed** — if the remote is offline, a key is missing, consent is declined, or the
+call errors, the local answer stands.
+
+### Token savings — the headline feature
+
+Spending as few remote tokens as possible is the whole point. Four mechanisms **stack**:
+
+| Mechanism | What it does | Effect |
+|---|---|---|
+| **Local-first routing** | Answer on-device whenever the local model suffices | Remote tokens: **0** |
+| **Selective-context compression** | Keep only the sentences relevant to the question, within a budget derived from the remote's context window | **~2–4× fewer** input tokens |
+| **Response cache** | Identical escalations replay the prior answer — no remote call | Repeat calls: **$0** |
+| **PII redaction** | Strip secrets before sending | Smaller + safer payload |
+
+`CostLedger` records every call and the UI shows a receipt per escalation — e.g.
+*"sent 800 of 6,000 tokens (7.5×) · $0.004"* — so the savings are **visible, not implicit**.
+
+### Mixed integration at a glance
+
+1. **Local GGUF** answers by default — **0 remote tokens**.
+2. The **router** decides local-vs-remote per request (size overflow, local uncertainty, sensitive domain, policy, cost cap).
+3. On escalation: **compress → redact → consent**, then call the chosen remote — *your own* `llama-server`/Ollama first, cloud (BYOK) second.
+4. The remote streams back through the **same `AuraLocal.stream()` path**; **any failure keeps the local answer**.
+
+### Detect local providers
+
+```swift
+import AuraCore
+
+// Probe a running Ollama (:11434) and llama.cpp llama-server (:8080/v1) concurrently.
+let providers = await AuraLocal.detectLocalProviders()   // never throws
+for p in providers where p.isAvailable {
+    print(p.kind, p.version ?? "", p.models.map(\.name))
+}
+```
+
+### Escalate a request
+
+```swift
+// Discover the best local "bigger model" and send a compressed request to it.
+if let target = await HybridEscalator.bestLocalTarget() {
+    let result = try await HybridEscalator().escalate(
+        to: target,
+        systemPrompt: "Answer concisely.",
+        context: longContext,          // compressed to the remote's budget
+        question: userQuestion,
+        redactPII: !target.isLocalNetwork) { partial in
+            // cumulative streamed text
+        }
+    print(result.answer)
+    print("sent \(result.compression.compressedTokens) of \(result.compression.originalTokens) tokens",
+          "· \(result.usage?.totalTokens ?? 0) remote tokens",
+          result.fromCache ? "· (cached)" : "")
+}
+```
+
+### Auto-routing & policy
+
+An `EscalationPolicy` (per-profile, default `.off`) plus a pure `EscalationRouter`
+decide **local vs remote** (rules R1–R7: consent gate, target availability,
+reachability, size overflow, local uncertainty + sensitive-domain bias, cost cap).
+Consent is **per-conversation for cloud** and **per-profile-auto for your own LAN box**.
+
+```swift
+let escalator = HybridEscalator()
+let result = try await escalator.routeAndEscalate(
+    policy: profile.escalation,        // .off / .askEachTime / .autoWithConsentMemory
+    context: history, question: prompt,
+    domain: .security,                 // sensitive domains escalate more readily
+    consent: myConsentGate)            // presents the compressed payload for approval
+```
+
+### What's included
+
+| Area | Type(s) |
+|---|---|
+| Discovery | `LocalProviderDetector`, `LocalProviderStatus`, `LocalProviderModel` |
+| Providers | `RemoteLLMProvider`, `OpenAICompatibleProvider` (llama-server / Ollama / OpenAI), `AnthropicProvider` |
+| Transport | `SSELineStream`, `RemoteBackend` (an `InferenceBackend` — remote flows through the same `AuraLocal.stream()` path) |
+| Routing | `EscalationRouter` (R1–R7), `EscalationPolicy`, `RoutingDecision` |
+| Compression | `ContextCompressor` + pluggable `SelfInfoScorer` (default `HeuristicScorer`) |
+| Privacy & cost | `ConsentGate`, `KeychainStore` (BYOK, this-device-only), `PIIRedactor`, `CostLedger`, `ResponseCache`, `NetworkMonitor` |
+
+**Privacy & cost:** cloud API keys live only in the Keychain (never in source, files,
+or logs); the consent sheet shows the **exact compressed payload** before any cloud
+send; `PIIRedactor` strips obvious secrets; `CostLedger` records per-escalation token
+usage and cost; `ResponseCache` avoids paying twice for identical requests.
+
+> **Deferred — true self-information compression.** The current scorer is heuristic
+> (relevance + recency). A real Selective-Context scorer needs per-token logprobs from
+> the local model, but `LocalLLMClient`'s `llama_context` is `package`-private, so it
+> can't be reused. A `LlamaCppSelfInfoScorer` would load its own `llama_context` via the
+> C API (`llama.h` is available) and run a windowed prefill (à la `perplexity.cpp`) — it
+> drops in behind `SelfInfoScorer` without touching callers. Not yet shipped (doubles
+> model memory + heavy iOS-side C interop).
 
 ---
 
