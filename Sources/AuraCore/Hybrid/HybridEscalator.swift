@@ -115,7 +115,8 @@ public final class HybridEscalator {
     public static func cloudTargets(
         allowCloud: Bool,
         anthropicModel: String = "claude-sonnet-4-5",
-        openAIModel: String = "gpt-4o"
+        openAIModel: String = "gpt-4o",
+        gitHubModelsModel: String = "openai/gpt-4o"
     ) -> [RemoteTarget] {
         guard allowCloud else { return [] }
         var targets: [RemoteTarget] = []
@@ -131,6 +132,14 @@ public final class HybridEscalator {
                 retentionNote: "Sent to OpenAI's API. See their data-retention policy.")
             targets.append(RemoteTarget(
                 provider: provider, modelID: openAIModel, contextLength: 128_000, origin: .cloud))
+        }
+        // GitHub Models: official OpenAI-compatible endpoint, powered by the user's
+        // GitHub/Copilot account (PAT with models:read). Free-tier rate-capped, so a
+        // 429 falls through to the next target as an ordinary provider error.
+        if let key = KeychainStore.read(for: "cloud.github-models") {
+            targets.append(RemoteTarget(
+                provider: OpenAICompatibleProvider.gitHubModels(apiKey: key),
+                modelID: gitHubModelsModel, contextLength: 128_000, origin: .cloud))
         }
         return targets
     }
