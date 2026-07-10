@@ -33,6 +33,7 @@ struct HybridTab: View {
                 providersSection
                 toolsSection
                 historySection
+                integrateSection
             }
             .navigationTitle("Hybrid")
             .toolbar {
@@ -211,6 +212,29 @@ struct HybridTab: View {
             Text("On-device tools")
         } footer: {
             Text("Native Apple-framework tools that support the local models — no model download. Discovered per device via SystemToolRegistry.")
+        }
+    }
+
+    // MARK: - Integrate (self-documenting)
+
+    @ViewBuilder
+    private var integrateSection: some View {
+        Section {
+            integrateRow("Swift Package", ".package(url: \"…/AuraLocal.git\", branch: \"main\")")
+            integrateRow("CLI · detect providers", "aura providers")
+            integrateRow("CLI · ask GitHub Models", "aura ask \"…\" --model openai/gpt-4o")
+            integrateRow("CLI · native OCR", "aura ocr image.png")
+        } header: {
+            Text("Integrate")
+        } footer: {
+            Text("The same features run headlessly via the `aura` CLI (build: scripts/build-cli.sh) and this app ships as a .dmg (scripts/build-app.sh). GitHub Models needs a fine-grained PAT with models:read — set it above, or export AURA_GITHUB_TOKEN for the CLI.")
+        }
+    }
+
+    private func integrateRow(_ title: String, _ code: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.caption).foregroundStyle(.secondary)
+            Text(code).font(.caption.monospaced()).textSelection(.enabled)
         }
     }
 

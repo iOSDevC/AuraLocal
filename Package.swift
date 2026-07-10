@@ -14,6 +14,7 @@ let package = Package(
         .library(name: "AuraVoice",             targets: ["AuraVoice"]),
         .library(name: "AuraDocs",              targets: ["AuraDocs"]),
         .library(name: "AuraAppleIntelligence", targets: ["AuraAppleIntelligence"]),
+        .executable(name: "aura", targets: ["aura"]),
     ],
     dependencies: [
         // GGUF (llama.cpp) + Ollama-capable local client. mlx-swift-lm and swift-transformers were removed:
@@ -84,6 +85,17 @@ let package = Package(
                     .enableUpcomingFeature("StrictConcurrency")
                 ]
             ),
+
+        // MARK: - CLI
+        // `aura` — a headless integration harness that drives the hybrid + tools
+        // features (provider detection, GitHub Models escalation, native OCR).
+        // Cxx interop is required because it links AuraCore (llama.cpp).
+        .executableTarget(
+            name: "aura",
+            dependencies: ["AuraCore"],
+            path: "Sources/aura",
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
 
         // MARK: - Example App
         // AuraExample is a macOS/iOS app (built via Sources/AuraExample/AuraExample.xcodeproj),

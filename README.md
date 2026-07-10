@@ -190,7 +190,7 @@ let result = try await escalator.routeAndEscalate(
 | Area | Type(s) |
 |---|---|
 | Discovery | `LocalProviderDetector`, `LocalProviderStatus`, `LocalProviderModel` |
-| Providers | `RemoteLLMProvider`, `OpenAICompatibleProvider` (llama-server / Ollama / OpenAI), `AnthropicProvider` |
+| Providers | `RemoteLLMProvider`, `OpenAICompatibleProvider` (llama-server / Ollama / OpenAI / **GitHub Models**), `AnthropicProvider` |
 | Transport | `SSELineStream`, `RemoteBackend` (an `InferenceBackend` — remote flows through the same `AuraLocal.stream()` path) |
 | Routing | `EscalationRouter` (R1–R7), `EscalationPolicy`, `RoutingDecision` |
 | Compression | `ContextCompressor` + pluggable `SelfInfoScorer` (default `HeuristicScorer`) |
@@ -208,6 +208,36 @@ usage and cost; `ResponseCache` avoids paying twice for identical requests.
 > C API (`llama.h` is available) and run a windowed prefill (à la `perplexity.cpp`) — it
 > drops in behind `SelfInfoScorer` without touching callers. Not yet shipped (doubles
 > model memory + heavy iOS-side C interop).
+
+---
+
+## CLI & Binaries
+
+Two ways to run and ship these features beyond the source package.
+
+### `aura` CLI
+
+A headless integration harness (macOS) that drives the hybrid + native-tool features —
+handy as a reference and in CI. Build with `scripts/build-cli.sh` (or
+`swift build -c release --product aura`).
+
+```
+aura providers                      # detect Ollama / llama-server + models
+aura tools                          # list on-device tools (Vision OCR, embeddings)
+aura ask "<prompt>" [--model <id>]  # ask GitHub Models (default openai/gpt-4o)
+aura ocr <image>                    # extract text via native Vision OCR
+```
+
+`ask` reads a GitHub fine-grained PAT (`models:read`) from `AURA_GITHUB_TOKEN` /
+`GITHUB_TOKEN`, or the Keychain (`cloud.github-models`) — never from source or CI logs.
+
+### Demo app (`.dmg`)
+
+`scripts/build-app.sh` builds `AuraExample.app` and packages it into
+`build/AuraExample.dmg` with a drag-to-**Applications** alias. The app is
+development-signed (runs on this Mac); to distribute it, re-sign with a Developer ID
+identity and notarize (`xcrun notarytool submit … && xcrun stapler staple …`).
+Requires macOS 26 (AgentCrew).
 
 ---
 
