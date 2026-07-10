@@ -12,6 +12,7 @@ struct HybridSettingsView: View {
 
     @State private var anthropicKey = ""
     @State private var openAIKey = ""
+    @State private var hfDownloadKey = ""
 
     private var costCap: Binding<Double> {
         Binding(
@@ -46,6 +47,16 @@ struct HybridSettingsView: View {
                     Text("Cloud API keys (BYOK)")
                 } footer: {
                     Text("Keys are stored in the Keychain (this device only) — never in code, files, or logs.")
+                }
+
+                Section {
+                    keyRow(title: "Hugging Face token",
+                           account: KeychainDownloadAuth.huggingFaceAccount,
+                           field: $hfDownloadKey)
+                } header: {
+                    Text("Model download tokens")
+                } footer: {
+                    Text("A Hugging Face access token lets AuraLocal download gated or private GGUF repos. Stored in the Keychain.")
                 }
 
                 Section("This session") {

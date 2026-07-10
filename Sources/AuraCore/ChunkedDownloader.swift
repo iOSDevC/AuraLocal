@@ -37,18 +37,24 @@ public actor ChunkedDownloader {
 
     private let session: URLSession
 
+    /// Injects auth headers for gated/private sources (default: Keychain-backed).
+    private let auth: DownloadAuthorizing
+
     /// Create a chunked downloader.
     /// - Parameters:
     ///   - concurrentChunks: Max parallel connections per file (default 4).
     ///   - chunkThresholdMB: Files smaller than this (MB) download in a single stream (default 10).
     ///   - timeoutSeconds: Per-request timeout in seconds (default 60).
     ///   - resourceTimeoutSeconds: Total per-file timeout in seconds (default 1800 = 30min).
+    ///   - auth: Authorizer that attaches headers for gated/private hosts (default Keychain-backed).
     public init(
         concurrentChunks: Int = 4,
         chunkThresholdMB: Int = 10,
         timeoutSeconds: TimeInterval = 60,
-        resourceTimeoutSeconds: TimeInterval = 1800
+        resourceTimeoutSeconds: TimeInterval = 1800,
+        auth: DownloadAuthorizing = KeychainDownloadAuth()
     ) {
+        self.auth = auth
         self.maxConcurrentChunks = max(1, concurrentChunks)
         self.chunkThreshold = chunkThresholdMB * 1024 * 1024
 
@@ -91,10 +97,13 @@ public actor ChunkedDownloader {
         onProgress: @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
         // HEAD to check size and Range support
-        var headRequest = URLRequest(url: url)
+        var headRequest = auth.request(for: url)
         headRequest.httpMethod = "HEAD"
         let (_, headResponse) = try await session.data(for: headRequest)
 
+        if let http = headResponse as? HTTPURLResponse, http.statusCode == 401 || http.statusCode == 403 {
+            throw DownloadError.authRequired(url.host ?? fileName)
+        }
         guard let http = headResponse as? HTTPURLResponse, http.statusCode == 200 else {
             try await singleDownload(from: url, to: destination, fileName: fileName, onProgress: onProgress)
             return
@@ -164,10 +173,13 @@ public actor ChunkedDownloader {
         fileName: String,
         onProgress: @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
-        let (tempURL, response) = try await session.download(from: url)
+        let (tempURL, response) = try await session.download(for: auth.request(for: url))
 
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             try? FileManager.default.removeItem(at: tempURL)
+            if http.statusCode == 401 || http.statusCode == 403 {
+                throw DownloadError.authRequired(url.host ?? fileName)
+            }
             throw DownloadError.httpError(http.statusCode, fileName)
         }
 
@@ -185,7 +197,7 @@ public actor ChunkedDownloader {
         to destination: URL,
         tracker: ProgressTracker
     ) async throws {
-        var request = URLRequest(url: url)
+        var request = auth.request(for: url)
         request.setValue("bytes=\(range.start)-\(range.end)", forHTTPHeaderField: "Range")
 
         let (bytes, response) = try await session.bytes(for: request)
@@ -193,6 +205,9 @@ public actor ChunkedDownloader {
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 206 || http.statusCode == 200 else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if code == 401 || code == 403 {
+                throw DownloadError.authRequired(url.host ?? url.lastPathComponent)
+            }
             throw DownloadError.httpError(code, url.lastPathComponent)
         }
 
@@ -222,11 +237,14 @@ public actor ChunkedDownloader {
 
     public enum DownloadError: LocalizedError {
         case httpError(Int, String)
+        case authRequired(String)
 
         public var errorDescription: String? {
             switch self {
             case .httpError(let code, let file):
                 return "\(file): HTTP \(code)"
+            case .authRequired(let host):
+                return "\(host) requires authentication. Add a download token in Settings."
             }
         }
     }

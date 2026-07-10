@@ -165,6 +165,7 @@ public enum HuggingFaceRepo {
     public enum RepoError: LocalizedError, Equatable {
         case notARepositoryURL
         case notFound
+        case authRequired
         case http(Int)
         case noResponse
 
@@ -172,6 +173,7 @@ public enum HuggingFaceRepo {
             switch self {
             case .notARepositoryURL: "Not a Hugging Face repository URL."
             case .notFound: "Repository not found on Hugging Face."
+            case .authRequired: "This repository is gated or private — add a Hugging Face token in Settings."
             case .http(let code): "Hugging Face returned HTTP \(code)."
             case .noResponse: "No response from Hugging Face."
             }
@@ -180,18 +182,26 @@ public enum HuggingFaceRepo {
 
     /// Fetch a repo's `.gguf` files from the Hugging Face tree API. Throws ``RepoError`` on a non-repo URL or a
     /// non-200 response (404 → not found); rethrows transport errors. Off the main actor via `URLSession`.
-    public static func listGGUF(repoURL: String) async throws -> [RemoteGGUFFile] {
+    public static func listGGUF(
+        repoURL: String,
+        auth: DownloadAuthorizing = KeychainDownloadAuth()
+    ) async throws -> [RemoteGGUFFile] {
         guard let ref = parse(repoURL), let api = treeAPIURL(ref) else {
             throw RepoError.notARepositoryURL
         }
         var request = URLRequest(url: api)
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        auth.authorize(&request)   // token for gated/private repos (no-op when public)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw RepoError.noResponse }
         guard http.statusCode == 200 else {
-            throw http.statusCode == 404 ? RepoError.notFound : RepoError.http(http.statusCode)
+            switch http.statusCode {
+            case 401, 403: throw RepoError.authRequired
+            case 404:      throw RepoError.notFound
+            default:       throw RepoError.http(http.statusCode)
+            }
         }
         return ggufFiles(fromTreeJSON: data, owner: ref.owner, repo: ref.repo, revision: ref.revision)
     }
