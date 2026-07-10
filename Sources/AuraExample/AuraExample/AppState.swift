@@ -4,6 +4,7 @@ import SwiftUI
 import AuraCore
 import AuraDocs
 import AuraAppleIntelligence
+import AuraAgents
 
 // MARK: - AppState
 //

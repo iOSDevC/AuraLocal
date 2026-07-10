@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import AuraCore
 import AuraDocs
+import AuraAgents
 
 // MARK: - PipelineTab
 
@@ -91,7 +92,12 @@ struct PipelineTab: View {
                 // §Fix #15: Minimum 60pt target for visionOS eye-tracking
                 Button {
                     focused = false
-                    Task { await crew?.run(topic: topic) }
+                    Task {
+                        await crew?.run(
+                            topic: topic,
+                            policy: HybridSettings.shared.policy,
+                            consent: HybridSettings.shared.consent)
+                    }
                 } label: {
                     Image(systemName: "play.fill")
                         .font(.system(size: 20))

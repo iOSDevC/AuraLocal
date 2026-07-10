@@ -14,6 +14,7 @@ let package = Package(
         .library(name: "AuraVoice",             targets: ["AuraVoice"]),
         .library(name: "AuraDocs",              targets: ["AuraDocs"]),
         .library(name: "AuraAppleIntelligence", targets: ["AuraAppleIntelligence"]),
+        .library(name: "AuraAgents",            targets: ["AuraAgents"]),
         .executable(name: "aura", targets: ["aura"]),
     ],
     dependencies: [
@@ -85,6 +86,16 @@ let package = Package(
                     .enableUpcomingFeature("StrictConcurrency")
                 ]
             ),
+
+        // MARK: - Agents (multi-agent orchestration)
+        // Reusable agent pipeline (AgentCrew) on FoundationModels + per-step hybrid
+        // escalation. Sits above the base modules; gated to iOS 26 / macOS 26 in-code.
+        .target(
+            name: "AuraAgents",
+            dependencies: ["AuraCore", "AuraAppleIntelligence", "AuraDocs"],
+            path: "Sources/AuraAgents",
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
 
         // MARK: - CLI
         // `aura` — a headless integration harness that drives the hybrid + tools

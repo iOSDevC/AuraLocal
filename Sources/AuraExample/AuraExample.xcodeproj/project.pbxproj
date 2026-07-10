@@ -14,6 +14,7 @@
 		FE034FF82F7CA47E0047B53B /* AuraVoice in Frameworks */ = {isa = PBXBuildFile; productRef = FE034FF72F7CA47E0047B53B /* AuraVoice */; };
 		FED51C942F5B7B0600D5040F /* AuraCore in Frameworks */ = {isa = PBXBuildFile; productRef = FED51C932F5B7B0600D5040F /* AuraCore */; };
 		FED51CA92F5B7BA500D5040F /* AuraCore in Frameworks */ = {isa = PBXBuildFile; productRef = FED51CA82F5B7BA500D5040F /* AuraCore */; };
+		FEA6E0A100000000000000A2 /* AuraAgents in Frameworks */ = {isa = PBXBuildFile; productRef = FEA6E0A100000000000000A1 /* AuraAgents */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +41,7 @@
 				FED51CA92F5B7BA500D5040F /* AuraCore in Frameworks */,
 				FE034FF22F7CA47E0047B53B /* AuraCore in Frameworks */,
 				FE034FF02F7CA47E0047B53B /* AuraAppleIntelligence in Frameworks */,
+				FEA6E0A100000000000000A2 /* AuraAgents in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -97,6 +99,7 @@
 				FE034FF32F7CA47E0047B53B /* AuraDocs */,
 				FE034FF52F7CA47E0047B53B /* AuraUI */,
 				FE034FF72F7CA47E0047B53B /* AuraVoice */,
+				FEA6E0A100000000000000A1 /* AuraAgents */,
 			);
 			productName = AuraExample;
 			productReference = FED51C5F2F5B7A7900D5040F /* AuraExample.app */;
@@ -438,6 +441,10 @@
 		FED51CA82F5B7BA500D5040F /* AuraCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AuraCore;
+		};
+		FEA6E0A100000000000000A1 /* AuraAgents */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AuraAgents;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

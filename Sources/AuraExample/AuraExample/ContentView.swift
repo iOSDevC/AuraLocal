@@ -5,6 +5,7 @@ import AuraUI
 import AuraVoice
 import AuraDocs
 import AuraAppleIntelligence
+import AuraAgents
 
 // MARK: - ContentView
 //

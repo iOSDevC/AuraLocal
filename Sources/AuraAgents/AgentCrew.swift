@@ -7,7 +7,9 @@ import AuraAppleIntelligence
 
 // Disambiguate: AuraCore re-exports LocalLLMClientCore, which (on recent main)
 // also defines `GeneratedContent`, colliding with FoundationModels' type used by
-// the @Generable macro below. Pin the name to FoundationModels here.
+// the @Generable macro below. Pin the name to FoundationModels here. Gated because
+// FoundationModels.GeneratedContent is macOS 26 / iOS 26 only.
+@available(iOS 26, macOS 26, *)
 typealias GeneratedContent = FoundationModels.GeneratedContent
 
 // MARK: - AgentMemory
@@ -119,35 +121,42 @@ struct MemoryReadTool: Tool {
 
 // MARK: - AgentCrew
 //
-// §Fix #20: AIAgent.init() is now throwing — wrapped in do/catch.
-// §Fix #21: Catches typed AISessionError for granular error handling.
-// §Fix #24: Caller should wrap in AIAvailabilityGate.
+// A reusable multi-agent pipeline (Extractor → Reviewer → Architect → Reporter)
+// on Apple FoundationModels, with per-step hybrid escalation on the Architect
+// step. Requires iOS 26 / macOS 26 with Apple Intelligence.
 
 @available(iOS 26, macOS 26, *)
 @MainActor
-final class AgentCrew: ObservableObject {
+public final class AgentCrew: ObservableObject {
 
-    @Published var isRunning       = false
-    @Published var currentAgent    = ""
-    @Published var stepOutputs:    [(role: String, output: String)] = []
-    @Published var streamingOutput = ""
-    @Published var finalReport:    AnalysisReport?
-    @Published var exportedURL:    URL?
-    @Published var error:          String?
+    @Published public var isRunning       = false
+    @Published public var currentAgent    = ""
+    @Published public var stepOutputs:    [(role: String, output: String)] = []
+    @Published public var streamingOutput = ""
+    @Published public var finalReport:    AnalysisReport?
+    @Published public var exportedURL:    URL?
+    @Published public var error:          String?
     /// Set when the Architect step was transparently escalated to a bigger model.
-    @Published var escalationNote: String?
+    @Published public var escalationNote: String?
 
     private let store:   ConversationStore
     private let library: DocumentLibrary
     private let memory:  AgentMemory
 
-    init(store: ConversationStore, library: DocumentLibrary) {
+    public init(store: ConversationStore, library: DocumentLibrary) {
         self.store   = store
         self.library = library
         self.memory  = AgentMemory(store: store)
     }
 
-    func run(topic: String) async {
+    /// Run the pipeline. `policy` + `consent` drive the optional per-step hybrid
+    /// escalation — inject the host app's escalation policy and consent gate.
+    /// With the default (`.off` / `DenyingConsentGate`) the crew stays fully local.
+    public func run(
+        topic: String,
+        policy: EscalationPolicy = .off,
+        consent: any ConsentGate = DenyingConsentGate()
+    ) async {
         guard !isRunning else { return }
         isRunning = true; stepOutputs = []; streamingOutput = ""
         finalReport = nil; exportedURL = nil; error = nil; escalationNote = nil
@@ -191,7 +200,8 @@ final class AgentCrew: ObservableObject {
             // Hybrid: if the local draft looks weak, transparently escalate THIS step
             // to a bigger model (LAN or GitHub Models), reusing the router's
             // compression + consent + cost machinery. Fail-closed to the local draft.
-            let architecture = await escalateIfWeak(topic: topic, localAnswer: architectLocal)
+            let architecture = await escalateIfWeak(
+                topic: topic, localAnswer: architectLocal, policy: policy, consent: consent)
             try await memory.write(role: "Architect", content: architecture)
             stepOutputs.append((role: "Architect", output: architecture))
 
@@ -214,7 +224,6 @@ final class AgentCrew: ObservableObject {
             exportedURL = try await exportLatestDocument()
 
         } catch let sessionError as AISessionError {
-            // §Fix #21: Handle typed FoundationModels errors
             switch sessionError {
             case .rateLimited:
                 self.error = "Rate limited by Apple Intelligence. Please wait a moment and try again."
@@ -237,8 +246,10 @@ final class AgentCrew: ObservableObject {
     /// Reuses HybridEscalator (router + compression + consent + cost). Returns the
     /// local answer unchanged when the policy is off, the router keeps it local, or
     /// anything fails.
-    private func escalateIfWeak(topic: String, localAnswer: String) async -> String {
-        let policy = HybridSettings.shared.policy
+    private func escalateIfWeak(
+        topic: String, localAnswer: String,
+        policy: EscalationPolicy, consent: any ConsentGate
+    ) async -> String {
         guard policy.mode != .off else { return localAnswer }
         let reviewerNotes = (try? await memory.read(from: "Reviewer")) ?? ""
         do {
@@ -248,7 +259,7 @@ final class AgentCrew: ObservableObject {
                 context: reviewerNotes,
                 question: "Propose structured, prioritized recommendations for '\(topic)'.",
                 localAnswer: localAnswer,
-                consent: HybridSettings.shared.consent)
+                consent: consent)
             if let result, !result.answer.isEmpty {
                 var note = "Architect escalated → \(result.providerName)"
                 if let usage = result.usage { note += " · \(usage.inputTokens)/\(usage.outputTokens) tok" }
@@ -271,7 +282,7 @@ final class AgentCrew: ObservableObject {
         return try await library.export(documentID: first.id, to: dest, format: .jsonlGz)
     }
 
-    func loadPastRuns() async throws -> [Conversation] {
+    public func loadPastRuns() async throws -> [Conversation] {
         try await store.allConversations()
             .filter { $0.title.hasPrefix("AgentCrew:") }
     }
@@ -279,10 +290,17 @@ final class AgentCrew: ObservableObject {
 
 // MARK: - AnalysisReport
 
-struct AnalysisReport: Identifiable {
-    let id          = UUID()
-    let topic:      String
-    let stepOutputs: [(role: String, output: String)]
-    let fullText:   String
-    let createdAt:  Date
+public struct AnalysisReport: Identifiable {
+    public let id          = UUID()
+    public let topic:      String
+    public let stepOutputs: [(role: String, output: String)]
+    public let fullText:   String
+    public let createdAt:  Date
+
+    public init(topic: String, stepOutputs: [(role: String, output: String)], fullText: String, createdAt: Date) {
+        self.topic       = topic
+        self.stepOutputs = stepOutputs
+        self.fullText    = fullText
+        self.createdAt   = createdAt
+    }
 }
