@@ -10,8 +10,12 @@ struct HybridSettingsView: View {
     @ObservedObject private var ledger = CostLedger.shared
     @Environment(\.dismiss) private var dismiss
 
+    /// When embedded in a tab or the macOS Settings scene, hide the sheet's "Done" button.
+    var isEmbedded = false
+
     @State private var anthropicKey = ""
     @State private var openAIKey = ""
+    @State private var gitHubModelsKey = ""
     @State private var hfDownloadKey = ""
 
     private var costCap: Binding<Double> {
@@ -43,10 +47,11 @@ struct HybridSettingsView: View {
                 Section {
                     keyRow(title: "Anthropic (Claude)", account: "cloud.anthropic", field: $anthropicKey)
                     keyRow(title: "OpenAI", account: "cloud.openai", field: $openAIKey)
+                    keyRow(title: "GitHub Models (Copilot)", account: "cloud.github-models", field: $gitHubModelsKey)
                 } header: {
                     Text("Cloud API keys (BYOK)")
                 } footer: {
-                    Text("Keys are stored in the Keychain (this device only) — never in code, files, or logs.")
+                    Text("Keys are stored in the Keychain (this device only) — never in code, files, or logs. GitHub Models rides your GitHub/Copilot account: use a fine-grained token with the models:read permission.")
                 }
 
                 Section {
@@ -67,7 +72,11 @@ struct HybridSettingsView: View {
                 }
             }
             .navigationTitle("Hybrid settings")
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar {
+                if !isEmbedded {
+                    ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                }
+            }
         }
         .frame(minWidth: 460, minHeight: 520)
     }

@@ -47,6 +47,10 @@ struct ContentView: View {
                     ModelsTab()
                 }
 
+                Tab("Hybrid", systemImage: "cloud.bolt") {
+                    HybridTab()
+                }
+
                 // AgentCrew — requires iOS 26+ with Apple Intelligence
                 if #available(iOS 26, macOS 26, *) {
                     Tab("Agents", systemImage: "cpu") {
