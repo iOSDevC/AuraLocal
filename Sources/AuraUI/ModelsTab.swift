@@ -320,6 +320,8 @@ private extension BackendKind {
         case .mlx:            "MLX"
         case .llamaCpp:       "GGUF"
         case .layerStreaming:  "STREAM"
+        case .remote:          "REMOTE"
+        case .hybrid:          "HYBRID"
         }
     }
 
@@ -328,6 +330,8 @@ private extension BackendKind {
         case .mlx:            .blue
         case .llamaCpp:       .purple
         case .layerStreaming:  .orange
+        case .remote:          .teal
+        case .hybrid:          .indigo
         }
     }
 }

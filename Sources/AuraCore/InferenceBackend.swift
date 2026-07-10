@@ -53,4 +53,8 @@ public enum BackendKind: String, Sendable {
     case llamaCpp
     /// Layer-streaming via llama.cpp — loads one transformer layer at a time.
     case layerStreaming
+    /// Remote provider (cloud or the user's own llama-server/Ollama box).
+    case remote
+    /// Local backend that can escalate individual requests to a remote provider.
+    case hybrid
 }
