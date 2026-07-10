@@ -314,3 +314,106 @@ var aggressiveMemorySaving: Bool = false       // evicts models on background
 ```
 
 No-op on macOS.
+
+---
+
+## Hybrid Inference
+
+Optional, **consent-gated** escalation to a bigger local or cloud model. Off by default.
+See the [Hybrid Inference guide]({{ '/guide/hybrid' | relative_url }}) for the full flow.
+
+### Local provider detection
+
+```swift
+@MainActor
+public enum LocalProviderDetector {
+    // Probe Ollama (:11434) and llama-server (:8080/v1). Never throws.
+    static func detectAll(...) async -> [LocalProviderStatus]
+}
+```
+
+### HybridEscalator
+
+```swift
+@MainActor
+public final class HybridEscalator {
+    // Route by policy: stays local, escalates, or asks consent per rules R1–R7.
+    func routeAndEscalate(
+        policy: EscalationPolicy,
+        context: String,
+        question: String,
+        localAnswer: String? = nil,        // enables the low-confidence trigger
+        consent: any ConsentGate = DenyingConsentGate(),
+        onToken: @escaping @MainActor (String) -> Void = { _ in }
+    ) async throws -> Result?              // nil = the router kept it local
+
+    // Direct escalation to a chosen target.
+    func escalate(to target: RemoteTarget, context: String, question: String,
+                  maxTokens: Int, redactPII: Bool, ...) async throws -> Result
+
+    static func candidateTargets(policy: EscalationPolicy) async -> [RemoteTarget]
+
+    public struct Result: Sendable {
+        let answer: String
+        let usage: TokenUsage?
+        let compression: CompressionResult
+        let providerName: String
+        let redactedPIICount: Int
+        let fromCache: Bool
+    }
+}
+```
+
+### EscalationPolicy
+
+```swift
+public struct EscalationPolicy: Codable, Sendable {
+    var mode: Mode                     // .off / .askEachTime / .autoWithConsentMemory
+    var allowCloud: Bool
+    var costCapUSDPerSession: Decimal
+
+    static let off: EscalationPolicy   // the default — never leaves the device
+}
+```
+
+### Providers & targets
+
+```swift
+public protocol RemoteLLMProvider: Sendable { /* id, displayName, stream(_:) */ }
+
+public struct OpenAICompatibleProvider: RemoteLLMProvider {
+    // GitHub Models preset — BYOK, a fine-grained PAT with models:read.
+    static func gitHubModels(apiKey: String) -> OpenAICompatibleProvider
+    // Build from a detected local llama-server / Ollama endpoint.
+    static func from(_ status: LocalProviderStatus) -> OpenAICompatibleProvider
+}
+
+public struct RemoteTarget: Sendable {
+    let modelID: String
+    let contextLength: Int?
+    let origin: Origin                 // .cloud / .localNetwork(LocalProviderKind)
+}
+```
+
+### Keys, cost & privacy
+
+```swift
+// BYOK API keys — Keychain only (WhenUnlockedThisDeviceOnly, never iCloud-synced).
+// Accounts: "cloud.github-models" · "cloud.anthropic" · "cloud.openai".
+public enum KeychainStore {
+    static func save(_ key: String, for account: String) throws
+    static func read(for account: String) -> String?
+    static func hasKey(for account: String) -> Bool
+}
+
+@MainActor
+public final class CostLedger: ObservableObject {
+    static let shared: CostLedger
+    @Published var records: [Record]   // per-escalation token + $ accounting
+    var sessionTokens: Int
+    var sessionCostUSD: Decimal         // local-network targets are always $0
+}
+```
+
+Also available: `ContextCompressor` (token-saving compression), `PIIRedactor`,
+`ResponseCache`, `ConsentGate`, and `NetworkMonitor`.
