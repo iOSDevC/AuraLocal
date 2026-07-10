@@ -79,4 +79,91 @@ public final class HybridEscalator {
             usage: backend.lastUsage,
             providerName: target.provider.displayName)
     }
+
+    // MARK: - Cloud targets (Phase 2)
+
+    /// Build cloud escalation targets from Keychain-stored API keys (BYOK).
+    public static func cloudTargets(
+        allowCloud: Bool,
+        anthropicModel: String = "claude-sonnet-4-5",
+        openAIModel: String = "gpt-4o"
+    ) -> [RemoteTarget] {
+        guard allowCloud else { return [] }
+        var targets: [RemoteTarget] = []
+        if let key = KeychainStore.read(for: "cloud.anthropic") {
+            targets.append(RemoteTarget(
+                provider: AnthropicProvider(apiKey: key),
+                modelID: anthropicModel, contextLength: 200_000, origin: .cloud))
+        }
+        if let key = KeychainStore.read(for: "cloud.openai") {
+            let provider = OpenAICompatibleProvider(
+                id: "cloud.openai", displayName: "OpenAI",
+                baseURL: URL(string: "https://api.openai.com/v1")!, apiKey: key,
+                retentionNote: "Sent to OpenAI's API. See their data-retention policy.")
+            targets.append(RemoteTarget(
+                provider: provider, modelID: openAIModel, contextLength: 128_000, origin: .cloud))
+        }
+        return targets
+    }
+
+    /// Candidate targets in preference order: the user's own LAN box first, then
+    /// cloud (only if the policy allows and keys are configured).
+    public static func candidateTargets(policy: EscalationPolicy) async -> [RemoteTarget] {
+        var targets: [RemoteTarget] = []
+        if let lan = await bestLocalTarget() { targets.append(lan) }
+        targets.append(contentsOf: cloudTargets(allowCloud: policy.allowCloud))
+        return targets
+    }
+
+    // MARK: - Policy-driven escalation (Phase 2)
+
+    /// Consult the router and (if needed) the consent gate, then escalate.
+    /// Returns `nil` when the policy/router keeps the request local. Throws
+    /// ``AuraError/escalationDeclined`` if the user declines an offer.
+    public func routeAndEscalate(
+        policy: EscalationPolicy,
+        systemPrompt: String? = nil,
+        context: String,
+        question: String,
+        domain: Model.Domain? = nil,
+        localContextWindow: Int = 8192,
+        consent: any ConsentGate = DenyingConsentGate(),
+        maxTokens: Int = 1024,
+        onToken: @escaping @MainActor (String) -> Void = { _ in }
+    ) async throws -> Result? {
+        let candidates = await Self.candidateTargets(policy: policy)
+        guard let target = candidates.first else { return nil }   // R2: no target
+
+        let promptTokens = ContextCompressor.estimateTokens((systemPrompt ?? "") + context + question)
+        let projected = CostLedger.projectedCost(target: target, inputTokens: promptTokens, maxOutput: maxTokens)
+
+        let decision = EscalationRouter.decide(RoutingInput(
+            policy: policy,
+            hasCandidateTarget: true,
+            candidateIsCloud: !target.isLocalNetwork,
+            online: NetworkMonitor.shared.isOnline,
+            promptTokens: promptTokens,
+            localContextWindow: localContextWindow,
+            localAnswer: nil,
+            domain: domain,
+            projectedCostUSD: projected))
+
+        switch decision {
+        case .stayLocal:
+            return nil
+        case .escalate:
+            return try await escalate(to: target, systemPrompt: systemPrompt,
+                                      context: context, question: question,
+                                      maxTokens: maxTokens, onToken: onToken)
+        case .offer:
+            let budget = max(256, Int(Double(target.contextLength ?? 8192) * policy.keepRatio) - maxTokens)
+            let preview = compressor.compress(context: context, question: question, budgetTokens: budget)
+            guard await consent.requestConsent(target: target, preview: preview, projectedCostUSD: projected) else {
+                throw AuraError.escalationDeclined
+            }
+            return try await escalate(to: target, systemPrompt: systemPrompt,
+                                      context: context, question: question,
+                                      maxTokens: maxTokens, onToken: onToken)
+        }
+    }
 }

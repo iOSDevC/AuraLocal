@@ -28,6 +28,8 @@ public struct AuraProfile: Sendable, Identifiable {
     public var tools: [any LLMTool]
     /// Optional structured-output constraint. Carried now; grammar/JSON-mode plumbing is a later increment.
     public var outputSchema: OutputSchema?
+    /// Remote-escalation policy for this profile. Default `.off` (local-only).
+    public var escalation: EscalationPolicy
 
     public init(id: String,
                 displayName: String,
@@ -35,7 +37,8 @@ public struct AuraProfile: Sendable, Identifiable {
                 model: Model,
                 sampling: SamplingParams = .default,
                 tools: [any LLMTool] = [],
-                outputSchema: OutputSchema? = nil) {
+                outputSchema: OutputSchema? = nil,
+                escalation: EscalationPolicy = .off) {
         self.id = id
         self.displayName = displayName
         self.instructions = instructions
@@ -43,6 +46,7 @@ public struct AuraProfile: Sendable, Identifiable {
         self.sampling = sampling
         self.tools = tools
         self.outputSchema = outputSchema
+        self.escalation = escalation
     }
 
     /// Whether this profile enables function-calling (agentic) vs. plain chat.
@@ -60,6 +64,7 @@ extension AuraProfile: Equatable {
             && lhs.sampling == rhs.sampling
             && lhs.tools.map(\.name) == rhs.tools.map(\.name)
             && lhs.outputSchema == rhs.outputSchema
+            && lhs.escalation == rhs.escalation
     }
 }
 

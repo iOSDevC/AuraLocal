@@ -36,8 +36,12 @@ public final class CostLedger: ObservableObject {
 
     struct Price { let input: Decimal; let output: Decimal }  // USD per 1M tokens
 
-    /// Cloud price table — populated in Phase 2. Local targets are always free.
-    static let priceTable: [String: Price] = [:]
+    /// Cloud price table (approximate USD per 1M tokens — edit to match your plan).
+    /// Local targets are always free.
+    static let priceTable: [String: Price] = [
+        "cloud.anthropic": Price(input: 3, output: 15),
+        "cloud.openai": Price(input: 2.5, output: 10),
+    ]
 
     static func cost(usage: TokenUsage?, origin: RemoteTarget.Origin, provider: String) -> Decimal {
         if case .localNetwork = origin { return 0 }
@@ -45,5 +49,11 @@ public final class CostLedger: ObservableObject {
         let million = Decimal(1_000_000)
         return Decimal(usage.inputTokens) / million * price.input
              + Decimal(usage.outputTokens) / million * price.output
+    }
+
+    /// Rough pre-flight cost estimate for a target (input + max output at list price).
+    public static func projectedCost(target: RemoteTarget, inputTokens: Int, maxOutput: Int) -> Decimal {
+        cost(usage: TokenUsage(inputTokens: inputTokens, outputTokens: maxOutput),
+             origin: target.origin, provider: target.provider.id)
     }
 }
