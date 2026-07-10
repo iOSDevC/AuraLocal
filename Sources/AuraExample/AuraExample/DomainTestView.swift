@@ -22,6 +22,8 @@ struct DomainTestView: View {
     @State private var errorText: String?
     @State private var isRunning = false
     @State private var remoteReceipt: String?
+    @State private var showSettings = false
+    @ObservedObject private var consentGate = HybridSettings.shared.consent
 
     private var isDownloaded: Bool { model.isDownloaded }
 
@@ -115,6 +117,15 @@ struct DomainTestView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
+                ToolbarItem {
+                    Button { showSettings = true } label: {
+                        Image(systemName: "gearshape")
+                    }
+                }
+            }
+            .sheet(isPresented: $showSettings) { HybridSettingsView() }
+            .sheet(item: $consentGate.pending) { request in
+                ConsentSheet(request: request, gate: consentGate)
             }
         }
         .frame(minWidth: 460, minHeight: 560)
@@ -146,12 +157,29 @@ struct DomainTestView: View {
         response = ""
         errorText = nil
         remoteReceipt = nil
-        status = "Finding a bigger local model…"
+        status = "Finding a target…"
         defer { isRunning = false; status = "" }
 
-        guard let target = await HybridEscalator.bestLocalTarget() else {
-            errorText = "No local provider running. Start Ollama or llama-server, then retry."
+        let policy = HybridSettings.shared.policy
+        let candidates = await HybridEscalator.candidateTargets(policy: policy)
+        guard let target = candidates.first else {
+            errorText = "No provider available. Start Ollama/llama-server, or add a cloud key in Settings (⚙) and allow cloud."
             return
+        }
+
+        // Cloud targets require per-conversation consent (LAN is trusted).
+        if !target.isLocalNetwork {
+            let preview = ContextCompressor().compress(
+                context: prompt, question: prompt,
+                budgetTokens: max(256, target.contextLength ?? 8192))
+            let cost = CostLedger.projectedCost(
+                target: target, inputTokens: max(1, prompt.count / 4), maxOutput: 512)
+            let approved = await HybridSettings.shared.consent.requestConsent(
+                target: target, preview: preview, projectedCostUSD: cost)
+            guard approved else {
+                errorText = "Escalation declined — keeping local."
+                return
+            }
         }
         status = "Asking \(target.provider.displayName)…"
         do {
