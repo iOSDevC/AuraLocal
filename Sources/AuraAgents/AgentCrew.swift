@@ -154,6 +154,7 @@ public final class AgentCrew: ObservableObject {
     /// With the default (`.off` / `DenyingConsentGate`) the crew stays fully local.
     public func run(
         topic: String,
+        domain: Model.Domain? = nil,
         policy: EscalationPolicy = .off,
         consent: any ConsentGate = DenyingConsentGate()
     ) async {
@@ -201,7 +202,7 @@ public final class AgentCrew: ObservableObject {
             // to a bigger model (LAN or GitHub Models), reusing the router's
             // compression + consent + cost machinery. Fail-closed to the local draft.
             let architecture = await escalateIfWeak(
-                topic: topic, localAnswer: architectLocal, policy: policy, consent: consent)
+                topic: topic, localAnswer: architectLocal, policy: policy, consent: consent, domain: domain)
             try await memory.write(role: "Architect", content: architecture)
             stepOutputs.append((role: "Architect", output: architecture))
 
@@ -248,7 +249,8 @@ public final class AgentCrew: ObservableObject {
     /// anything fails.
     private func escalateIfWeak(
         topic: String, localAnswer: String,
-        policy: EscalationPolicy, consent: any ConsentGate
+        policy: EscalationPolicy, consent: any ConsentGate,
+        domain: Model.Domain?
     ) async -> String {
         guard policy.mode != .off else { return localAnswer }
         let reviewerNotes = (try? await memory.read(from: "Reviewer")) ?? ""
@@ -258,6 +260,7 @@ public final class AgentCrew: ObservableObject {
                 systemPrompt: "You are a solution architect. Synthesize actionable, prioritized recommendations.",
                 context: reviewerNotes,
                 question: "Propose structured, prioritized recommendations for '\(topic)'.",
+                domain: domain,
                 localAnswer: localAnswer,
                 consent: consent)
             if let result, !result.answer.isEmpty {

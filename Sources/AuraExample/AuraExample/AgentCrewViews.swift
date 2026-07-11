@@ -10,6 +10,7 @@ struct PipelineTab: View {
     @EnvironmentObject var appState: AppState
     @State private var topic        = ""
     @State private var showReport   = false
+    @State private var selectedDomain: Model.Domain?
     @FocusState private var focused: Bool
 
     private var crew: AgentCrew? { appState.crew }
@@ -95,6 +96,7 @@ struct PipelineTab: View {
                     Task {
                         await crew?.run(
                             topic: topic,
+                            domain: selectedDomain,
                             policy: HybridSettings.shared.policy,
                             consent: HybridSettings.shared.consent)
                     }
@@ -113,6 +115,16 @@ struct PipelineTab: View {
                 .accessibilityLabel("Run pipeline")
                 .accessibilityHint(canRun ? "Starts the agent pipeline" : "Enter a topic first")
             }
+
+            Picker("Domain", selection: $selectedDomain) {
+                Text("General").tag(Model.Domain?.none)
+                ForEach(Model.Domain.allCases) { domain in
+                    Text(domain.displayName).tag(Model.Domain?.some(domain))
+                }
+            }
+            .pickerStyle(.segmented)
+            Text("Sensitive domains (security, medicine) escalate to a stronger model more eagerly.")
+                .font(.caption2).foregroundStyle(.secondary)
         }
     }
 

@@ -53,6 +53,29 @@ final class RouteAndEscalateTests: XCTestCase {
             targets: [target])
         XCTAssertNil(result)
     }
+
+    func testSensitiveDomainEscalatesAModerateAnswer() async throws {
+        // The dead-code fix: passing `domain:` activates the sensitive-domain bias
+        // (EscalationRouter raises the confidence bar for .security/.medicine), so a
+        // moderate answer that stays local for a general domain escalates for security.
+        let target = lanTarget(answer: "SPECIALIST ANSWER")
+        let moderate = "A reasonably complete answer that is over forty characters long and confident."
+
+        let asGeneral = try await HybridEscalator().routeAndEscalate(
+            policy: EscalationPolicy(mode: .askEachTime),
+            context: "short", question: "a moderately hard systems question",
+            domain: nil, localAnswer: moderate,
+            consent: ApprovingConsentGate(), targets: [target])
+        XCTAssertNil(asGeneral, "a moderate answer should stay local for a general domain")
+
+        let asSecurity = try await HybridEscalator().routeAndEscalate(
+            policy: EscalationPolicy(mode: .askEachTime),
+            context: "short", question: "a moderately hard security question",
+            domain: .security, localAnswer: moderate,
+            consent: ApprovingConsentGate(), targets: [target])
+        XCTAssertEqual(asSecurity?.answer, "SPECIALIST ANSWER",
+                       "a .security step must escalate the same moderate answer")
+    }
 }
 
 // MARK: - Test doubles
