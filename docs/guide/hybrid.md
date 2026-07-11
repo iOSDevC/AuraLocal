@@ -121,6 +121,16 @@ and only when that draft looks weak does it transparently escalate to a bigger m
 reusing the same compression, consent, and cost machinery. Fail-closed: any error or a
 *stay-local* decision keeps the local draft.
 
+The reusable pipeline lives in the **`AuraAgents`** module (requires iOS 26 / macOS 26):
+
+```swift
+import AuraAgents
+
+let crew = AgentCrew(store: .shared, library: .shared)
+// Inject the escalation policy + consent gate; the Architect step escalates when weak.
+await crew.run(topic: "Q3 security posture", policy: policy, consent: myConsentGate)
+```
+
 ## Privacy & cost
 
 - **BYOK keys** live only in the Keychain (`WhenUnlockedThisDeviceOnly`), never synced to iCloud.

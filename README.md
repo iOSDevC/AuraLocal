@@ -75,10 +75,12 @@ If your package imports `AuraCore`, add the C++ interop setting:
 
 | Module | Contents |
 |--------|----------|
-| `AuraCore` | Core inference, dual-backend engine, models, conversation persistence |
+| `AuraCore` | Core inference, dual-backend engine, models, conversation persistence, hybrid escalation |
 | `AuraUI` | SwiftUI views and ViewModels for drop-in UI |
 | `AuraVoice` | Full-duplex voice interface (STT + TTS), 100% local |
 | `AuraDocs` | RAG document library — PDF, DOCX, text, images |
+| `AuraAppleIntelligence` | Apple FoundationModels agents, tools & structured output (iOS 26 / macOS 26) |
+| `AuraAgents` | Reusable multi-agent orchestration (`AgentCrew`) with per-step hybrid escalation |
 
 ---
 
