@@ -119,6 +119,54 @@ struct MemoryReadTool: Tool {
     }
 }
 
+// MARK: - RecallTool
+
+/// Lets an agent resume context from PAST tasks by keyword — the callable layer
+/// over ConversationStore's cross-session history (scoped to agent/task turns, so
+/// the user's private direct chats never leak into an agent run).
+@available(iOS 26, macOS 26, *)
+struct RecallTool: Tool {
+
+    let name        = "recallPastTasks"
+    let description = "Recall relevant context from PAST agent tasks by keyword — what was decided, produced, or discussed in earlier runs. Use it to resume or reference prior work."
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "Keywords describing what to recall from past tasks, e.g. 'authentication security review'")
+        var query: String
+        @Guide(description: "Maximum results to return, between 1 and 8")
+        var limit: Int
+    }
+
+    private let store: ConversationStore
+
+    init(store: ConversationStore) { self.store = store }
+
+    func call(arguments: Arguments) async throws -> String {
+        let k = min(max(arguments.limit, 1), 8)
+        let turns = try await store.searchAgentMemory(arguments.query, limit: k)
+        guard !turns.isEmpty else {
+            return "No past tasks found matching '\(arguments.query)'."
+        }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+
+        var topics: [UUID: String] = [:]
+        var lines: [String] = []
+        for turn in turns {
+            if topics[turn.conversationID] == nil {
+                let title = (try? await store.conversation(id: turn.conversationID))?.title ?? "Past task"
+                topics[turn.conversationID] = title.replacingOccurrences(of: "AgentCrew: ", with: "")
+            }
+            let topic   = topics[turn.conversationID] ?? "Past task"
+            let excerpt = turn.content.prefix(400)
+            lines.append("[\(formatter.string(from: turn.createdAt)) · \(topic)] \(turn.role.rawValue): \(excerpt)")
+        }
+        return "Recalled \(turns.count) past-task excerpt(s):\n\n" + lines.joined(separator: "\n\n")
+    }
+}
+
 // MARK: - AgentCrew
 //
 // A reusable multi-agent pipeline (Extractor → Reviewer → Architect → Reporter)
@@ -167,13 +215,14 @@ public final class AgentCrew: ObservableObject {
 
             let docTool    = DocumentQueryTool(library: library)
             let memoryTool = MemoryReadTool(memory: memory)
+            let recallTool = RecallTool(store: store)
 
             // 1. Extractor
             currentAgent = "Extractor"
             let extractor = try AIAgent(
                 role: "Extractor",
-                instructions: "You are a precise information extractor. Always use queryDocuments before responding. Extract key facts as a numbered list with source references.",
-                tools: [docTool]
+                instructions: "You are a precise information extractor. Use recallPastTasks to check what earlier tasks established, and queryDocuments before responding. Extract key facts as a numbered list with source references.",
+                tools: [docTool, recallTool]
             )
             let extracted = try await extractor.run("Extract all key facts related to: \(topic)")
             try await memory.write(role: "Extractor", content: extracted)
@@ -194,8 +243,8 @@ public final class AgentCrew: ObservableObject {
             currentAgent = "Architect"
             let architect = try AIAgent(
                 role: "Architect",
-                instructions: "You are a solution architect. Use readAgentMemory to access prior outputs. Synthesize actionable, prioritized recommendations.",
-                tools: [memoryTool]
+                instructions: "You are a solution architect. Use readAgentMemory for this run's prior outputs and recallPastTasks for relevant past tasks. Synthesize actionable, prioritized recommendations.",
+                tools: [memoryTool, recallTool]
             )
             let architectLocal = try await architect.run("Propose structured recommendations for '\(topic)'.")
             // Hybrid: if the local draft looks weak, transparently escalate THIS step

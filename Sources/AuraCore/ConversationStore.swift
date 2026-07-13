@@ -340,7 +340,32 @@ public actor ConversationStore {
             map: rowToTurn
         )
     }
-    
+
+    /// Full-text search over turns from AGENT/task conversations only (titles
+    /// prefixed "AgentCrew:"), so cross-task recall never surfaces the user's
+    /// private direct-chat turns. System turns are excluded. Query is FTS5-sanitized.
+    public func searchAgentMemory(_ query: String, limit: Int = 8) throws -> [Turn] {
+        try ensureOpen()
+        let safe = query
+            .components(separatedBy: .whitespacesAndNewlines)
+            .map { $0.replacingOccurrences(of: "\"", with: "\"\"") }
+            .filter { !$0.isEmpty }
+            .map { "\"\($0)\"" }
+            .joined(separator: " OR ")
+        guard !safe.isEmpty else { return [] }
+        return try self.query(
+            """
+            SELECT t.* FROM turns t
+            JOIN turns_fts f ON t.id = f.id
+            JOIN conversations c ON t.conversation_id = c.id
+            WHERE turns_fts MATCH ? AND c.title LIKE 'AgentCrew:%' AND t.role != 'system'
+            ORDER BY rank LIMIT ?;
+            """,
+            bindings: [safe, limit],
+            map: rowToTurn
+        )
+    }
+
     // MARK: - Statistics
     
     public struct ConversationStats: Sendable {
