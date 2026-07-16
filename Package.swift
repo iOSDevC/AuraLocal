@@ -18,17 +18,19 @@ let package = Package(
         .executable(name: "aura", targets: ["aura"]),
     ],
     dependencies: [
-        // GGUF (llama.cpp) + Ollama-capable local client. AuraLocal uses only its
-        // LocalLLMClient + LocalLLMClientLlama products; the MLX path is compiled out
-        // via `#if canImport(MLXLLM)`.
-        // Pinned by `revision:` (not `branch:"main"`) for reproducible resolves and to
-        // avoid breaking changes when upstream main moves. This is the commit main had
-        // resolved to; it builds cleanly (graph resolves swift-syntax 600.0.1 — the
-        // 602..<604 conflict that once forced dropping the MLX products does not occur
-        // here). Bump this SHA deliberately after verifying a build.
+        // GGUF (llama.cpp) + MLX local client, pinned to the SHA of tag 0.5.0.
+        // `exact: "0.5.0"` is rejected: LocalLLMClientLlamaC carries unsafeFlags, which
+        // SwiftPM forbids in version-pinned deps but allows in revision-pinned ones.
+        //
+        // 0.5.0 is what makes AuraLocal resolvable at all. It swapped mlx-swift-lm
+        // `branch:"main"` for `from: "3.31.3"`, so SwiftPM can backtrack past the
+        // swift-syntax 602..<604 floor mlx-swift-lm adopted in 3.31.4 and settle on
+        // 3.31.3. A branch pin cannot backtrack, so every resolve without our lockfile
+        // failed — which is what downstream integrators got, since SwiftPM honours only
+        // the ROOT package's Package.resolved.
         .package(
             url: "https://github.com/tattn/LocalLLMClient.git",
-            revision: "d420bc8b3ceab709bc370efa48afe960223d3267"
+            revision: "edc39ef2ffc1cef9cf856b0788de8d331f776c2e"   // tag 0.5.0
         ),
     ],
     targets: [
