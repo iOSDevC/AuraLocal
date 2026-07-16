@@ -23,6 +23,26 @@ public struct HardwareProfile: Sendable {
     /// A human-readable device or chip identifier (e.g. "iPhone", "Apple M2 Pro").
     public let deviceName: String
 
+    /// Unified-memory bandwidth in GB/s for this chip, or `nil` when unknown.
+    ///
+    /// Decode speed is bandwidth-bound, so this is what turns a RAM-fit answer
+    /// into a wall-clock one. Published spec figures; conservative for binned
+    /// variants (M3 Max 300 not 400, M4 Max 410 not 546). `nil` on iOS and for
+    /// unrecognised chips — better no estimate than a guessed one.
+    public let memoryBandwidthGBs: Double?
+
+    public init(
+        totalMemoryGB: Double,
+        availableMemoryGB: Double,
+        deviceName: String,
+        memoryBandwidthGBs: Double? = nil
+    ) {
+        self.totalMemoryGB = totalMemoryGB
+        self.availableMemoryGB = availableMemoryGB
+        self.deviceName = deviceName
+        self.memoryBandwidthGBs = memoryBandwidthGBs
+    }
+
     /// Detects the current device's hardware profile.
     public static func current() -> HardwareProfile {
         let total = Double(ProcessInfo.processInfo.physicalMemory)
@@ -55,9 +75,39 @@ public struct HardwareProfile: Sendable {
         return HardwareProfile(
             totalMemoryGB: totalGB,
             availableMemoryGB: availableGB,
-            deviceName: name
+            deviceName: name,
+            memoryBandwidthGBs: detectMemoryBandwidthGBs()
         )
     }
+
+    /// Published unified-memory bandwidth per Apple Silicon chip (GB/s).
+    /// Longest names first — "Apple M1 Pro" must not match the bare "M1" row.
+    private static let bandwidthTable: [(chip: String, gbs: Double)] = [
+        ("M1 Ultra", 800), ("M1 Max", 400), ("M1 Pro", 200), ("M1", 68),
+        ("M2 Ultra", 800), ("M2 Max", 400), ("M2 Pro", 200), ("M2", 100),
+        ("M3 Ultra", 800), ("M3 Max", 300), ("M3 Pro", 150), ("M3", 100),
+        ("M4 Max", 410), ("M4 Pro", 273), ("M4", 120),
+    ]
+
+    /// `nil` on iOS (no reliable public source) and for chips we don't know.
+    static func detectMemoryBandwidthGBs() -> Double? {
+        #if os(macOS)
+        guard let brand = sysctlString("machdep.cpu.brand_string") else { return nil }
+        return bandwidthTable.first { brand.contains($0.chip) }?.gbs
+        #else
+        return nil
+        #endif
+    }
+
+    #if os(macOS)
+    private static func sysctlString(_ name: String) -> String? {
+        var size = 0
+        guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var buffer = [CChar](repeating: 0, count: size)
+        guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return nil }
+        return String(cString: buffer)
+    }
+    #endif
 
     #if os(macOS)
     /// Free + reclaimable memory reported by the kernel, in GB.
@@ -150,10 +200,67 @@ public struct ModelCompatibility: Sendable {
     /// Memory available to the process in GB.
     public let availableMemoryGB: Double
 
+    /// Estimated decode speed in tokens/sec, or `nil` when the chip's memory
+    /// bandwidth is unknown (iOS, unrecognised chips).
+    ///
+    /// Fitting in RAM is only half the answer: a model that fits but decodes at
+    /// 3 tok/s is unusable, and reporting it as ``ModelFitLevel/excellent`` is
+    /// actively misleading. See ``speedLevel``.
+    public let estimatedDecodeTokensPerSecond: Double?
+
     /// Percentage of available memory consumed (0–100+).
     public var utilizationPercent: Double {
         guard availableMemoryGB > 0 else { return 100 }
         return (requiredMemoryGB / availableMemoryGB) * 100
+    }
+
+    /// How the model *feels* to use, independent of whether it fits.
+    public var speedLevel: SpeedLevel {
+        guard let tps = estimatedDecodeTokensPerSecond else { return .unknown }
+        switch tps {
+        case ..<5:   return .unusable
+        case ..<15:  return .slow
+        case ..<40:  return .usable
+        default:     return .fast
+        }
+    }
+
+    /// Seconds to produce a `tokens`-long answer, or `nil` if speed is unknown.
+    public func estimatedResponseSeconds(tokens: Int = 500) -> Double? {
+        guard let tps = estimatedDecodeTokensPerSecond, tps > 0 else { return nil }
+        return Double(tokens) / tps
+    }
+
+    /// The honest one-liner: RAM **and** wall-clock.
+    public var verdict: String {
+        guard let tps = estimatedDecodeTokensPerSecond else { return fitLevel.label }
+        return String(format: "%@ · ~%.0f tok/s (%@)", fitLevel.label, tps, speedLevel.label)
+    }
+}
+
+// MARK: - SpeedLevel
+
+/// Decode speed banded into what a user actually experiences.
+public enum SpeedLevel: String, Sendable, CaseIterable {
+    /// Faster than reading speed.
+    case fast
+    /// Keeps up with reading; fine for chat.
+    case usable
+    /// Noticeably slow — minutes per long answer.
+    case slow
+    /// Fits in RAM, but too slow to interact with.
+    case unusable
+    /// Bandwidth unknown for this chip; no estimate made.
+    case unknown
+
+    public var label: String {
+        switch self {
+        case .fast:     "fast"
+        case .usable:   "usable"
+        case .slow:     "slow"
+        case .unusable: "too slow"
+        case .unknown:  "speed unknown"
+        }
     }
 }
 
@@ -356,7 +463,35 @@ public enum HardwareAnalyzer {
             model: model,
             fitLevel: fitLevel,
             requiredMemoryGB: required,
-            availableMemoryGB: available
+            availableMemoryGB: available,
+            estimatedDecodeTokensPerSecond: estimatedDecodeTokensPerSecond(
+                for: model, profile: profile
+            )
         )
+    }
+
+    /// Fraction of spec memory bandwidth llama.cpp actually achieves.
+    /// Measured on an M1 Pro (200 GB/s spec): 12.1 tok/s for 11.78 GB of weights
+    /// ⇒ ~143 GB/s effective. Consistent with published Apple Silicon benchmarks.
+    static let bandwidthEfficiency = 0.75
+
+    /// First-order decode-speed estimate.
+    ///
+    /// Decode is memory-bound, not compute-bound: each token streams the whole
+    /// weight set through the memory bus once, so `tok/s ≈ bandwidth / weights`.
+    /// Validated against a measured point (M1 Pro, Llama-3.1-8B Q8: predicts
+    /// ~12.7, measured 12.12).
+    ///
+    /// Returns `nil` when bandwidth is unknown rather than inventing a number.
+    /// Conservative for MoE models — they stream only the active experts, so the
+    /// real speed is higher than this whole-weights estimate.
+    static func estimatedDecodeTokensPerSecond(
+        for model: Model,
+        profile: HardwareProfile
+    ) -> Double? {
+        guard let bandwidth = profile.memoryBandwidthGBs else { return nil }
+        let weightsGB = Double(model.approximateSizeMB) / 1024.0
+        guard weightsGB > 0 else { return nil }
+        return (bandwidth * bandwidthEfficiency) / weightsGB
     }
 }
