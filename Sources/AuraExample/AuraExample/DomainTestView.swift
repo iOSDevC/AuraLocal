@@ -59,6 +59,16 @@ struct DomainTestView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        ModelEvalView(model: model, domain: domain)
+                    } label: {
+                        Label("Evaluate capabilities", systemImage: "checklist")
+                    }
+                } footer: {
+                    Text("Runs this domain's curated prompts on-device, measures fit and speed, and lets you judge whether the model meets your purpose.")
+                }
+
+                Section {
                     Button { Task { await run() } } label: {
                         if isRunning {
                             HStack {
