@@ -11,6 +11,27 @@ import XCTest
 /// breaks the Cxx-interop test build. It is compile-verified only.)
 final class ContextWindowTests: XCTestCase {
 
+    // MARK: - Honest memory budget
+
+    #if os(macOS)
+    /// macOS used to assume 60 % of RAM was free regardless of what was running.
+    /// It must now read the kernel, so a Mac busy with Xcode reports the truth.
+    func testMacBudgetIsMeasuredNotGuessed() throws {
+        let measured = try XCTUnwrap(HardwareProfile.macReclaimableMemoryGB(),
+                                     "kernel VM query must succeed on macOS")
+        let profile  = HardwareProfile.current()
+        let oldGuess = profile.totalMemoryGB * 0.6
+
+        XCTAssertGreaterThan(measured, 0)
+        XCTAssertLessThan(measured, profile.totalMemoryGB, "can't have more free than total")
+        XCTAssertGreaterThan(profile.availableMemoryGB, 0)
+        XCTAssertLessThanOrEqual(profile.availableMemoryGB, profile.totalMemoryGB)
+
+        print(String(format: "measured available %.1f GB vs old 60%% guess %.1f GB (total %.1f GB)",
+                     measured, oldGuess, profile.totalMemoryGB))
+    }
+    #endif
+
     // MARK: - KV-aware context window
 
     /// The core of the fix: at the SAME memory, a KV-light model must get a much

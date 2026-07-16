@@ -16,8 +16,8 @@ public struct HardwareProfile: Sendable {
     public let totalMemoryGB: Double
 
     /// Memory currently available to the process, in gigabytes.
-    /// On iOS this uses `os_proc_available_memory()`; on macOS it
-    /// falls back to 60 % of physical RAM.
+    /// On iOS this uses `os_proc_available_memory()`; on macOS it reads real
+    /// reclaimable memory from the kernel (see ``HardwareProfile/current()``).
     public let availableMemoryGB: Double
 
     /// A human-readable device or chip identifier (e.g. "iPhone", "Apple M2 Pro").
@@ -35,7 +35,12 @@ public struct HardwareProfile: Sendable {
             ? Double(proc) / 1_073_741_824
             : totalGB * 0.6
         #else
-        availableGB = totalGB * 0.6
+        // Measure, don't guess. The old `totalGB * 0.6` assumed 60 % was free no
+        // matter what was running — on a dev machine with Xcode + Simulator
+        // (10–14 GB) that overstates the budget ~2x, so models are assessed as
+        // fitting when they would thrash. Reading the kernel is right for BOTH a
+        // busy dev Mac and an end user's idle one.
+        availableGB = macReclaimableMemoryGB() ?? (totalGB * 0.6)
         #endif
 
         let name: String
@@ -53,6 +58,28 @@ public struct HardwareProfile: Sendable {
             deviceName: name
         )
     }
+
+    #if os(macOS)
+    /// Free + reclaimable memory reported by the kernel, in GB.
+    ///
+    /// `free + inactive + purgeable` is what the system can hand out without
+    /// swapping. Returns `nil` if the kernel query fails, so the caller can fall
+    /// back to the old heuristic.
+    static func macReclaimableMemoryGB() -> Double? {
+        var stats = vm_statistics64_data_t()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &stats) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        let pages = Double(stats.free_count) + Double(stats.inactive_count) + Double(stats.purgeable_count)
+        let pageSize = Double(sysconf(_SC_PAGESIZE))   // vm_page_size is a mutable global — not Sendable
+        return pages * pageSize / 1_073_741_824
+    }
+    #endif
 }
 
 // MARK: - ModelFitLevel
