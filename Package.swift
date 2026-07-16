@@ -32,6 +32,13 @@ let package = Package(
             url: "https://github.com/tattn/LocalLLMClient.git",
             revision: "edc39ef2ffc1cef9cf856b0788de8d331f776c2e"   // tag 0.5.0
         ),
+
+        // MLX (Apple Silicon). Both are ALREADY in the resolve — LocalLLMClient pulls them
+        // in itself — so declaring them adds zero packages; it only lets AuraCore link what
+        // it already downloads. Ranges mirror LocalLLMClient's own so they unify instead of
+        // conflicting; `from:` (not a branch) is what lets SwiftPM backtrack off the 602 floor.
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm",      from: "3.31.3"),
+        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
     ],
     targets: [
         // MARK: - Core
@@ -40,6 +47,12 @@ let package = Package(
             dependencies: [
                 .product(name: "LocalLLMClient",      package: "LocalLLMClient"),
                 .product(name: "LocalLLMClientLlama", package: "LocalLLMClient"),
+                // Lights up MLXBackend.swift + the 32 MLX catalog entries, both of which
+                // sit behind `#if canImport(MLXLLM)` and were dark while these were absent.
+                .product(name: "MLXLLM",      package: "mlx-swift-lm"),
+                .product(name: "MLXVLM",      package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "Tokenizers",  package: "swift-transformers"),
             ],
             path: "Sources/AuraCore",
             resources: [
