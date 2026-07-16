@@ -156,14 +156,10 @@ final class LlamaCppBackend: InferenceBackend {
 
     // MARK: - Platform Configuration
 
+    /// KV-aware window for THIS model — a hardcoded platform tier used to collapse
+    /// every model to 2048 (iOS) / 8192 (macOS) no matter what it supported.
     private func contextSize() -> Int {
-        #if os(macOS)
-        let profile = HardwareProfile.current()
-        return profile.totalMemoryGB >= 32 ? 8192 : 4096
-        #else
-        let profile = HardwareProfile.current()
-        return profile.totalMemoryGB >= 8 ? 2048 : 1024
-        #endif
+        HardwareAnalyzer.recommendedContextWindow(for: model)
     }
 
     private func threadCount() -> Int {

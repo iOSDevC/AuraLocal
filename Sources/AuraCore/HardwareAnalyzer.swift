@@ -248,6 +248,48 @@ public enum HardwareAnalyzer {
         return compatibleModels(from: filtered, profile: profile)
     }
 
+    /// KV-aware context window for `model` on this device, right now.
+    ///
+    /// Backends used to hardcode a platform tier (2048 on iOS, 8192 on macOS),
+    /// which collapsed every model's window regardless of what it supported —
+    /// a low-KV hybrid model was capped like a KV-heavy dense one. This derives
+    /// the window from the model's own GQA-aware KV cost and the memory left
+    /// after weights, so each model gets the window it can actually afford.
+    ///
+    /// Falls back to the platform tier when the catalog lacks KV metadata
+    /// (`kvHeads == 0`, e.g. MLX entries, which manage their cache differently).
+    ///
+    /// - Parameter availableGB: override the live memory reading (for tests).
+    public static func recommendedContextWindow(
+        for model: Model,
+        availableGB: Double? = nil
+    ) -> Int {
+        #if os(macOS)
+        let ceiling  = 32_768
+        let fallback = HardwareProfile.current().totalMemoryGB >= 32 ? 8192 : 4096
+        #else
+        let ceiling  = 8192
+        let fallback = HardwareProfile.current().totalMemoryGB >= 8 ? 2048 : 1024
+        #endif
+
+        // No KV metadata — can't do the math honestly; keep the old tier.
+        guard model.kvHeads > 0, model.numLayers > 0, model.headDim > 0 else { return fallback }
+
+        let available = availableGB
+            ?? Double(MemoryBudgetManager.availableMemoryBytes()) / 1_073_741_824
+        let weightsGB = Double(model.approximateSizeMB) / 1024.0
+        let reserveGB = 0.4                       // framework overhead + safety margin
+        let freeForKV = available - weightsGB - reserveGB
+        guard freeForKV > 0.05 else { return 1024 }
+
+        // estimatedKVCacheGB is linear in context length — derive the per-token cost.
+        let perTokenGB = model.estimatedKVCacheGB(contextLength: 4096) / 4096
+        guard perTokenGB > 0 else { return fallback }
+
+        let fits = Int(freeForKV / perTokenGB)
+        return max(1024, min((fits / 512) * 512, ceiling))
+    }
+
     /// Assess a single model against the hardware profile.
     ///
     /// For GGUF models that don't fit in RAM, checks whether layer-streaming

@@ -38,7 +38,10 @@ final class MemoryBudgetManager {
     // MARK: - Queries
 
     /// Current available memory in bytes.
-    static func availableMemoryBytes() -> Int {
+    ///
+    /// `nonisolated`: a stateless system query (no actor state), so hardware math
+    /// like `HardwareAnalyzer.recommendedContextWindow` can read it off the main actor.
+    nonisolated static func availableMemoryBytes() -> Int {
         #if os(iOS) || os(tvOS) || os(watchOS)
         let available = os_proc_available_memory()
         if available > 0 { return Int(available) }

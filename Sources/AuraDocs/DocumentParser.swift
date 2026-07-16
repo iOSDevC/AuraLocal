@@ -198,14 +198,30 @@ struct DocxDocumentParser: DocumentParser {
 
 struct PlainTextDocumentParser: DocumentParser {
     private static let extensions = ["txt", "md", "markdown", "rtf"]
-    
+
+    /// Source + config files. Without these the RAG library could not index code at
+    /// all, which is exactly the "several files" case an on-device coder needs.
+    static let codeExtensions = [
+        // Apple / systems
+        "swift", "m", "mm", "h", "hpp", "c", "cc", "cpp", "rs", "go",
+        // Scripting / web
+        "py", "rb", "js", "jsx", "ts", "tsx", "sh", "bash", "zsh", "php", "lua",
+        // JVM / .NET
+        "java", "kt", "kts", "gradle", "cs",
+        // Data / config / markup
+        "json", "yaml", "yml", "toml", "xml", "plist", "sql", "html", "css", "scss",
+    ]
+
     func canParse(url: URL) -> Bool {
-        Self.extensions.contains(url.pathExtension.lowercased())
+        let ext = url.pathExtension.lowercased()
+        return Self.extensions.contains(ext) || Self.codeExtensions.contains(ext)
     }
-    
+
     func parse(url: URL) async throws -> ParsedDocument {
-        let text  = try String(contentsOf: url, encoding: .utf8)
-        let title = url.deletingPathExtension().lastPathComponent
+        let text = try String(contentsOf: url, encoding: .utf8)
+        // Keep the extension for code — it identifies the language to the model.
+        let isCode = Self.codeExtensions.contains(url.pathExtension.lowercased())
+        let title  = isCode ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent
         return ParsedDocument(url: url, title: title, pages: [ParsedPage(pageNumber: 0, text: text)])
     }
 }
