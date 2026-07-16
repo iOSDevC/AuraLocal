@@ -64,6 +64,7 @@ struct ModelRow: View {
                         BackendBadge(model: model)
                         if let compatibility {
                             FitBadge(fitLevel: compatibility.fitLevel)
+                            SpeedBadge(compatibility: compatibility)
                         }
                     }
                     Text(formattedSize)
@@ -332,6 +333,33 @@ private extension BackendKind {
         case .layerStreaming:  .orange
         case .remote:          .teal
         case .hybrid:          .indigo
+        }
+    }
+}
+
+// MARK: - SpeedBadge
+
+/// The other half of the fit answer. A model can be "Excellent" on memory and still
+/// take four minutes to reply; showing only the memory verdict hides that.
+/// Silent when the chip's bandwidth is unknown — no estimate beats a made-up one.
+struct SpeedBadge: View {
+    let compatibility: ModelCompatibility
+
+    var body: some View {
+        if let tps = compatibility.estimatedDecodeTokensPerSecond {
+            Text(String(format: "~%.0f tok/s", tps))
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(speedColor)
+                .help("Estimated decode speed on this device — \(compatibility.speedLevel.label)")
+        }
+    }
+
+    private var speedColor: Color {
+        switch compatibility.speedLevel {
+        case .fast, .usable: .green
+        case .slow:          .orange
+        case .unusable:      .red
+        case .unknown:       .secondary
         }
     }
 }

@@ -21,9 +21,11 @@ struct ModelEvalView: View {
 
     private let profile = HardwareProfile.current()
 
-    private var fit: ModelFitLevel {
-        HardwareAnalyzer.assess(model, profile: profile).fitLevel
+    private var compatibility: ModelCompatibility {
+        HardwareAnalyzer.assess(model, profile: profile)
     }
+
+    private var fit: ModelFitLevel { compatibility.fitLevel }
 
     var body: some View {
         Form {
@@ -44,6 +46,15 @@ struct ModelEvalView: View {
         .frame(minWidth: 460, minHeight: 560)
     }
 
+    private var speedColor: Color {
+        switch compatibility.speedLevel {
+        case .fast, .usable: .green
+        case .slow:          .orange
+        case .unusable:      .red
+        case .unknown:       .secondary
+        }
+    }
+
     // MARK: - Fit (does it even run here?)
 
     @ViewBuilder
@@ -58,6 +69,25 @@ struct ModelEvalView: View {
                     .foregroundStyle(fit.isRunnable ? .green : .red)
             }
             LabeledContent("Estimated RAM", value: String(format: "%.1f GB", model.estimatedRuntimeMemoryGB))
+
+            // Fitting is not the same as being usable. Predicted BEFORE download,
+            // so a 20 GB model that would crawl can be skipped, not discovered
+            // the hard way. The run below measures the real number.
+            if let tps = compatibility.estimatedDecodeTokensPerSecond {
+                HStack {
+                    Text("Predicted speed")
+                    Spacer()
+                    Text(String(format: "~%.0f tok/s · %@", tps, compatibility.speedLevel.label))
+                        .font(.caption)
+                        .foregroundStyle(speedColor)
+                }
+                if let seconds = compatibility.estimatedResponseSeconds(tokens: 500) {
+                    LabeledContent("500-token answer",
+                                   value: seconds < 90
+                                        ? String(format: "~%.0f s", seconds)
+                                        : String(format: "~%.1f min", seconds / 60))
+                }
+            }
         } header: {
             Text("Hardware fit")
         } footer: {
