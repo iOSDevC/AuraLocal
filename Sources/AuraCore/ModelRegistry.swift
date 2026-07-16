@@ -73,9 +73,13 @@ public final class ModelRegistry: @unchecked Sendable {
             lock.lock()
             models = catalog.models
             #if !canImport(MLXLLM)
-            // No MLX backend linked in this build — hide MLX entries rather than surface
-            // unrunnable ones. NOTE: this filter runs only here; merge()/register() do not
-            // apply it, so a remote catalog refresh can still reintroduce MLX entries.
+            // No MLX backend linked — hide MLX entries rather than surface unrunnable ones.
+            // Deliberately NOT filtered on the simulator: MLX links there but has no Metal
+            // GPU, and filtering would send every MLX constant back through the silent
+            // `?? first(where: .gguf)` fallback. BackendRouter returns UnavailableBackend
+            // with a clear message instead — an honest error beats a quiet substitution.
+            // NOTE: this filter runs only here; merge()/register() do not apply it, so a
+            // remote catalog refresh can still reintroduce MLX entries.
             models = models.filter { $0.format != .mlx }
             #endif
             rebuildIndex()

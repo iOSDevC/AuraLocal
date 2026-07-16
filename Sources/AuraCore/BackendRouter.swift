@@ -35,17 +35,23 @@ public enum BackendRouter {
     ) -> any InferenceBackend {
         switch model.format {
         case .mlx:
-            #if canImport(MLXLLM)
+            #if targetEnvironment(simulator)
+            // MLX needs a Metal GPU family the simulator does not provide; upstream mlx-swift
+            // documents that MLX cannot run there. Fail clearly instead of crashing mid-load.
+            return UnavailableBackend(
+                "MLX models can't run on the iOS Simulator (no Metal GPU). Use a GGUF model here, "
+                + "or run on a device.")
+            #elseif canImport(MLXLLM)
             return MLXBackend(model: model, temperature: temperature)
             #else
-            // MLX products were dropped to fix a swift-syntax conflict; MLX models are filtered out of the
-            // registry, so this is a defensive fallback that fails clearly if one is selected anyway.
             return UnavailableBackend(
-                "This is an MLX model, but the MLX backend isn't built. Use a GGUF or Ollama model.")
+                "This is an MLX model, but the MLX backend isn't linked. Add the MLX products or "
+                + "use a GGUF model.")
             #endif
 
         case .gguf:
-            #if !targetEnvironment(simulator)
+            // Runs on the simulator too: llama.xcframework ships an ios-arm64_x86_64-simulator
+            // slice and upstream sets n_gpu_layers = 0 there, so it falls back to CPU inference.
             let assessment = HardwareAnalyzer.assess(model, profile: profile)
 
             switch assessment.fitLevel {
@@ -62,9 +68,6 @@ public enum BackendRouter {
                 // Return llama.cpp anyway; it will fail with a clear error at load time
                 return LlamaCppBackend(model: model, temperature: temperature, tools: tools)
             }
-            #else
-            fatalError("GGUF models are not supported on the iOS Simulator. Use MLX models instead.")
-            #endif
         }
     }
 
@@ -78,12 +81,8 @@ public enum BackendRouter {
         case .mlx:
             return .mlx
         case .gguf:
-            #if !targetEnvironment(simulator)
             let assessment = HardwareAnalyzer.assess(model, profile: profile)
             return assessment.fitLevel == .streamingRequired ? .layerStreaming : .llamaCpp
-            #else
-            return .llamaCpp  // placeholder — GGUF not available on simulator
-            #endif
         }
     }
 }

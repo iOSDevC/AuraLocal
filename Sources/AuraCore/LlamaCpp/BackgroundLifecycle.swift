@@ -1,4 +1,3 @@
-#if !targetEnvironment(simulator)
 import Foundation
 #if os(iOS) || os(tvOS)
 import UIKit
@@ -73,4 +72,3 @@ public final class BackgroundLifecycle {
         isPaused = false
     }
 }
-#endif
