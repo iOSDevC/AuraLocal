@@ -59,12 +59,8 @@ public final class BackgroundLifecycle {
         isPaused = true
 
         if aggressiveMemorySaving {
-            // Evict all models except the most recently used to free RAM
-            let manager = ModelManager.shared
-            // Keep the MRU model, evict the rest
-            while manager.memoryBudget > 1 {
-                break  // Can't easily access LRU from here; rely on memory pressure handler
-            }
+            // Free RAM while backgrounded, keeping only the active model warm.
+            ModelManager.shared.evictAllButMostRecent()
         }
     }
 

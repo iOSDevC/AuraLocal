@@ -18,6 +18,8 @@ public enum AuraError: LocalizedError {
     case escalationDeclined
     /// Context compression failed before a remote call.
     case compressionFailed(String)
+    /// The model needs more memory than this device has, even with layer-streaming.
+    case modelTooLarge(String)
 
     public var errorDescription: String? {
         switch self {
@@ -37,6 +39,8 @@ public enum AuraError: LocalizedError {
                 return "Escalation to a remote model was declined."
             case .compressionFailed(let detail):
                 return "Context compression failed: \(detail)"
+            case .modelTooLarge(let detail):
+                return "Model too large for this device: \(detail)"
         }
     }
 }

@@ -64,8 +64,10 @@ public enum BackendRouter {
                 return LayerStreamingBackend(model: model, temperature: temperature, tools: tools)
 
             case .tooLarge:
-                // Even streaming can't help (e.g. 70B on iPhone)
-                // Return llama.cpp anyway; it will fail with a clear error at load time
+                // Even streaming can't help (e.g. 70B on iPhone). ModelManager.load refuses this
+                // case up front (throws .modelTooLarge before downloading), so this is only reached
+                // if a caller drives the router directly — return llama.cpp as a defensive fallback
+                // that fails at load rather than silently doing nothing.
                 return LlamaCppBackend(model: model, temperature: temperature, tools: tools)
             }
         }

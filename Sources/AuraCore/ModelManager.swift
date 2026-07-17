@@ -119,6 +119,13 @@ public final class ModelManager: ObservableObject {
     private var memoryPressureSource: Any?
 
     private func handleMemoryPressure() {
+        evictAllButMostRecent()
+    }
+
+    /// Evict every loaded model except the most-recently-used one, freeing RAM while keeping
+    /// the active model warm. Owned here because it needs the private LRU order; called both
+    /// on OS memory pressure and by ``BackgroundLifecycle`` when backgrounding aggressively.
+    public func evictAllButMostRecent() {
         while cache.count > 1, let lru = lruOrder.last {
             evict(lru)
         }
@@ -246,6 +253,15 @@ public final class ModelManager: ObservableObject {
         tools: [any LLMTool] = [],
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> AuraLocal {
+        // Refuse a model that can't fit even with streaming — BEFORE downloading gigabytes or
+        // risking a jetsam kill mid-load. HardwareAnalyzer only *flags* .tooLarge; this is where
+        // it's enforced. (assess uses current available memory via .current().)
+        if HardwareAnalyzer.assess(model).fitLevel == .tooLarge {
+            let msg = "\(model.displayName) needs more memory than this device has, even with streaming."
+            states[model] = .failed(msg)
+            throw AuraError.modelTooLarge(msg)
+        }
+
         // Evict LRU if over budget
         while cache.count >= memoryBudget, let lru = lruOrder.last {
             evict(lru)

@@ -21,7 +21,7 @@ description: "How AuraLocal manages RAM on iOS and macOS — LRU cache, memory p
 
 On-device LLMs can consume significant RAM. AuraLocal has multiple layers of protection against out-of-memory crashes (jetsam on iOS):
 
-1. **`HardwareAnalyzer`** — flags models that won't fit (pure analysis; it does not itself block the load — `BackendRouter` still returns a llama.cpp backend on `.tooLarge`, which then fails with a clear error at load time)
+1. **`HardwareAnalyzer`** — flags models that won't fit (pure analysis). Enforcement lives in `ModelManager.load`, which refuses a `.tooLarge` model up front by throwing `AuraError.modelTooLarge` **before** downloading it or risking a jetsam kill mid-load.
 2. **`ModelManager` LRU cache** — evicts the least-recently-used model when RAM is needed
 3. **`MemoryBudgetManager`** — checks `os_proc_available_memory()` every 32 tokens during generation and stops early if RAM becomes critical
 4. **`BackgroundLifecycle`** — pauses inference when app is backgrounded (iOS only)
@@ -111,9 +111,8 @@ When an iOS app is backgrounded with an active Metal GPU session, the system may
 
 // Opt into more aggressive saving:
 BackgroundLifecycle.shared.aggressiveMemorySaving = true
-// NOTE: this is intended to evict non-active models on background, but it is
-// not yet implemented — today the flag does not actually unload or reload any
-// models. Eviction currently relies on the memory-pressure handler instead.
+// When set, entering the background calls ModelManager.evictAllButMostRecent(),
+// freeing every loaded model except the active one. It reloads lazily on next use.
 ```
 
 ---
