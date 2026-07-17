@@ -103,9 +103,10 @@ public struct HardwareProfile: Sendable {
     private static func sysctlString(_ name: String) -> String? {
         var size = 0
         guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
-        var buffer = [CChar](repeating: 0, count: size)
+        var buffer = [UInt8](repeating: 0, count: size)
         guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return nil }
-        return String(cString: buffer)
+        if let nul = buffer.firstIndex(of: 0) { buffer.removeSubrange(nul...) }
+        return String(decoding: buffer, as: UTF8.self)
     }
     #endif
 
@@ -445,15 +446,24 @@ public enum HardwareAnalyzer {
         case ..<1.0:
             fitLevel = .marginal
         default:
-            // Model doesn't fit monolithically — check if streaming is viable
+            // Doesn't fit monolithically. Layer streaming (mmap) can still run it — but only
+            // inside a usable envelope. Two gates, both must hold.
             if model.format == .gguf {
-                let streamingRequired = model.estimatedStreamingMemoryGB
-                let streamingRatio = available > 0 ? streamingRequired / available : .infinity
-                if streamingRatio < 1.0 {
-                    fitLevel = .streamingRequired
-                } else {
-                    fitLevel = .tooLarge
-                }
+                let weightsGB = Double(model.approximateSizeMB) / 1024.0
+                let workingSetFits = available > 0 && model.estimatedStreamingMemoryGB < available
+
+                // The working-set check is NOT the real limit: with mmap the resident set is a
+                // near-constant ~0.5–0.75 GB no matter the model size, so it almost always passes.
+                // The real limit is disk thrashing. llama.cpp touches every weight once per token,
+                // so any weight not resident in the page cache is re-read from storage each token.
+                // When the weights dwarf available RAM the cache holds too little and decode
+                // collapses to seconds-per-token — a 70B on a 3 GB phone would fault ~36 GB/token.
+                // Require RAM to hold at least ~1/3 of the weights. Heuristic (not measured storage
+                // bandwidth), bounded by the codified cases: 8B on 3 GB must stream (1.5×), 70B on
+                // 3 GB must not (13×); the streaming backend's documented envelope is ~1.8×.
+                let cacheableEnough = available > 0 && weightsGB <= 3.0 * available
+
+                fitLevel = (workingSetFits && cacheableEnough) ? .streamingRequired : .tooLarge
             } else {
                 fitLevel = .tooLarge  // MLX models can't stream layers
             }
