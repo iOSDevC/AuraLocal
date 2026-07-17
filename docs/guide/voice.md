@@ -63,6 +63,8 @@ VStack {
 
 ## Session States
 
+`session.state` is published as `VoiceSession.State` (a nested enum). Its cases:
+
 | State | Description |
 |-------|-------------|
 | `.idle` | Ready, microphone off |
@@ -132,17 +134,16 @@ session.cancel()
 
 ---
 
-## VoiceTab
+## Adding Voice to Your App
 
-Use `AuraVoice` in `ContentView` — the Voice tab appears automatically when the module is imported.
+`AuraVoice` does **not** add a tab to your app automatically. The `VoiceTab` view is internal to the module and is not part of the public API — importing `AuraVoice` exposes no tab. To add voice, place the public `VoiceButton` or `VoiceChatView` in your own view hierarchy.
 
 ```swift
-import AuraUI
-import AuraVoice  // this import adds the Voice tab to ContentView
+import AuraVoice
 
-@main struct MyApp: App {
-    var body: some Scene {
-        WindowGroup { ContentView() }
-    }
-}
+// Drop-in button — manages its own session
+VoiceButton(llm: llm)
+
+// Or a full screen: transcript + response bubbles + button
+VoiceChatView(llm: llm)
 ```

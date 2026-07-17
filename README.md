@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://github.com/iOSDevC/AuraLocal/blob/main/docs/media/logo.png" alt="AuraLocal" width="400">
+  <img src="https://raw.githubusercontent.com/iOSDevC/AuraLocal/main/docs/media/logo.png" alt="AuraLocal" width="400">
 </p>
 
 # AuraLocal
@@ -8,7 +8,7 @@ Lightweight on-device LLM & VLM Swift package for iOS/macOS/visionOS. Run Qwen3,
 
 ---
 
-## v3.0 Highlights
+## Highlights
 
 - **Dual-backend inference** — MLX for 0.5B–4B models on GPU; llama.cpp/GGUF for 7B–70B with full Metal acceleration on macOS or layer-streaming on iOS.
 - **Layer-streaming mode** — Run 7B–13B models on 6 GB iPhones at ~2–5 tok/s with ≤750 MB peak RAM. OS pages weights from disk on-demand; jetsam limit never approached.
@@ -51,8 +51,10 @@ Or in `Package.swift`:
 
 ```swift
 // swift-tools-version: 6.0
-.package(url: "https://github.com/iOSDevC/AuraLocal", branch: "main")
+.package(url: "https://github.com/iOSDevC/AuraLocal", from: "1.3.0")
 ```
+
+> Prefer a tagged pin over `branch: "main"` — `main` can move under integrators.
 
 If your package imports `AuraCore`, add the C++ interop setting:
 
@@ -70,6 +72,7 @@ If your package imports `AuraCore`, add the C++ interop setting:
 |-----------|---------|
 | [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) | MLX GPU inference for small models (≤4B) |
 | [LocalLLMClient](https://github.com/tattn/LocalLLMClient) | Swift wrapper for llama.cpp — GGUF inference + Metal kernels |
+| [swift-transformers](https://github.com/huggingface/swift-transformers) | `Tokenizers` — tokenization for MLX models |
 
 ### Modules
 
@@ -755,22 +758,28 @@ TabView {
 
 ## Prebuilt SwiftUI Interface
 
-`AuraUI` provides a ready-to-use tabbed interface. Add `AuraVoice` to unlock the Voice tab.
+`AuraUI` ships composable tab views — drop them into your **own** `TabView`. (There is no
+prebuilt `ContentView`; the one in the Example app is demo code, not part of the library.)
 
 ```swift
 import SwiftUI
 import AuraUI
-import AuraVoice  // enables Voice tab
 
 @main
 struct MyApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            TabView {
+                TextChatTab().tabItem { Label("Chat", systemImage: "bubble.left") }
+                VisionTab().tabItem  { Label("Vision", systemImage: "photo") }
+                OCRTab().tabItem     { Label("OCR", systemImage: "doc.text.viewfinder") }
+            }
         }
     }
 }
 ```
+
+For voice, add `AuraVoice` and place `VoiceChatView(llm:)` in a tab (it needs an `AuraLocal` instance).
 
 | Tab | Module | Description |
 |-----|--------|-------------|
@@ -900,21 +909,19 @@ AuraCore
 ├── ConversationStore       →  SQLite-backed chat history (actor)
 └── AuraLocal+History       →  context window · auto-title · summarize+prune
 
-AuraUI (optional)
-├── ContentView  (TabView)
+AuraUI (optional) — composable views; you supply the TabView
 ├── TextChatTab   →  TextChatViewModel  →  ConversationStore
 │                    Model picker: MLX section + GGUF section
 ├── VisionTab     →  VisionViewModel
 ├── OCRTab        →  OCRViewModel
-└── ModelsTab     →  ModelSection · ModelRow · BackendBadge · FitBadge
+└── ModelSection  →  ModelRow · BackendBadge · FitBadge  (a component, not a full tab)
 
 AuraVoice (optional)
 ├── VoiceSession          →  SFSpeechRecognizer (on-device STT)
 │                         →  AuraLocal.stream() + ConversationStore
 │                         →  AVSpeechSynthesizer (on-device TTS)
 ├── VoiceButton           →  SwiftUI mic button with state animations
-├── VoiceChatView         →  Full voice chat UI
-└── VoiceTab              →  Tab for AuraUI ContentView
+└── VoiceChatView         →  Full voice chat UI  (VoiceChatView(llm:))
 
 AuraDocs (optional)
 ├── DocumentLibrary          →  add() · ask() · allDocuments() · refreshCorpus()

@@ -42,11 +42,11 @@ init(llm: AuraLocal, conversationID: UUID, config: Config = .init())
 ### State
 
 ```swift
-@Published var state: VoiceState
+@Published var state: VoiceSession.State
 @Published var transcript: String   // live STT transcript
 @Published var response: String     // live LLM response
 
-public enum VoiceState {
+public enum State {   // nested in VoiceSession → VoiceSession.State
     case idle
     case listening
     case thinking(partial: String)
@@ -107,7 +107,7 @@ VoiceChatView(llm: llm, conversationID: conv.id)
 
 ### VoiceTab
 
-Ready-to-use tab for `AuraUI`'s `ContentView`. Added automatically when `AuraVoice` is imported.
+`VoiceTab` is **internal** to `AuraVoice` — it is **not** public, and nothing is added automatically when you `import AuraVoice`. To add voice to your own UI, place a public `VoiceButton` or `VoiceChatView` in your own view hierarchy (for example, as a tab you compose in your own `TabView`).
 
 ---
 

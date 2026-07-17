@@ -79,7 +79,7 @@ Used for all `.mlx` format models (0.5B – 4B parameters).
 - Runs entirely on the Apple Silicon GPU via Metal
 - Model weights loaded into unified memory as MLX arrays
 - Supports text generation and vision (multimodal) models
-- GPU cache scaled by available RAM: 128 MB (low) → 512 MB (high)
+- GPU cache scaled by model weight size (~1/12 of the weights), clamped to 128 MB – 512 MB
 - 20–45 tokens/second on iPhone 15 Pro / M-series Mac
 
 **When it's used:** Any model case without `_gguf` suffix — Qwen3, Llama 3.2, Gemma 3, Phi-3.5, SmolVLM, FastVLM, Granite Docling.
@@ -93,7 +93,7 @@ Used for `.gguf` models when the full file fits in available RAM.
 **Characteristics:**
 - Uses `LocalLLMClient` → llama.cpp under the hood
 - Full Metal GPU offload on macOS (all layers on GPU)
-- Context window: 8192 tokens (macOS), 2048 tokens (iOS with enough RAM)
+- Context window: RAM- and KV-cache-aware via `HardwareAnalyzer.recommendedContextWindow(for:)` — 8192 tokens on macOS with ≥32 GB RAM (4096 otherwise, up to a 32768 ceiling), 2048 tokens on iOS with ≥8 GB RAM (1024 otherwise; never below 1024)
 - 8 threads on macOS, 4 threads on iOS
 - 8–20 tokens/second on M-series Mac depending on model size
 
@@ -161,7 +161,7 @@ Modern models use Grouped-Query Attention (GQA), which dramatically reduces KV c
 | Mistral 7B | 32 | 8 | ~230 MB |
 | Gemma 2 9B | 16 | 8 | ~180 MB |
 
-`HardwareAnalyzer.estimatedKVCacheGB(model:contextLength:)` uses these GQA-corrected formulas, not naive estimates.
+`model.estimatedKVCacheGB(contextLength:)` uses these GQA-corrected formulas, not naive estimates.
 
 ---
 
@@ -171,7 +171,7 @@ Modern models use Grouped-Query Attention (GQA), which dramatically reduces KV c
 |---|---|---|
 | GGUF backend | `LlamaCppBackend` | `LayerStreamingBackend` |
 | GPU layers | Up to all layers | 0 (CPU only) |
-| Context window | 8192 tokens | 512–1024 tokens |
+| Context window | 8192 (≥32 GB) / 4096 tokens | 1024–2048 tokens (streaming reduces to 512 under memory pressure) |
 | Threads | 8 | 4 |
 | Max viable model | 70B (80 GB Mac) | 13B (streaming) |
 | Background inference | Continues | Paused by `BackgroundLifecycle` |

@@ -21,7 +21,7 @@ description: "How AuraLocal manages RAM on iOS and macOS — LRU cache, memory p
 
 On-device LLMs can consume significant RAM. AuraLocal has multiple layers of protection against out-of-memory crashes (jetsam on iOS):
 
-1. **`HardwareAnalyzer`** — refuses to load a model that won't fit before attempting it
+1. **`HardwareAnalyzer`** — flags models that won't fit (pure analysis; it does not itself block the load — `BackendRouter` still returns a llama.cpp backend on `.tooLarge`, which then fails with a clear error at load time)
 2. **`ModelManager` LRU cache** — evicts the least-recently-used model when RAM is needed
 3. **`MemoryBudgetManager`** — checks `os_proc_available_memory()` every 32 tokens during generation and stops early if RAM becomes critical
 4. **`BackgroundLifecycle`** — pauses inference when app is backgrounded (iOS only)
@@ -59,23 +59,23 @@ ModelManager.shared.evictAll()
 
 ## Per-Generation Budget (MemoryBudgetManager)
 
-During llama.cpp inference, `MemoryBudgetManager` monitors RAM every 32 tokens:
+During llama.cpp inference, `MemoryBudgetManager` monitors RAM every 32 tokens. It is
+**internal** to AuraCore — there is no public singleton to call and no `availableMemoryGB`
+property on it. To read available RAM from your own code, use the public `HardwareProfile`:
 
 ```swift
-// Available memory queried via os_proc_available_memory() on iOS
-// On macOS: 60% of physical RAM
+// AuraCore tracks available memory internally via os_proc_available_memory() (iOS)
+// or 60% of physical RAM (macOS), and reduces context automatically when RAM is tight.
 
-let manager = MemoryBudgetManager.shared
-print(manager.isUnderPressure)        // true when available < safety threshold
-print(manager.availableMemoryGB)      // current available RAM
+let availableGB = HardwareProfile.current().availableMemoryGB   // current available RAM (GB)
 
-// Adaptive context — reduces context if RAM is low
-let ctx = manager.recommendedContextLength(baseContext: 2048)
-// → 2048 on Mac / high-RAM device
-// → 512 on 6 GB iPhone under pressure
+// Internally, the adaptive context behaves roughly like:
+//   → 2048 tokens on Mac / high-RAM device
+//   → 512 tokens on a 6 GB iPhone under pressure
 ```
 
-If `isUnderPressure` becomes `true` mid-generation, `LayerStreamingBackend` stops and returns what it has so far with an `AuraError.memoryPressure` error.
+If memory becomes critical mid-generation (checked every 32 tokens), the layer-streaming
+backend stops early and returns the partial text generated so far — it does not throw an error.
 
 ---
 
@@ -109,10 +109,11 @@ When an iOS app is backgrounded with an active Metal GPU session, the system may
 // Automatic — no setup needed
 // Generation is paused when isPaused == true
 
-// For more aggressive saving:
+// Opt into more aggressive saving:
 BackgroundLifecycle.shared.aggressiveMemorySaving = true
-// → unloads all models when app is backgrounded
-// → re-loads on foreground when user resumes
+// NOTE: this is intended to evict non-active models on background, but it is
+// not yet implemented — today the flag does not actually unload or reload any
+// models. Eviction currently relies on the memory-pressure handler instead.
 ```
 
 ---

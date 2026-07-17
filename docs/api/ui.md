@@ -9,7 +9,7 @@ description: "AuraUI API reference — prebuilt SwiftUI tabs for text chat, visi
 # AuraUI
 {: .no_toc }
 
-Drop-in SwiftUI interface. Import `AuraUI` (and optionally `AuraVoice`) and add `ContentView` to your `WindowGroup`.
+Prebuilt SwiftUI views. Import `AuraUI` and compose the public tab views — `TextChatTab`, `VisionTab`, `OCRTab` — into your own `TabView`. The library ships no top-level `ContentView`; you own the container. (`ContentView` exists only in the bundled `AuraExample` demo app, not in the `AuraUI` library.)
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -19,20 +19,26 @@ Drop-in SwiftUI interface. Import `AuraUI` (and optionally `AuraVoice`) and add 
 
 ---
 
-## ContentView
+## Composing the tabs
 
-Top-level tabbed interface. All tabs are included automatically.
+`AuraUI` ships individual tab views. Compose them into your own `TabView` — you own the top-level container. (Add a Voice tab yourself by importing `AuraVoice` and placing its `VoiceChatView`.)
 
 ```swift
 import SwiftUI
 import AuraUI
-import AuraVoice  // adds Voice tab
 
 @main
 struct MyApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            TabView {
+                TextChatTab()
+                    .tabItem { Label("Text", systemImage: "text.bubble") }
+                VisionTab()
+                    .tabItem { Label("Vision", systemImage: "eye") }
+                OCRTab()
+                    .tabItem { Label("OCR", systemImage: "doc.viewfinder") }
+            }
         }
     }
 }
@@ -77,14 +83,25 @@ Fit level badges show device compatibility:
 
 ## Individual Components
 
-Use individual tabs and components if you don't want the full `ContentView`:
+Use individual tabs and components directly:
 
 ```swift
 import AuraUI
+import AuraCore
 
-// Individual tabs
+// Prebuilt tab views
 TextChatTab()
 VisionTab()
 OCRTab()
-ModelsTab()
+
+// Models browser component: build a Section from a [Model] array.
+// (There is no `ModelsTab` in AuraUI — compose `ModelSection` inside your own List/Form.)
+ModelSection(
+    title: "Text",
+    icon: "text.bubble",
+    color: .green,
+    models: Model.textModels
+) { model in
+    // handle the model's "Test" tap
+}
 ```

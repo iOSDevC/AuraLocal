@@ -12,7 +12,7 @@ description: "AuraLocal performance benchmarks — tokens per second, RAM usage,
 Performance measurements for on-device LLM inference across Apple devices.
 
 {: .note }
-> Benchmarks measured with AuraLocal v3.0, default Q4_K_M quantization for GGUF and 4-bit for MLX. Results vary by prompt complexity and thermal state.
+> Benchmarks measured with AuraLocal v1.3.0, default Q4_K_M quantization for GGUF and 4-bit for MLX. Results vary by prompt complexity and thermal state.
 
 ## Table of contents
 {: .no_toc .text-delta }

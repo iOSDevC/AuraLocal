@@ -95,7 +95,13 @@ func summarizeAndPrune(
 
 ```swift
 var model: Model { get }     // the loaded model
-var isLoaded: Bool { get }   // whether the backend has weights in memory
+```
+
+Loaded state is queried on `ModelManager`, not on `AuraLocal`:
+
+```swift
+// Whether a model's weights are currently held in memory.
+ModelManager.shared.isLoaded(_ model: Model) -> Bool
 ```
 
 ---
@@ -129,7 +135,7 @@ func state(for model: Model) -> ModelLoadState
 
 public enum ModelLoadState {
     case idle
-    case downloading(progress: Double)   // 0.0–1.0
+    case downloading(progress: String)   // human-readable progress text
     case loading
     case ready
     case failed(String)
@@ -164,7 +170,7 @@ var ggufDownloader: GGUFModelDownloader
 
 // GGUFModelDownloader published properties:
 @Published var progress: Double           // 0.0–1.0
-@Published var bytesDownloaded: Int64
+@Published var downloadedBytes: Int64
 @Published var totalBytes: Int64
 @Published var isDownloading: Bool
 ```
@@ -202,7 +208,7 @@ func search(_ query: String) async throws -> [Turn]
 ```swift
 public struct Conversation: Sendable {
     let id: UUID
-    let model: Model
+    let model: String          // Model.rawValue
     var title: String
     let createdAt: Date
     let updatedAt: Date
@@ -226,7 +232,7 @@ public struct Turn: Sendable {
 Assesses model–device compatibility. All methods are synchronous.
 
 ```swift
-public struct HardwareAnalyzer
+public enum HardwareAnalyzer   // namespace for static assessment methods
 ```
 
 ### Assessment
@@ -236,15 +242,21 @@ public struct HardwareAnalyzer
 static func assess(
     _ model: Model,
     profile: HardwareProfile = .current()
-) -> AssessmentResult
+) -> ModelCompatibility
 
-public struct AssessmentResult: Sendable {
+public struct ModelCompatibility: Sendable {
     let model: Model
-    let profile: HardwareProfile
     let fitLevel: ModelFitLevel
-    let estimatedRuntimeMemoryGB: Double
-    let estimatedStreamingMemoryGB: Double
+    let requiredMemoryGB: Double
+    let availableMemoryGB: Double
+    let estimatedDecodeTokensPerSecond: Double?  // nil when chip bandwidth is unknown
+    var utilizationPercent: Double               // % of available memory consumed
+    var speedLevel: SpeedLevel
 }
+
+// The estimated memory footprints are properties on `Model`, not on ModelCompatibility:
+//   model.estimatedRuntimeMemoryGB    // full-load (monolithic) footprint in GB
+//   model.estimatedStreamingMemoryGB  // layer-streaming footprint in GB
 ```
 
 ### Compatible Models
@@ -252,8 +264,9 @@ public struct AssessmentResult: Sendable {
 ```swift
 // All models that can run on this device, sorted by fit (best first)
 static func compatibleModels(
+    from models: [Model] = Model.allModels,
     profile: HardwareProfile = .current()
-) -> [(model: Model, result: AssessmentResult)]
+) -> [ModelCompatibility]
 ```
 
 ### ModelFitLevel
@@ -274,10 +287,13 @@ public enum ModelFitLevel: Comparable, Sendable {
 
 ---
 
-## Model Enum
+## Model
+
+`Model` is a value type backed by a JSON model registry (not a `String` enum — there is
+no `rawValue` initializer). Named models like `.qwen3_1_7b` are static factory properties.
 
 ```swift
-public enum Model: String, CaseIterable, Sendable
+public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible
 
 // Collections
 static var textModels: [Model]

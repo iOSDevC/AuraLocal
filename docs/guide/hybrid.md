@@ -27,8 +27,9 @@ model isn't enough.
 {: .note }
 > Escalation is **off by default** (`EscalationPolicy.off`). Nothing leaves the device
 > until you set a policy, and every cloud send is shown to the user for approval first.
-> The same `AuraLocal.stream()` API drives local and remote — the pipeline is *mixed*,
-> not cloud.
+> `AuraLocal.stream()` drives the **local** backends; escalation runs through
+> `HybridEscalator` → `RemoteBackend` (an `InferenceBackend`), which shares the *same
+> streaming contract* — so the pipeline is *mixed*, not cloud.
 
 The design goal is to **cut the tokens sent to the remote**: stay local by default, and
 when you do escalate, compress the context, redact obvious secrets, and cache repeats.
@@ -38,7 +39,7 @@ when you do escalate, compress the context, redact obvious secrets, and cache re
 | Technique | Effect |
 |---|---|
 | Local-first routing | Most turns never leave the device — **$0**, no tokens sent |
-| Selective-context compression | Trims the context toward the remote's budget — **~2–4×** fewer tokens |
+| Selective-context compression | Trims the context toward the remote's budget — **fewer tokens, input-dependent** (no fixed ratio; a context that already fits is passed through unchanged) |
 | Response cache | Identical requests return instantly — **$0** |
 | PII redaction | Strips obvious secrets before the payload is sent |
 | Cost ledger | Per-escalation token + dollar accounting, shown as a receipt |

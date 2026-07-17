@@ -136,12 +136,13 @@ import AuraCore
 let result = HardwareAnalyzer.assess(.llama3_1_8b_gguf)
 print(result.fitLevel.label)       // "Streaming", "Good", "Too Large", etc.
 print(result.fitLevel.isRunnable)  // true/false
-print(result.estimatedRuntimeMemoryGB) // ~0.65 GB in streaming mode
+print(result.model.estimatedRuntimeMemoryGB)   // ~5 GB full-load (monolithic)
+print(result.model.estimatedStreamingMemoryGB) // ~0.65 GB in layer-streaming mode
 
 // Get all runnable models sorted by fit level
 let compatible = HardwareAnalyzer.compatibleModels()
-for (model, result) in compatible {
-    print("\(model.displayName): \(result.fitLevel.label)")
+for c in compatible {
+    print("\(c.model.displayName): \(c.fitLevel.label)")
 }
 
 // Check for a custom device profile
@@ -269,8 +270,8 @@ Models are cached after download and reused across app launches:
 
 | Format | Cache path |
 |--------|-----------|
-| MLX | `~/Library/Caches/models/<org>/<repo>/` |
-| GGUF | `~/Library/Caches/gguf/<filename>.gguf` |
+| MLX | `~/Library/Caches/huggingface/hub/models--<sanitized>/snapshots/main/` |
+| GGUF | `~/Library/Caches/models/<repoID>/<filename>.gguf` |
 
 ```swift
 // Check if a model is already downloaded

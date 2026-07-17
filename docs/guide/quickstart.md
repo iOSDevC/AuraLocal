@@ -96,7 +96,7 @@ class MyViewModel: ObservableObject {
 
 ## 5. Drop-in SwiftUI Interface
 
-Add `AuraUI` for a complete tabbed interface with zero configuration:
+Add `AuraUI` for ready-made chat, vision, and OCR views. Compose the public tab views in your own `TabView`:
 
 ```swift
 import SwiftUI
@@ -106,7 +106,14 @@ import AuraUI
 struct MyApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()  // includes Text, Vision, OCR, Models tabs
+            TabView {
+                TextChatTab()
+                    .tabItem { Label("Chat", systemImage: "text.bubble") }
+                VisionTab()
+                    .tabItem { Label("Vision", systemImage: "eye") }
+                OCRTab()
+                    .tabItem { Label("OCR", systemImage: "doc.text.viewfinder") }
+            }
         }
     }
 }

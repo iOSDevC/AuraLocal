@@ -41,17 +41,18 @@ import AuraDocs
 
 // 1. Setup
 let llm      = try await AuraLocal.text(.qwen3_1_7b)
+let vlm      = try await AuraLocal.vision(.qwen35_0_8b)  // optional: pass to enable image OCR
 let embedder = AutoEmbeddingProvider()
 let library  = DocumentLibrary.shared
 
-await library.configure(embeddingProvider: embedder, llm: llm)
+await library.configure(embeddingProvider: embedder, llm: llm, visionLLM: vlm)
 try await library.open()
 
 // 2. Index documents
-try await library.add(url: pdfURL) { progress in
+try await library.add(url: pdfURL) { progress in   // @discardableResult -> IndexedDocument
     print(progress)  // "Embedding Contract: 67%"
 }
-try await library.add(url: imageURL)  // OCR via VLM automatically
+try await library.add(url: imageURL)  // OCR only if a visionLLM was passed to configure()
 
 await library.refreshCorpus()  // rebuild TF-IDF after batch indexing
 
@@ -72,7 +73,7 @@ for source in answer.sources {
 | PDF | PDFKit text extraction per page |
 | DOCX | ZIP + XML (no external libs) |
 | TXT, MD, Markdown | Plain text |
-| PNG, JPG, HEIC, TIFF | MLX VLM OCR (requires a vision model) |
+| PNG, JPG, JPEG, HEIC, TIFF, BMP | OCR via the `visionLLM:` passed to `configure()` (omit it and images are skipped) |
 
 ---
 
@@ -83,7 +84,7 @@ import AuraDocs
 
 let chat = DocumentChat(library: library, llm: llm)
 
-let r1 = try await chat.send("What is the payment schedule?")
+let r1 = try await chat.send("What is the payment schedule?")   // send(_:topK:) -> DocumentAnswer
 let r2 = try await chat.send("What are the late payment penalties?")
 // r2 has context from r1
 
