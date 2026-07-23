@@ -268,6 +268,23 @@ aura imagegen "a red fox in snow" \
   --lora /path/to/style.safetensors --lora-scale 0.9 --steps 4
 ```
 
+### Find a model that fits your machine
+
+Search HuggingFace and filter by what this device can actually run — the Example's Image tab has
+**Search HuggingFace…** with an *"Only what fits"* toggle, plus gated/kind badges:
+
+```swift
+let hits = try await HuggingFaceSearch.search("flux schnell mflux")
+let bytes = try await HuggingFaceRepo.weightBytes(repoURL: "https://huggingface.co/\(hits[0].id)",
+                                                  kind: hits[0].kind)
+let fit = HardwareAnalyzer.fitLevel(forWeightsBytes: bytes ?? 0, kind: hits[0].kind)  // .excellent … .tooLarge
+```
+
+Fit is judged by **kind**, not raw size: an `.llm` peaks ≈1.15× its weights and can layer-stream, a
+`.diffusion` model peaks **≈2.2×** (text encoder + VAE + activations) and cannot. That multiplier is
+measured — so a 6.8 GB FLUX reads *too large* with 13 GB free and *good* with ~27 GB, instead of a naive
+"it's only 6.8 GB, it fits."
+
 **Measured** on an M1 Pro (32 GB), schnell 4-bit, 1024×1024, 4 steps: **peak memory footprint ≈ 20 GB**
 (the *runtime* peak — not the ~9 GB on-disk size), **~25 s/step ≈ 100 s** of diffusion (≈2–3 min/image
 with model load). It fits a 32 GB Mac but runs best **exclusively** (it presses the ~21.5 GB Metal wired
