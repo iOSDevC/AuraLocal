@@ -129,7 +129,8 @@ struct AuraCLI {
                 + "[--model schnell|dev] [--seed N] [--steps N] [--quantize 4] [--low-ram] [--out <dir>]\n")
             exit(2)
         }
-        var model = "schnell", steps: Int? = nil, seed: UInt64? = nil, quantize: Int? = 4
+        var model = "schnell", baseModel: String? = nil
+        var steps: Int? = nil, seed: UInt64? = nil, quantize: Int? = 4
         var lowRAM = false, outPath: String? = nil
         var loras: [LoRA] = []
 
@@ -145,6 +146,7 @@ struct AuraCLI {
                     last.scale = s; loras[loras.count - 1] = last
                 }
             case "--model":    i += 1; if i < args.count { model = args[i] }
+            case "--base-model": i += 1; if i < args.count { baseModel = args[i] }
             case "--seed":     i += 1; if i < args.count { seed = UInt64(args[i]) }
             case "--steps":    i += 1; if i < args.count { steps = Int(args[i]) }
             case "--quantize": i += 1; if i < args.count { quantize = Int(args[i]) }
@@ -161,7 +163,7 @@ struct AuraCLI {
         }
 
         let request = ImageGenRequest(
-            prompt: prompt, model: model, steps: steps, seed: seed,
+            prompt: prompt, model: model, baseModel: baseModel, steps: steps, seed: seed,
             quantize: quantize, lowRAM: lowRAM, loras: loras)
         err("Generating (\(model)\(loras.isEmpty ? "" : ", \(loras.count) LoRA")) — this can take a while…\n")
 

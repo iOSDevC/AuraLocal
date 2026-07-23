@@ -16,8 +16,13 @@ public struct LoRA: Sendable, Equatable {
 /// A text-to-image request. Maps directly onto mflux's CLI surface.
 public struct ImageGenRequest: Sendable {
     public var prompt: String
-    /// mflux `--model`: "schnell" (few-step, distilled) or "dev".
+    /// mflux `--model`: an alias ("schnell"/"dev") OR a HuggingFace repo id / local path. The plain
+    /// aliases resolve to black-forest-labs' GATED repos (need HF auth); an ungated pre-quantized
+    /// community repo (e.g. "dhairyashil/FLUX.1-schnell-mflux-4bit") downloads with no login.
     public var model: String
+    /// mflux `--base-model` (architecture): required when `model` is a custom repo/path so mflux
+    /// knows it's schnell vs dev. `nil` for the plain aliases, which are self-describing.
+    public var baseModel: String?
     /// mflux `--steps`; `nil` uses the model's default (schnell needs very few).
     public var steps: Int?
     public var seed: UInt64?
@@ -33,6 +38,7 @@ public struct ImageGenRequest: Sendable {
     public init(
         prompt: String,
         model: String = "schnell",
+        baseModel: String? = nil,
         steps: Int? = nil,
         seed: UInt64? = nil,
         width: Int = 1024,
@@ -43,6 +49,7 @@ public struct ImageGenRequest: Sendable {
     ) {
         self.prompt = prompt
         self.model = model
+        self.baseModel = baseModel
         self.steps = steps
         self.seed = seed
         self.width = width
@@ -159,7 +166,9 @@ public struct MFluxEngine: Sendable {
     /// `--model --prompt --steps --seed --width --height --quantize --low-ram --output
     /// --lora-paths --lora-scales`.
     static func buildArguments(for r: ImageGenRequest, output: URL) -> [String] {
-        var a: [String] = ["--model", r.model, "--prompt", r.prompt]
+        var a: [String] = ["--model", r.model]
+        if let base = r.baseModel { a += ["--base-model", base] }
+        a += ["--prompt", r.prompt]
         if let steps = r.steps { a += ["--steps", String(steps)] }
         if let seed = r.seed { a += ["--seed", String(seed)] }
         a += ["--width", String(r.width), "--height", String(r.height)]

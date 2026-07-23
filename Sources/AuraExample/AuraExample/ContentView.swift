@@ -52,6 +52,10 @@ struct ContentView: View {
                     HybridTab()
                 }
 
+                Tab("Image", systemImage: "photo.on.rectangle.angled") {
+                    ImageGenTab()
+                }
+
                 // AgentCrew — requires iOS 26+ with Apple Intelligence
                 if #available(iOS 26, macOS 26, *) {
                     Tab("Agents", systemImage: "cpu") {

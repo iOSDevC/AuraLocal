@@ -56,6 +56,19 @@ final class MFluxArgumentTests: XCTestCase {
         XCTAssertFalse(a.contains("--lora-scales"))
     }
 
+    /// A pre-quantized community repo needs --base-model to disambiguate architecture;
+    /// the bare aliases must NOT emit it (they're self-describing).
+    func testBaseModelEmittedOnlyForCustomRepos() {
+        let repo = ImageGenRequest(
+            prompt: "x", model: "dhairyashil/FLUX.1-schnell-mflux-4bit", baseModel: "schnell")
+        let a = MFluxEngine.buildArguments(for: repo, output: out)
+        XCTAssertEqual(pair(a, "--model"), "dhairyashil/FLUX.1-schnell-mflux-4bit")
+        XCTAssertEqual(pair(a, "--base-model"), "schnell")
+
+        let alias = MFluxEngine.buildArguments(for: ImageGenRequest(prompt: "x"), output: out)
+        XCTAssertFalse(alias.contains("--base-model"), "bare alias must not emit --base-model")
+    }
+
     #if os(macOS)
     /// A bogus override must fail with the install hint, not crash.
     func testMissingEngineThrowsInstallHint() {
