@@ -84,6 +84,7 @@ If your package imports `AuraCore`, add the C++ interop setting:
 | `AuraDocs` | RAG document library — PDF, DOCX, text, images |
 | `AuraAppleIntelligence` | Apple FoundationModels agents, tools & structured output (iOS 26 / macOS 26) |
 | `AuraAgents` | Reusable multi-agent orchestration (`AgentCrew`) with per-step hybrid escalation |
+| `AuraImageGen` | FLUX text-to-image + `lora.safetensors` via mflux (**macOS only**) |
 
 ---
 
@@ -225,6 +226,54 @@ usage and cost; `ResponseCache` avoids paying twice for identical requests.
 > C API (`llama.h` is available) and run a windowed prefill (à la `perplexity.cpp`) — it
 > drops in behind `SelfInfoScorer` without touching callers. Not yet shipped (doubles
 > model memory + heavy iOS-side C interop).
+
+---
+
+## Image Generation (macOS)
+
+`AuraImageGen` generates images with **FLUX** and folds in `lora.safetensors` adapters. It drives
+[mflux](https://github.com/filipstrand/mflux) (FLUX on Apple MLX) as a subprocess — so it is **macOS
+only** (a Swift package can't embed the Python runtime FLUX needs) and needs mflux installed:
+
+```bash
+uv tool install mflux      # one-time; the Example app has a button that runs this for you
+```
+
+> **Two real prerequisites** (the Example surfaces both):
+> 1. **mflux installed** — the assisted-install button, or the command above.
+> 2. **A downloadable model** — the plain `schnell`/`dev` aliases resolve to black-forest-labs'
+>    **gated** HuggingFace repos (need a login + accepted license). Point `--model` at an **ungated
+>    pre-quantized** repo to skip auth entirely, e.g. `dhairyashil/FLUX.1-schnell-mflux-4bit`.
+
+```swift
+import AuraImageGen
+
+let engine = MFluxEngine()                       // isAvailable == false off macOS / if mflux is missing
+let result = try await engine.generate(ImageGenRequest(
+    prompt: "a red fox in snow, cinematic",
+    model: "dhairyashil/FLUX.1-schnell-mflux-4bit",  // ungated, pre-quantized → no HF login
+    baseModel: "schnell",                            // architecture for custom repos
+    steps: 4,
+    loras: [LoRA(url: loraURL, scale: 0.9)]          // your lora.safetensors + weight
+))
+result.image      // PlatformImage (NSImage)
+result.fileURL    // the PNG on disk
+```
+
+CLI:
+
+```bash
+aura imagegen "a red fox in snow" \
+  --model dhairyashil/FLUX.1-schnell-mflux-4bit --base-model schnell \
+  --lora /path/to/style.safetensors --lora-scale 0.9 --steps 4
+```
+
+**Measured** on an M1 Pro (32 GB), schnell 4-bit, 1024×1024, 4 steps: **peak memory footprint ≈ 20 GB**
+(the *runtime* peak — not the ~9 GB on-disk size), **~25 s/step ≈ 100 s** of diffusion (≈2–3 min/image
+with model load). It fits a 32 GB Mac but runs best **exclusively** (it presses the ~21.5 GB Metal wired
+limit) — don't co-load an LLM. FLUX does **not** run on iPhone (far too large) or the iOS Simulator
+(no Metal GPU); the mflux subprocess is also blocked by the macOS **App Sandbox**, so it serves the
+`aura` CLI and non-sandboxed apps (like the Example), not App-Store-sandboxed apps.
 
 ---
 
