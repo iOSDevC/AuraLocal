@@ -41,6 +41,7 @@ private struct ImageGenContent: View {
     @State private var engineReady = MFluxEngine().isAvailable
     @State private var installing = false
     @State private var installLog = ""
+    @State private var showingSearch = false
 
     @State private var isGenerating = false
     @State private var status = ""
@@ -88,6 +89,12 @@ private struct ImageGenContent: View {
                 loras += urls.map { LoRA(url: $0) }
             }
         }
+        .sheet(isPresented: $showingSearch) {
+            ModelSearchSheet { repoID, base in
+                model = repoID
+                if let base { baseModel = base }
+            }
+        }
     }
 
     // MARK: engine status + assisted install
@@ -123,6 +130,9 @@ private struct ImageGenContent: View {
                 Text("schnell (fast)").tag("schnell")
                 Text("dev (quality)").tag("dev")
             }
+            Button {
+                showingSearch = true
+            } label: { Label("Search HuggingFace…", systemImage: "magnifyingglass") }
             Text("Default is an ungated pre-quantized repo — no HuggingFace login needed. "
                  + "The `schnell`/`dev` aliases pull black-forest-labs' gated repos and require auth.")
                 .font(.caption).foregroundStyle(.secondary)

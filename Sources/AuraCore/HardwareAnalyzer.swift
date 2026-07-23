@@ -333,7 +333,53 @@ public extension Model {
 ///     print("\(result.model.displayName): \(result.fitLevel.label)")
 /// }
 /// ```
+// MARK: - ModelKind (runtime memory profile)
+
+/// The runtime memory profile of a downloadable model — its peak RAM relative to the on-disk
+/// weight size differs sharply by kind, so the compatibility filter must not treat them alike.
+public enum ModelKind: Sendable {
+    /// Text LLM (GGUF/MLX): peak ≈ weights + framework overhead + a modest KV cache.
+    case llm
+    /// Diffusion / image generation (FLUX, SD): peak ≈ **~2×** the weights — the text encoder,
+    /// VAE, and activation/latent buffers are co-resident. MEASURED: FLUX schnell 4-bit, 9.2 GB
+    /// on disk → ~20 GB peak footprint on an M1 Pro.
+    case diffusion
+
+    /// Multiplier from on-disk weight size to estimated peak resident memory.
+    public var peakMultiplier: Double {
+        switch self {
+        case .llm:       1.15
+        case .diffusion: 2.2
+        }
+    }
+}
+
 public enum HardwareAnalyzer {
+
+    /// Compatibility of a **raw download** (a HuggingFace search hit) with this device, from its size
+    /// alone. Unlike ``assess(_:profile:)`` this has no catalog metadata, so it estimates peak memory
+    /// as `weights × kind.peakMultiplier` — the `kind` is what keeps a 6.8 GB FLUX from being called
+    /// "excellent" when its real peak is ~15 GB. Streaming applies to LLMs only (diffusion can't stream).
+    public static func fitLevel(
+        forWeightsBytes bytes: Int,
+        kind: ModelKind,
+        profile: HardwareProfile = .current()
+    ) -> ModelFitLevel {
+        let weightsGB = Double(bytes) / 1_073_741_824
+        let available = profile.availableMemoryGB
+        guard weightsGB > 0, available > 0 else { return .tooLarge }
+        let peakGB = weightsGB * kind.peakMultiplier
+        let ratio = peakGB / available
+        switch ratio {
+        case ..<0.6: return .excellent
+        case ..<0.8: return .good
+        case ..<1.0: return .marginal
+        default:
+            // LLM weights can be layer-streamed while the page cache holds ≥1/3 of them; diffusion cannot.
+            if kind == .llm, weightsGB <= 3.0 * available { return .streamingRequired }
+            return .tooLarge
+        }
+    }
 
     /// Analyze all models against the current device hardware.
     ///

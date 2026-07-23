@@ -205,4 +205,44 @@ public enum HuggingFaceRepo {
         }
         return ggufFiles(fromTreeJSON: data, owner: ref.owner, repo: ref.repo, revision: ref.revision)
     }
+
+    /// The byte size the compatibility filter should weigh for `kind`, from a tree payload. Pure/testable.
+    /// - diffusion: the **sum** of all `.safetensors` (mflux downloads the whole pipeline — transformer +
+    ///   text encoder + VAE), so a single-file size would understate it.
+    /// - llm: the **smallest** `.gguf` (the quant most likely to fit; the user can pick a bigger one).
+    /// Returns `nil` when the tree has no relevant weights.
+    public static func weightBytes(fromTreeJSON data: Data, kind: ModelKind) -> Int? {
+        guard let entries = try? JSONDecoder().decode([TreeEntry].self, from: data) else { return nil }
+        let files = entries.filter { $0.type == "file" }
+        switch kind {
+        case .diffusion:
+            let sizes = files.filter { $0.path.lowercased().hasSuffix(".safetensors") }.compactMap(\.size)
+            return sizes.isEmpty ? nil : sizes.reduce(0, +)
+        case .llm:
+            return files.filter { $0.path.lowercased().hasSuffix(".gguf") }.compactMap(\.size).min()
+        }
+    }
+
+    /// Fetch a repo's tree and return its ``weightBytes(fromTreeJSON:kind:)``. Network wrapper.
+    public static func weightBytes(
+        repoURL: String,
+        kind: ModelKind,
+        auth: DownloadAuthorizing = KeychainDownloadAuth()
+    ) async throws -> Int? {
+        guard let ref = parse(repoURL), let api = treeAPIURL(ref) else { throw RepoError.notARepositoryURL }
+        var request = URLRequest(url: api)
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        auth.authorize(&request)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw RepoError.noResponse }
+        guard http.statusCode == 200 else {
+            switch http.statusCode {
+            case 401, 403: throw RepoError.authRequired
+            case 404:      throw RepoError.notFound
+            default:       throw RepoError.http(http.statusCode)
+            }
+        }
+        return weightBytes(fromTreeJSON: data, kind: kind)
+    }
 }
