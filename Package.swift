@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "AuraDocs",              targets: ["AuraDocs"]),
         .library(name: "AuraAppleIntelligence", targets: ["AuraAppleIntelligence"]),
         .library(name: "AuraAgents",            targets: ["AuraAgents"]),
+        .library(name: "AuraImageGen",          targets: ["AuraImageGen"]),
         .executable(name: "aura", targets: ["aura"]),
     ],
     dependencies: [
@@ -112,13 +113,24 @@ let package = Package(
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
+        // MARK: - Image Generation (macOS-only)
+        // Drives mflux (FLUX on MLX) as a subprocess for text-to-image + lora.safetensors.
+        // The target compiles on every platform (iOS gets non-functional stubs that throw), so
+        // depending on it never breaks an iOS/simulator build; it only *works* on macOS.
+        .target(
+            name: "AuraImageGen",
+            dependencies: ["AuraCore"],
+            path: "Sources/AuraImageGen",
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
+
         // MARK: - CLI
         // `aura` — a headless integration harness that drives the hybrid + tools
         // features (provider detection, GitHub Models escalation, native OCR).
         // Cxx interop is required because it links AuraCore (llama.cpp).
         .executableTarget(
             name: "aura",
-            dependencies: ["AuraCore"],
+            dependencies: ["AuraCore", "AuraImageGen"],
             path: "Sources/aura",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
@@ -133,6 +145,12 @@ let package = Package(
             name: "AuraCoreTests",
             dependencies: ["AuraCore"],
             path: "Tests/AuraCoreTests",
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
+        .testTarget(
+            name: "AuraImageGenTests",
+            dependencies: ["AuraImageGen"],
+            path: "Tests/AuraImageGenTests",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         )
     ]

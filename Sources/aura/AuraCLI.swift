@@ -1,5 +1,6 @@
 import Foundation
 import AuraCore
+import AuraImageGen
 
 /// `aura` — a small headless CLI that drives AuraLocal's hybrid + native-tool
 /// features, as an integration reference and CI smoke-test harness. macOS.
@@ -16,6 +17,7 @@ struct AuraCLI {
             case "tools":            await runTools()
             case "ask":              try await runAsk(rest)
             case "ocr":              try runOCR(rest)
+            case "imagegen":         try await runImageGen(rest)
             case "help", "-h", "--help": printUsage()
             default:
                 err("Unknown command: \(command)\n")
@@ -116,6 +118,58 @@ struct AuraCLI {
         }
     }
 
+    // MARK: - imagegen
+
+    /// `aura imagegen "<prompt>" [--lora <path> [--lora-scale <s>]]... [--model schnell|dev]
+    ///  [--seed N] [--steps N] [--quantize 3|4|6|8] [--low-ram] [--out <path>]`
+    /// Drives mflux (FLUX on MLX) — macOS-only, requires `uv tool install mflux`.
+    static func runImageGen(_ args: [String]) async throws {
+        guard let prompt = args.first, !prompt.hasPrefix("--") else {
+            err("usage: aura imagegen \"<prompt>\" [--lora <path.safetensors> [--lora-scale <s>]] "
+                + "[--model schnell|dev] [--seed N] [--steps N] [--quantize 4] [--low-ram] [--out <dir>]\n")
+            exit(2)
+        }
+        var model = "schnell", steps: Int? = nil, seed: UInt64? = nil, quantize: Int? = 4
+        var lowRAM = false, outPath: String? = nil
+        var loras: [LoRA] = []
+
+        var i = 1
+        while i < args.count {
+            switch args[i] {
+            case "--lora":
+                i += 1; guard i < args.count else { break }
+                loras.append(LoRA(url: URL(fileURLWithPath: args[i])))
+            case "--lora-scale":
+                i += 1
+                if i < args.count, let s = Float(args[i]), var last = loras.last {
+                    last.scale = s; loras[loras.count - 1] = last
+                }
+            case "--model":    i += 1; if i < args.count { model = args[i] }
+            case "--seed":     i += 1; if i < args.count { seed = UInt64(args[i]) }
+            case "--steps":    i += 1; if i < args.count { steps = Int(args[i]) }
+            case "--quantize": i += 1; if i < args.count { quantize = Int(args[i]) }
+            case "--low-ram":  lowRAM = true
+            case "--out":      i += 1; if i < args.count { outPath = args[i] }
+            default:           err("Unknown flag: \(args[i])\n")
+            }
+            i += 1
+        }
+
+        let engine = MFluxEngine()
+        guard engine.isAvailable else {
+            throw ImageGenError.engineNotFound(installHint: MFluxEngine.installHint)
+        }
+
+        let request = ImageGenRequest(
+            prompt: prompt, model: model, steps: steps, seed: seed,
+            quantize: quantize, lowRAM: lowRAM, loras: loras)
+        err("Generating (\(model)\(loras.isEmpty ? "" : ", \(loras.count) LoRA")) — this can take a while…\n")
+
+        let outDir = outPath.map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let result = try await engine.generate(request, outputDirectory: outDir)
+        print(result.fileURL.path)
+    }
+
     // MARK: - Helpers
 
     static func printUsage() {
@@ -127,6 +181,7 @@ struct AuraCLI {
           aura tools                          List on-device tools (Vision OCR, embeddings)
           aura ask "<prompt>" [--model <id>]  Ask GitHub Models (hybrid remote); default openai/gpt-4o
           aura ocr <image>                    Extract text from an image via native Vision OCR
+          aura imagegen "<prompt>" [--lora <p>]  Generate an image via mflux/FLUX (macOS; needs mflux)
 
         ENV:
           AURA_GITHUB_TOKEN   GitHub fine-grained PAT with models:read (used by `ask`)
