@@ -243,6 +243,11 @@ public actor ConversationStore {
     /// let context = try await store.contextWindow(for: conv.id, maxTokens: 2048)
     /// let messages = context.map { ["role": $0.role.rawValue, "content": $0.content] }
     /// ```
+    /// How many turns the context window's oldest-kept boundary stays put before it moves.
+    /// Larger = the prompt prefix (and llama.cpp's KV cache) survives more turns, at the cost of
+    /// dropping up to this many extra turns of history.
+    static let contextAnchorStride = 4
+
     public func contextWindow(for conversationID: UUID, maxTokens: Int = 2048) throws -> [Turn] {
         try ensureOpen()
         
@@ -261,17 +266,42 @@ public actor ConversationStore {
         )
         
         let systemTokens = systemTurns.reduce(0) { $0 + $1.tokenEstimate }
-        var budget = maxTokens - systemTokens
-        var selected: [Turn] = []
-        
-        for turn in otherTurns {
-            guard budget > 0 else { break }
-            selected.append(turn)
-            budget -= turn.tokenEstimate
+        let budget = max(0, maxTokens - systemTokens)
+
+        // SQL handed these back newest-first; reason chronologically.
+        let chrono = Array(otherTurns.reversed())
+        guard !chrono.isEmpty else { return systemTurns }
+
+        // Smallest start index whose suffix still fits the budget (always keep the newest turn).
+        var idealStart = chrono.count - 1
+        var used = chrono[chrono.count - 1].tokenEstimate
+        var i = chrono.count - 2
+        while i >= 0 {
+            let next = used + chrono[i].tokenEstimate
+            if next > budget { break }
+            used = next
+            idealStart = i
+            i -= 1
         }
-        
+
+        // Whole history fits — no boundary to stabilise.
+        guard idealStart > 0 else { return systemTurns + chrono }
+
+        // History is being evicted, so the prompt's PREFIX (its oldest kept turn) moves. Recomputing
+        // it per turn slides it by one every single time, and llama.cpp's prompt cache matches on a
+        // literal text prefix — so every turn would re-prefill the whole history. Snap the boundary
+        // up to a multiple of `contextAnchorStride` instead: it then stays byte-identical for that
+        // many turns, and only the new tail is prefilled. Snapping UP never exceeds the budget; the
+        // cost is dropping up to stride-1 extra turns of history.
+        // Never let anchoring eat more than a quarter of the turns that actually fit: on a small
+        // window the stride collapses to 1 (i.e. exact, unanchored behaviour) instead of gutting
+        // the history to buy cache hits.
+        let fitting = chrono.count - idealStart
+        let stride = max(1, min(Self.contextAnchorStride, fitting / 4))
+        let anchored = min(chrono.count - 1, ((idealStart + stride - 1) / stride) * stride)
+
         // Restore chronological order and prepend system turns
-        return systemTurns + selected.reversed()
+        return systemTurns + Array(chrono[anchored...])
     }
     
     /// Summarize and prune old turns to keep the conversation under a token budget.
