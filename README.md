@@ -33,7 +33,7 @@ Lightweight on-device LLM & VLM Swift package for iOS/macOS/visionOS. Run Qwen3,
 - **iOS 18+** / **macOS 15+** / **visionOS 2+**
 - **Xcode 16+**
 - **Swift 6.0** (C++ interoperability mode enabled — required by llama.cpp)
-- `Increased Memory Limit` entitlement (required for all models > 500 MB)
+- `Increased Memory Limit` **and** `Extended Virtual Addressing` entitlements (both required for models > 500 MB — the second one is what makes mmap/layer-streaming actually work on iOS)
 
 > **Note:** The C++ interoperability requirement means all targets that import `AuraCore` must enable `.interoperabilityMode(.Cxx)` in their `Package.swift` `swiftSettings`.
 
@@ -915,6 +915,8 @@ Add to your `.entitlements` file for models larger than 500 MB:
 
 ```xml
 <key>com.apple.developer.kernel.increased-memory-limit</key>
+<true/>
+<key>com.apple.developer.kernel.extended-virtual-addressing</key>
 <true/>
 ```
 

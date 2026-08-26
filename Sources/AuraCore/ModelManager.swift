@@ -312,18 +312,17 @@ public final class ModelManager: ObservableObject {
     // MARK: - Memory detection
 
     private static func detectMemoryBudget() -> Int {
-        let available = availableMemoryBytes()
+        // Unknown → keep exactly one model resident. The OS reports unknown when the process is at
+        // its jetsam limit, which is the worst possible moment to cache a second model.
+        guard let available = availableMemoryBytes() else { return 1 }
         let usable    = max(0, available - 2 * 1024 * 1024 * 1024) // reserve 2 GB for OS
         let budget    = max(1, Int(usable / (1_500 * 1024 * 1024))) // ~1.5 GB per model
         return min(budget, 4)
     }
 
-    private static func availableMemoryBytes() -> Int {
-#if os(iOS) || os(tvOS) || os(watchOS)
-        let available = os_proc_available_memory()
-        if available > 0 { return Int(available) }
-#endif
-        return Int(Double(ProcessInfo.processInfo.physicalMemory) * 0.6)
+    /// Delegates to ``HardwareProfile/availableMemoryBytes()`` — the single place that asks the OS.
+    private static func availableMemoryBytes() -> Int? {
+        HardwareProfile.availableMemoryBytes()
     }
 }
 

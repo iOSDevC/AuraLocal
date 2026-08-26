@@ -55,6 +55,7 @@ final class LlamaCppBackend: InferenceBackend {
         let parameter = LlamaClient.Parameter(
             context: contextSize(),
             numberOfThreads: threadCount(),
+            batch: batchSize(),
             temperature: temperature,
             topP: 0.95
         )
@@ -159,6 +160,20 @@ final class LlamaCppBackend: InferenceBackend {
     /// every model to 2048 (iOS) / 8192 (macOS) no matter what it supported.
     private func contextSize() -> Int {
         HardwareAnalyzer.recommendedContextWindow(for: model)
+    }
+
+    /// Tokens submitted per `llama_decode` while prefilling.
+    ///
+    /// LocalLLMClient chunks the prompt by this value (its `Decoder` strides over the token array),
+    /// so the 512 default splits a 4 000-token prompt into eight round trips. The staging buffer
+    /// costs roughly 30 bytes per token — ~60 KB at 2048 — so context length is the only real
+    /// ceiling worth respecting.
+    ///
+    /// Note this is NOT llama.cpp's `n_ubatch`, which governs the GPU-side prefill split and is the
+    /// knob published benchmarks tune; LocalLLMClient does not expose it. The win here is fewer
+    /// round trips, not a larger GPU batch, so expect a smaller effect than those numbers suggest.
+    private func batchSize() -> Int {
+        min(contextSize(), 2048)
     }
 
     private func threadCount() -> Int {

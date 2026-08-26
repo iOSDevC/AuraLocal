@@ -48,20 +48,13 @@ public struct HardwareProfile: Sendable {
         let total = Double(ProcessInfo.processInfo.physicalMemory)
         let totalGB = total / 1_073_741_824 // 1 GB
 
-        var availableGB: Double
-        #if os(iOS) || os(tvOS) || os(watchOS)
-        let proc = os_proc_available_memory()
-        availableGB = proc > 0
-            ? Double(proc) / 1_073_741_824
-            : totalGB * 0.6
-        #else
-        // Measure, don't guess. The old `totalGB * 0.6` assumed 60 % was free no
-        // matter what was running — on a dev machine with Xcode + Simulator
-        // (10–14 GB) that overstates the budget ~2x, so models are assessed as
-        // fitting when they would thrash. Reading the kernel is right for BOTH a
-        // busy dev Mac and an end user's idle one.
-        availableGB = macReclaimableMemoryGB() ?? (totalGB * 0.6)
-        #endif
+        // Measure, don't guess — `availableMemoryBytes()` reads the OS on every platform. The
+        // fraction-of-RAM fallback survives ONLY here, because this value drives estimates a user
+        // reads (fit badges, sizing) where a rough number beats no number. Anything that decides
+        // whether it is safe to allocate must use `availableMemoryBytes()` directly and treat
+        // `nil` as danger, not fall back to this.
+        let availableGB = availableMemoryBytes().map { Double($0) / 1_073_741_824 }
+            ?? (totalGB * 0.6)
 
         let name: String
         #if os(iOS) || os(tvOS)
@@ -109,6 +102,26 @@ public struct HardwareProfile: Sendable {
         return String(decoding: buffer, as: UTF8.self)
     }
     #endif
+
+    /// Bytes the process may still allocate, or `nil` when the platform cannot tell us.
+    ///
+    /// This is the ONE place that asks the OS. On iOS `os_proc_available_memory()` returns 0 in two
+    /// very different situations — the process is at or over its jetsam limit, or it is not an app
+    /// at all (the XCTest runner) — and we cannot tell them apart. Reporting *unknown* instead of
+    /// substituting a fraction-of-RAM guess is the whole point: that guess claimed gigabytes were
+    /// free at the exact moment the app was about to be jetsammed, so every pressure check built on
+    /// it read "plenty of room" precisely when it should have fired. Callers decide what unknown
+    /// means for them — safety-critical ones must assume the worst.
+    nonisolated static func availableMemoryBytes() -> Int? {
+        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+        let available = os_proc_available_memory()
+        return available > 0 ? Int(available) : nil
+        #elseif os(macOS)
+        return macReclaimableMemoryGB().map { Int($0 * 1_073_741_824) }
+        #else
+        return nil
+        #endif
+    }
 
     #if os(macOS)
     /// Free + reclaimable memory reported by the kernel, in GB.
@@ -457,7 +470,7 @@ public enum HardwareAnalyzer {
         guard model.kvHeads > 0, model.numLayers > 0, model.headDim > 0 else { return fallback }
 
         let available = availableGB
-            ?? Double(MemoryBudgetManager.availableMemoryBytes()) / 1_073_741_824
+            ?? HardwareProfile.current().availableMemoryGB
         let weightsGB = Double(model.approximateSizeMB) / 1024.0
         let reserveGB = 0.4                       // framework overhead + safety margin
         let freeForKV = available - weightsGB - reserveGB

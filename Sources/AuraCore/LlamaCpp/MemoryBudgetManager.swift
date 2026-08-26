@@ -36,35 +36,55 @@ final class MemoryBudgetManager {
 
     // MARK: - Queries
 
-    /// Current available memory in bytes.
-    ///
-    /// `nonisolated`: a stateless system query (no actor state), so hardware math
-    /// like `HardwareAnalyzer.recommendedContextWindow` can read it off the main actor.
-    nonisolated static func availableMemoryBytes() -> Int {
-        #if os(iOS) || os(tvOS) || os(watchOS)
-        let available = os_proc_available_memory()
-        if available > 0 { return Int(available) }
-        #endif
-        // macOS fallback: 60% of physical RAM
-        return Int(Double(ProcessInfo.processInfo.physicalMemory) * 0.6)
+    /// Current available memory in bytes, or `nil` when the OS cannot tell us.
+    /// Delegates to ``HardwareProfile/availableMemoryBytes()`` — the single place that asks the OS.
+    nonisolated static func availableMemoryBytes() -> Int? {
+        HardwareProfile.availableMemoryBytes()
     }
 
     /// Whether the system is under memory pressure.
-    /// Returns `true` if available memory is below the safety margin.
+    ///
+    /// **Unknown counts as pressure.** On iOS the OS reports "unknown" precisely when the process is
+    /// at or over its jetsam limit, so treating it as "plenty free" — which is what the old
+    /// fraction-of-RAM fallback did — turned this check off at the exact moment it had to fire.
     var isUnderPressure: Bool {
-        Self.availableMemoryBytes() < safetyMarginBytes
+        Self.isUnderPressure(available: Self.availableMemoryBytes(), safetyMargin: safetyMarginBytes)
+    }
+
+    /// Pure decision behind ``isUnderPressure`` — separated so the unknown case can be tested
+    /// without an iOS device sitting at its jetsam limit.
+    nonisolated static func isUnderPressure(available: Int?, safetyMargin: Int) -> Bool {
+        guard let available else { return true }
+        return available < safetyMargin
     }
 
     /// Whether there's enough memory to allocate the given number of bytes.
+    /// Unknown means no: refusing a load is recoverable, being jetsammed mid-inference is not.
     func canAllocate(bytes: Int) -> Bool {
-        Self.availableMemoryBytes() - bytes > safetyMarginBytes
+        Self.canAllocate(bytes: bytes, available: Self.availableMemoryBytes(), safetyMargin: safetyMarginBytes)
+    }
+
+    /// Pure decision behind ``canAllocate(bytes:)``.
+    nonisolated static func canAllocate(bytes: Int, available: Int?, safetyMargin: Int) -> Bool {
+        guard let available else { return false }
+        return available - bytes > safetyMargin
     }
 
     /// Recommended context length based on current memory conditions.
     /// Reduces context dynamically when memory is tight.
     func recommendedContextLength(baseContext: Int) -> Int {
-        let available = Self.availableMemoryBytes()
-        let freeAfterMargin = available - safetyMarginBytes
+        Self.recommendedContextLength(
+            baseContext: baseContext,
+            available: Self.availableMemoryBytes(),
+            safetyMargin: safetyMarginBytes)
+    }
+
+    /// Pure decision behind ``recommendedContextLength(baseContext:)``.
+    /// Unknown → smallest window: an under-sized context is a slow answer, an over-sized one on a
+    /// jetsam-limited process is a dead app.
+    nonisolated static func recommendedContextLength(baseContext: Int, available: Int?, safetyMargin: Int) -> Int {
+        guard let available else { return min(baseContext, 512) }
+        let freeAfterMargin = available - safetyMargin
 
         if freeAfterMargin > 512 * 1024 * 1024 {
             return baseContext  // Plenty of room
@@ -126,7 +146,7 @@ final class MemoryBudgetManager {
     // MARK: - Helpers
 
     private static func calculateBudget(safetyMarginBytes: Int) -> Int {
-        let available = availableMemoryBytes()
+        guard let available = availableMemoryBytes() else { return 0 }
         return max(0, available - safetyMarginBytes)
     }
 

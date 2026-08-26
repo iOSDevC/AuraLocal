@@ -23,7 +23,7 @@ On-device LLMs can consume significant RAM. AuraLocal has multiple layers of pro
 
 1. **`HardwareAnalyzer`** — flags models that won't fit (pure analysis). Enforcement lives in `ModelManager.load`, which refuses a `.tooLarge` model up front by throwing `AuraError.modelTooLarge` **before** downloading it or risking a jetsam kill mid-load.
 2. **`ModelManager` LRU cache** — evicts the least-recently-used model when RAM is needed
-3. **`MemoryBudgetManager`** — checks `os_proc_available_memory()` every 32 tokens during generation and stops early if RAM becomes critical
+3. **`MemoryBudgetManager`** — checks available memory every 32 tokens during generation and stops early if RAM becomes critical. When the OS reports *unknown* — which on iOS is exactly what happens once the process is at or over its jetsam limit — this is treated as **pressure**, never as "plenty free".
 4. **`BackgroundLifecycle`** — pauses inference when app is backgrounded (iOS only)
 5. **Memory pressure listener** — `DispatchSource.makeMemoryPressureSource` + `UIApplication.didReceiveMemoryWarningNotification` trigger immediate eviction of non-active models
 
@@ -64,8 +64,9 @@ During llama.cpp inference, `MemoryBudgetManager` monitors RAM every 32 tokens. 
 property on it. To read available RAM from your own code, use the public `HardwareProfile`:
 
 ```swift
-// AuraCore tracks available memory internally via os_proc_available_memory() (iOS)
-// or 60% of physical RAM (macOS), and reduces context automatically when RAM is tight.
+// One source of truth: HardwareProfile.availableMemoryBytes() asks the OS —
+// os_proc_available_memory() on iOS, the kernel VM stats on macOS — and returns
+// nil when it cannot tell. Safety-critical callers treat nil as danger.
 
 let availableGB = HardwareProfile.current().availableMemoryGB   // current available RAM (GB)
 
@@ -119,11 +120,25 @@ BackgroundLifecycle.shared.aggressiveMemorySaving = true
 
 ## Entitlement
 
-Without the `Increased Memory Limit` entitlement, iOS caps your process at ~1.5 GB regardless of device RAM. **Always add this for apps using AuraLocal:**
+Two entitlements matter, and AuraLocal needs **both**:
+
+- **Increased Memory Limit** — raises the resident (physical RAM) limit before jetsam kills you.
+- **Extended Virtual Addressing** — raises the *address-space* limit. llama.cpp loads GGUF weights
+  with `use_mmap = true`, and layer-streaming's whole premise is mapping a file far larger than RAM.
+  Without this, iOS caps the address space and **terminates the app** when a large mapping hits it,
+  so mmap buys much less than it should.
+
+**Always add both for apps using AuraLocal:**
 
 ```xml
 <key>com.apple.developer.kernel.increased-memory-limit</key>
 <true/>
+<key>com.apple.developer.kernel.extended-virtual-addressing</key>
+<true/>
 ```
 
 With the entitlement, the limit is raised to ~3 GB on 6 GB devices and proportionally higher on larger devices.
+
+> **Trade-off worth knowing:** raising the resident limit also makes the app a *bigger* jetsam
+> target — iOS preferentially kills high-memory apps once they are backgrounded. Pair it with
+> `BackgroundLifecycle.shared.aggressiveMemorySaving = true` so models are evicted on background.

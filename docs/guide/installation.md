@@ -101,6 +101,8 @@ Add the following to your `.entitlements` file. Without it the OS will terminate
 ```xml
 <key>com.apple.developer.kernel.increased-memory-limit</key>
 <true/>
+<key>com.apple.developer.kernel.extended-virtual-addressing</key>
+<true/>
 ```
 
 For macOS apps using GGUF models stored outside the sandbox:

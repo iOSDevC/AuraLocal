@@ -62,6 +62,10 @@ final class LayerStreamingBackend: InferenceBackend {
         let parameter = LlamaClient.Parameter(
             context: adaptiveContextLength(),
             numberOfThreads: streamingThreadCount(),
+            // Streaming runs on memory-constrained devices and pages weights from disk, so a huge
+            // prefill chunk buys little and lengthens the window where memory can spike. Modest
+            // bump over the 512 default, still bounded by the (already small) context.
+            batch: min(adaptiveContextLength(), 1024),
             temperature: temperature,
             topP: 0.95
         )

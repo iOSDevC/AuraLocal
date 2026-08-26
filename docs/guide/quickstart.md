@@ -47,6 +47,8 @@ In Xcode, open your target's **Signing & Capabilities** tab, add **Increased Mem
 ```xml
 <key>com.apple.developer.kernel.increased-memory-limit</key>
 <true/>
+<key>com.apple.developer.kernel.extended-virtual-addressing</key>
+<true/>
 ```
 
 ---
