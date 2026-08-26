@@ -1,0 +1,222 @@
+From 3b2e92c4fa5663714a27c9d46ba603c5fce07be1 Mon Sep 17 00:00:00 2001
+From: Cristopher Bautista <cristopher.abg@icloud.com>
+Date: Wed, 26 Aug 2026 07:41:56 -0600
+Subject: [PATCH 2/2] feat(llama): expose Flash Attention and KV cache
+ quantization
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+llama.cpp takes both settings on llama_context_params, but nothing on Parameter reached them,
+so callers ran with whatever the defaults happened to be. Both matter most on memory-limited
+devices, where the KV cache — not the weights — is usually what runs out first.
+
+Adds Parameter.flashAttention (.auto/.enabled/.disabled -> llama_flash_attn_type) and
+Parameter.kvCacheType (.f16/.q8_0/.q4_0 -> ggml_type for type_k and type_v). Defaults are .auto
+and .f16, which reproduce llama.cpp's own defaults exactly, so existing callers are unaffected.
+
+The two are coupled and the docs say so: quantizing the KV cache without Flash Attention forces a
+dequantize on every attention computation and can be slower than not quantizing at all.
+
+Also adds Context.stateSizeBytes — how large a saveState(to:) file will be, and the honest way to
+see what a kvCacheType actually bought.
+
+Measured with the test model at 2048 context, cache filled before measuring (an empty context
+serialises to a ~26 byte header regardless of element type, which is what made the first version
+of this test pass vacuously):
+  f16   11,531,586 B
+  q8_0   6,128,706 B   (46.8% smaller)
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ Sources/LocalLLMClientLlama/Context.swift     | 32 +++++++++++++
+ Sources/LocalLLMClientLlama/Parameter.swift   | 40 +++++++++++++++++
+ .../ContextTuningTests.swift                  | 45 +++++++++++++++++++
+ 3 files changed, 117 insertions(+)
+ create mode 100644 Tests/LocalLLMClientLlamaTests/ContextTuningTests.swift
+
+diff --git a/Sources/LocalLLMClientLlama/Context.swift b/Sources/LocalLLMClientLlama/Context.swift
+index 7563929..7560837 100644
+--- a/Sources/LocalLLMClientLlama/Context.swift
++++ b/Sources/LocalLLMClientLlama/Context.swift
+@@ -49,6 +49,9 @@ public final class Context: @unchecked Sendable {
+         ctx_params.n_ctx = UInt32(parameter.context)
+         ctx_params.n_threads = Int32(parameter.numberOfThreads ?? Self.defaultNumberOfThreads)
+         ctx_params.n_threads_batch = ctx_params.n_threads
++        ctx_params.flash_attn_type = parameter.flashAttention.llamaValue
++        ctx_params.type_k = parameter.kvCacheType.ggmlValue
++        ctx_params.type_v = parameter.kvCacheType.ggmlValue
+ 
+         self.parameter = parameter
+         self.pauseHandler = PauseHandler(disableAutoPause: parameter.options.disableAutoPause)
+@@ -234,8 +237,37 @@ public extension Context {
+         promptCaches = metadata.entries.map { (chunk: .text($0.text), lastPosition: $0.lastPosition) }
+     }
+ 
++    /// Bytes llama.cpp needs to serialise this context's state — dominated by the KV cache, and
++    /// therefore how large a ``saveState(to:)`` file will be. Also the honest way to see what
++    /// ``LlamaClient/Parameter/kvCacheType`` actually bought you.
++    var stateSizeBytes: Int {
++        Int(llama_state_get_size(context))
++    }
++
+     /// Companion file holding the prompt-cache bookkeeping for a state file.
+     static func metadataURL(for stateURL: URL) -> URL {
+         stateURL.appendingPathExtension("meta")
+     }
+ }
++
++// MARK: - Parameter bridging
++
++extension LlamaClient.FlashAttention {
++    var llamaValue: llama_flash_attn_type {
++        switch self {
++        case .auto:     LLAMA_FLASH_ATTN_TYPE_AUTO
++        case .enabled:  LLAMA_FLASH_ATTN_TYPE_ENABLED
++        case .disabled: LLAMA_FLASH_ATTN_TYPE_DISABLED
++        }
++    }
++}
++
++extension LlamaClient.KVCacheType {
++    var ggmlValue: ggml_type {
++        switch self {
++        case .f16:  GGML_TYPE_F16
++        case .q8_0: GGML_TYPE_Q8_0
++        case .q4_0: GGML_TYPE_Q4_0
++        }
++    }
++}
+diff --git a/Sources/LocalLLMClientLlama/Parameter.swift b/Sources/LocalLLMClientLlama/Parameter.swift
+index 7684342..d12e9e4 100644
+--- a/Sources/LocalLLMClientLlama/Parameter.swift
++++ b/Sources/LocalLLMClientLlama/Parameter.swift
+@@ -17,6 +17,8 @@ public extension LlamaClient {
+         ///   - typicalP: Limits sampling based on typical probability. Default is `1`.
+         ///   - penaltyLastN: The number of recent tokens to consider for penalty. Default is `64`.
+         ///   - penaltyRepeat: The penalty factor for repeating tokens. Default is `1.1`.
++        ///   - flashAttention: When to use Flash Attention. Default is `.auto` (llama.cpp decides).
++        ///   - kvCacheType: Element type for the KV cache. Default is `.f16` (unquantized).
+         ///   - options: Additional options for the Llama client.
+         public init(
+             context: Int = 2048,
+@@ -29,6 +31,8 @@ public extension LlamaClient {
+             typicalP: Float = 1,
+             penaltyLastN: Int = 64,
+             penaltyRepeat: Float = 1.1,
++            flashAttention: FlashAttention = .auto,
++            kvCacheType: KVCacheType = .f16,
+             options: Options = .init()
+         ) {
+             self.context = context
+@@ -41,6 +45,8 @@ public extension LlamaClient {
+             self.typicalP = typicalP
+             self.penaltyLastN = penaltyLastN
+             self.penaltyRepeat = penaltyRepeat
++            self.flashAttention = flashAttention
++            self.kvCacheType = kvCacheType
+             self.options = options
+         }
+         
+@@ -52,6 +58,10 @@ public extension LlamaClient {
+         public var numberOfThreads: Int?
+         /// The batch size for prompt processing.
+         public var batch: Int
++        /// When to use Flash Attention.
++        public var flashAttention: FlashAttention
++        /// Element type for the KV cache. Quantizing shrinks it at some cost in quality.
++        public var kvCacheType: KVCacheType
+         /// Controls randomness in sampling. Lower values make the model more deterministic.
+         public var temperature: Float
+         /// Limits sampling to the K most likely tokens.
+@@ -103,6 +113,36 @@ public extension LlamaClient {
+         public var disableAutoPause: Bool
+     }
+ 
++    /// When to enable Flash Attention.
++    ///
++    /// Flash Attention speeds up prefill at longer contexts and shrinks the per-token attention
++    /// footprint. It is also a **prerequisite for a quantized KV cache**: without it llama.cpp has
++    /// to dequantize the cache on every attention step, which can end up slower than not
++    /// quantizing at all.
++    enum FlashAttention: Sendable, Equatable {
++        /// Let llama.cpp decide (its own default).
++        case auto
++        case enabled
++        case disabled
++    }
++
++    /// Element type for the K/V cache.
++    ///
++    /// The KV cache grows with context length and is often the binding memory constraint on
++    /// memory-limited devices; quantizing it trades a little quality for a lot of headroom.
++    ///
++    /// - Important: use these only together with ``FlashAttention/enabled`` (or `.auto` on a build
++    ///   that turns it on). Quantizing without Flash Attention forces a dequantize on every
++    ///   attention computation and can be *slower* than ``f16``.
++    enum KVCacheType: Sendable, Equatable {
++        /// 16-bit — llama.cpp's default, no quality loss.
++        case f16
++        /// 8-bit — roughly half the KV memory, minimal quality impact.
++        case q8_0
++        /// 4-bit — roughly a quarter of the KV memory, noticeable quality impact.
++        case q4_0
++    }
++
+     /// Specifies the desired format for the model's response.
+     enum ResponseFormat: Sendable {
+         /// Constrains the model's output to a specific grammar defined in GBNF (GGML BNF) format.
+diff --git a/Tests/LocalLLMClientLlamaTests/ContextTuningTests.swift b/Tests/LocalLLMClientLlamaTests/ContextTuningTests.swift
+new file mode 100644
+index 0000000..0e488bc
+--- /dev/null
++++ b/Tests/LocalLLMClientLlamaTests/ContextTuningTests.swift
+@@ -0,0 +1,45 @@
++import Testing
++import Foundation
++import LocalLLMClientCore
++@testable import LocalLLMClientLlama
++
++extension ModelTests {
++    struct ContextTuningTests {}
++}
++
++extension ModelTests.ContextTuningTests {
++
++    /// The point of exposing `kvCacheType`: on memory-limited devices the KV cache is usually the
++    /// binding constraint, and quantizing it has to actually shrink it — not just change a flag.
++    @Test
++    func quantizedKVCacheIsSmallerThanF16() async throws {
++        let contextLength = 2048
++
++        // The state only covers the USED part of the cache, so it must be filled first — an empty
++        // context serialises to a bare header (~26 B) whatever the element type is.
++        let prompt = String(repeating: "The quick brown fox jumps over the lazy dog. ", count: 20)
++
++        let f16 = try await LocalLLMClient.llama(
++            parameter: .init(context: contextLength, flashAttention: .enabled, kvCacheType: .f16))
++        try f16._context.decode(text: prompt)
++        let f16Size = f16._context.stateSizeBytes
++
++        let q8 = try await LocalLLMClient.llama(
++            parameter: .init(context: contextLength, flashAttention: .enabled, kvCacheType: .q8_0))
++        try q8._context.decode(text: prompt)
++        let q8Size = q8._context.stateSizeBytes
++
++        #expect(f16._context.position == q8._context.position, "same prompt → same token count")
++        #expect(f16Size > 1024, "a filled f16 cache must be more than a header")
++        #expect(q8Size < f16Size,
++                "q8_0 KV cache (\(q8Size) B) must be smaller than f16 (\(f16Size) B)")
++    }
++
++    /// Defaults must reproduce llama.cpp's own, so existing callers see no behaviour change.
++    @Test
++    func defaultsAreUnquantifiedAndAutoFlashAttention() {
++        let parameter = LlamaClient.Parameter()
++        #expect(parameter.kvCacheType == .f16)
++        #expect(parameter.flashAttention == .auto)
++    }
++}
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,239 @@
+From f6d7dae7e433b7530acfea176284ce9081860242 Mon Sep 17 00:00:00 2001
+From: Cristopher Bautista <cristopher.abg@icloud.com>
+Date: Tue, 25 Aug 2026 16:26:30 -0600
+Subject: [PATCH 1/2] feat(llama): persist and restore session KV cache
+
+Long conversations spend most of their time re-prefilling history that has not changed. On
+memory-bandwidth-bound hardware (Apple Silicon) that dominates time-to-first-token, and today a
+relaunched app pays it in full: llama.cpp can save its KV cache, but nothing on LlamaClient or
+Context exposes it, and llama_context is package-scoped so a consumer cannot reach it either.
+
+Adds LlamaClient.saveState(to:) / loadState(from:), delegating to new Context methods over
+llama_state_save_file / llama_state_load_file.
+
+The one subtlety: restoring the raw KV cache alone is NOT safe. Context tracks its own prompt
+cache bookkeeping (promptCaches), which drives prefix reuse in removeCachedChunks(). Restoring
+KV while that array stayed empty would leave the context believing nothing is cached even though
+positions are occupied, so the next generation would append instead of reuse and corrupt the
+conversation. saveState therefore writes a small sidecar (<url>.meta) with the bookkeeping, and
+loadState restores both together; a state file whose sidecar is missing is refused rather than
+loaded into an inconsistent context.
+
+Multimodal sessions are out of scope for now: image/video chunks are not serialisable here, so
+saveState throws invalidParameter instead of silently dropping them.
+
+Tests (ContextStateTests, run against a real model): a decoded context saves and restores into
+a fresh client with the same position; a missing state file throws; a state file with its
+sidecar removed throws.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+---
+ Sources/LocalLLMClientLlama/Context.swift     | 74 ++++++++++++++++++
+ Sources/LocalLLMClientLlama/LlamaClient.swift | 25 ++++++
+ .../ContextStateTests.swift                   | 76 +++++++++++++++++++
+ 3 files changed, 175 insertions(+)
+ create mode 100644 Tests/LocalLLMClientLlamaTests/ContextStateTests.swift
+
+diff --git a/Sources/LocalLLMClientLlama/Context.swift b/Sources/LocalLLMClientLlama/Context.swift
+index 756dfd6..7563929 100644
+--- a/Sources/LocalLLMClientLlama/Context.swift
++++ b/Sources/LocalLLMClientLlama/Context.swift
+@@ -165,3 +165,77 @@ public final class Context: @unchecked Sendable {
+         return nil
+     }
+ }
++
++// MARK: - Session state persistence
++
++/// Sidecar describing what the saved KV cache contains, so prompt-prefix reuse stays correct
++/// after a restore. Text-only: the reuse path matches on text prefixes.
++private struct ContextStateMetadata: Codable {
++    struct Entry: Codable {
++        let text: String
++        let lastPosition: Int32
++    }
++    var entries: [Entry]
++}
++
++public extension Context {
++    /// Writes this context's KV cache to `url` so a later process can resume the conversation
++    /// without re-processing (re-prefilling) the prompt.
++    ///
++    /// Two things are persisted: llama.cpp's own state file, and a sidecar (`url` + `.meta`)
++    /// holding the prompt-cache bookkeeping. Restoring the KV cache **without** that bookkeeping
++    /// would leave the context believing nothing is cached while positions are already occupied,
++    /// so the next generation would append instead of reuse and corrupt the conversation.
++    ///
++    /// - Throws: ``LLMError/invalidParameter(reason:)`` when the session contains image or video
++    ///   chunks — those are not serialisable here, and silently dropping them would corrupt the
++    ///   restored context.
++    func saveState(to url: URL) throws {
++        var entries: [ContextStateMetadata.Entry] = []
++        for cache in promptCaches {
++            guard case let .text(text) = cache.chunk else {
++                throw LLMError.invalidParameter(
++                    reason: "Saving a multimodal session state is not supported yet."
++                )
++            }
++            entries.append(.init(text: text, lastPosition: cache.lastPosition))
++        }
++
++        var noTokens: [llama_token] = []
++        let saved = noTokens.withUnsafeMutableBufferPointer { buffer in
++            llama_state_save_file(context, url.path, buffer.baseAddress, 0)
++        }
++        guard saved else {
++            throw LLMError.failedToLoad(reason: "llama_state_save_file failed for \(url.path)")
++        }
++
++        let metadata = ContextStateMetadata(entries: entries)
++        try JSONEncoder().encode(metadata).write(to: Self.metadataURL(for: url), options: .atomic)
++    }
++
++    /// Restores a KV cache previously written by ``saveState(to:)``, together with its prompt-cache
++    /// bookkeeping, so the next generation reuses the cached prefix instead of re-prefilling it.
++    func loadState(from url: URL) throws {
++        let metadataURL = Self.metadataURL(for: url)
++        guard FileManager.default.fileExists(atPath: url.path),
++              FileManager.default.fileExists(atPath: metadataURL.path) else {
++            throw LLMError.failedToLoad(reason: "No saved state at \(url.path)")
++        }
++
++        var tokenCount = 0
++        let loaded = llama_state_load_file(context, url.path, nil, 0, &tokenCount)
++        guard loaded else {
++            throw LLMError.failedToLoad(reason: "llama_state_load_file failed for \(url.path)")
++        }
++
++        let metadata = try JSONDecoder().decode(
++            ContextStateMetadata.self, from: Data(contentsOf: metadataURL)
++        )
++        promptCaches = metadata.entries.map { (chunk: .text($0.text), lastPosition: $0.lastPosition) }
++    }
++
++    /// Companion file holding the prompt-cache bookkeeping for a state file.
++    static func metadataURL(for stateURL: URL) -> URL {
++        stateURL.appendingPathExtension("meta")
++    }
++}
+diff --git a/Sources/LocalLLMClientLlama/LlamaClient.swift b/Sources/LocalLLMClientLlama/LlamaClient.swift
+index fc37f2a..ce7f91b 100644
+--- a/Sources/LocalLLMClientLlama/LlamaClient.swift
++++ b/Sources/LocalLLMClientLlama/LlamaClient.swift
+@@ -207,6 +207,31 @@ public extension LocalLLMClient {
+     }
+ }
+ 
++// MARK: - Session state persistence
++
++public extension LlamaClient {
++    /// Writes the client's KV cache to `url`, so a later launch can resume the conversation
++    /// without re-processing the prompt it already saw.
++    ///
++    /// Long conversations spend most of their time re-prefilling history that has not changed;
++    /// on memory-bandwidth-bound hardware (Apple Silicon) that dominates time-to-first-token.
++    /// Persisting the cache turns a cold resume into a warm one.
++    ///
++    /// A companion file (`url` + `.meta`) is written alongside; both are needed by
++    /// ``loadState(from:)``. Multimodal sessions are not supported yet and throw.
++    func saveState(to url: URL) throws {
++        try context.saveState(to: url)
++    }
++
++    /// Restores a KV cache previously written by ``saveState(to:)``.
++    ///
++    /// Call this on a freshly created client using the *same model and parameters* — llama.cpp
++    /// state files are not portable across models or context sizes.
++    func loadState(from url: URL) throws {
++        try context.loadState(from: url)
++    }
++}
++
+ #if DEBUG
+ extension LlamaClient {
+     var _context: Context {
+diff --git a/Tests/LocalLLMClientLlamaTests/ContextStateTests.swift b/Tests/LocalLLMClientLlamaTests/ContextStateTests.swift
+new file mode 100644
+index 0000000..26ca4d3
+--- /dev/null
++++ b/Tests/LocalLLMClientLlamaTests/ContextStateTests.swift
+@@ -0,0 +1,76 @@
++import Testing
++import Foundation
++import LocalLLMClientCore
++@testable import LocalLLMClientLlama
++
++extension ModelTests {
++    struct ContextStateTests {}
++}
++
++extension ModelTests.ContextStateTests {
++
++    private func makeStateURL() -> URL {
++        FileManager.default.temporaryDirectory
++            .appendingPathComponent("llmclient-state-\(UUID().uuidString).bin")
++    }
++
++    private func cleanUp(_ url: URL) {
++        try? FileManager.default.removeItem(at: url)
++        try? FileManager.default.removeItem(at: Context.metadataURL(for: url))
++    }
++
++    /// A saved KV cache restores into a fresh context, so a resumed session does not re-prefill.
++    @Test
++    func saveAndRestoreKVCache() async throws {
++        let stateURL = makeStateURL()
++        defer { cleanUp(stateURL) }
++
++        let source = try await LocalLLMClient.llama()
++        let sourceContext = source._context
++        try sourceContext.decode(text: "The capital of France is")
++        let savedPosition = sourceContext.position
++        #expect(savedPosition > 0)
++
++        try sourceContext.saveState(to: stateURL)
++        #expect(FileManager.default.fileExists(atPath: stateURL.path))
++        #expect(FileManager.default.fileExists(atPath: Context.metadataURL(for: stateURL).path))
++
++        // A fresh context starts empty; restoring must bring the cached positions back.
++        let restored = try await LocalLLMClient.llama()
++        let restoredContext = restored._context
++        #expect(restoredContext.position == 0)
++
++        try restoredContext.loadState(from: stateURL)
++        #expect(restoredContext.position == savedPosition)
++    }
++
++    /// Restoring from a path that was never written must fail loudly, not silently continue with
++    /// an empty cache that the caller believes is warm.
++    @Test
++    func loadingMissingStateThrows() async throws {
++        let client = try await LocalLLMClient.llama()
++        let missing = makeStateURL()
++        #expect(throws: (any Error).self) {
++            try client._context.loadState(from: missing)
++        }
++    }
++
++    /// The state file and its sidecar are a pair — a state file without bookkeeping must not load,
++    /// because the restored cache would not match what the context thinks it holds.
++    @Test
++    func loadingWithoutMetadataThrows() async throws {
++        let stateURL = makeStateURL()
++        defer { cleanUp(stateURL) }
++
++        let source = try await LocalLLMClient.llama()
++        try source._context.decode(text: "Hello")
++        try source._context.saveState(to: stateURL)
++
++        try FileManager.default.removeItem(at: Context.metadataURL(for: stateURL))
++
++        let client = try await LocalLLMClient.llama()
++        #expect(throws: (any Error).self) {
++            try client._context.loadState(from: stateURL)
++        }
++    }
++}
+-- 
+2.50.1 (Apple Git-155)
+
