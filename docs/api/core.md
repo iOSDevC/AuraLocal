@@ -244,6 +244,20 @@ static func assess(
     profile: HardwareProfile = .current()
 ) -> ModelCompatibility
 
+public struct HardwareProfile: Sendable {
+    let totalMemoryGB: Double
+    let availableMemoryGB: Double        // convenience: falls back to an estimate for display
+    let deviceName: String
+    let memoryBandwidthGBs: Double?      // nil on iOS and for unrecognised chips
+
+    static func current() -> HardwareProfile
+
+    /// Bytes the process may still allocate, or nil when the OS cannot tell.
+    /// iOS returns nil exactly when the process is at or over its jetsam limit —
+    /// safety-critical callers must treat nil as danger, never as "plenty free".
+    static func availableMemoryBytes() -> Int?
+}
+
 public struct ModelCompatibility: Sendable {
     let model: Model
     let fitLevel: ModelFitLevel

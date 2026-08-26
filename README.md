@@ -11,13 +11,13 @@ Lightweight on-device LLM & VLM Swift package for iOS/macOS/visionOS. Run Qwen3,
 ## Highlights
 
 - **Dual-backend inference** — MLX for 0.5B–4B models on GPU; llama.cpp/GGUF for 7B–70B with full Metal acceleration on macOS or layer-streaming on iOS.
-- **Layer-streaming mode** — Run 7B–13B models on 6 GB iPhones at ~2–5 tok/s with ≤750 MB peak RAM. OS pages weights from disk on-demand; jetsam limit never approached.
+- **Layer-streaming mode** — Run 7B–12B models on entitled 6–8 GB iPhones at ~2–5 tok/s. The OS pages weights from disk on demand, so the app's own footprint stays small — but mapped pages that are faulted in still count toward the resident size jetsam measures, so they are evictable rather than free. Without both memory entitlements an 8B is refused outright.
 - **`InferenceBackend` protocol** — Clean abstraction over all backends; `BackendRouter` selects the optimal engine automatically based on model format and device RAM.
 - **GGUF model catalog** — 7 new large models (Llama 3.1, Qwen 2.5, Mistral, Phi-3, Gemma 2) with automatic download from HuggingFace, resume support, and `@Published` progress.
 - **GQA-aware memory estimates** — KV cache calculations account for Grouped-Query Attention (Llama 3.1 8B: 256 MB at FP16/2048 ctx vs ~1 GB with naive full-attention assumption).
 - **Unified model management** — `ModelManager.shared.load()` provides LRU caching, in-flight deduplication, automatic memory-pressure eviction, and backend-aware GGUF downloading.
 - **Swift 6 concurrency** — All public APIs are `@MainActor`-isolated or `Sendable`, with `actor`-based stores for data-race safety.
-- **OOM prevention** — `os_proc_available_memory()` monitoring with `DispatchSource` pressure listeners; `MemoryBudgetManager` performs adaptive context sizing and per-generation jetsam checks.
+- **OOM prevention that fails safe** — One source of truth (`HardwareProfile.availableMemoryBytes()`) asks the OS and returns `nil` rather than inventing a number. iOS reports "unknown" exactly when the process is at its jetsam limit, so unknown counts as *pressure*: pressure trips, allocation is refused, context shrinks. Paired with `DispatchSource` listeners and per-generation checks.
 - **Hybrid RAG pipeline** — FTS5 keyword pre-filter + Accelerate cosine re-ranking, stored in SQLite. Zero external dependencies.
 - **Local provider detection** — `AuraLocal.detectLocalProviders()` discovers a running Ollama (`:11434`) or llama.cpp `llama-server` (`:8080/v1`) and the models each exposes, via a dependency-free URLSession probe (never throws — a down server is a normal result).
 - **Token-optimized hybrid inference** — A **mixed pipeline**: the same `AuraLocal.stream()` API drives on-device GGUF, your own llama-server/Ollama, or a cloud model — chosen per request. Stay local by default; escalate to a stronger model only when needed, and **cut the tokens sent to the remote** via selective-context compression (**~2–4×**), a response cache (repeat calls cost **$0**), and payload redaction. Every escalation prints a receipt — *"sent 800 of 6,000 tokens · $0.004"*. Fail-closed and consent-gated. See [Hybrid Inference](#hybrid-inference-local--remote).
@@ -95,14 +95,14 @@ If your package imports `AuraCore`, add the C++ interop setting:
 ```
 model.format == .mlx  →  MLXBackend      (GPU, Apple Silicon, models ≤4B)
 model.format == .gguf + fits in RAM →  LlamaCppBackend   (full GPU offload, macOS 8B–70B)
-model.format == .gguf + streamingRequired →  LayerStreamingBackend  (mmap, iOS 6–8 GB, 7B–13B)
+model.format == .gguf + streamingRequired →  LayerStreamingBackend  (mmap, iOS 6–8 GB, 7B–12B)
 ```
 
 | Backend | Platform | Model Size | Peak RAM | Tokens/sec |
 |---------|----------|-----------|---------|------------|
 | MLX | iOS + macOS | ≤4B | 500 MB – 3 GB | 20–45 |
 | llama.cpp (standard) | macOS | 7B–70B | 4–40 GB | 8–20 |
-| Layer-streaming | iOS | 7B–13B | ≤750 MB | 2–6 |
+| Layer-streaming | iOS | 7B–12B | small resident set | 2–6 |
 
 You can inspect which backend a model will use:
 
@@ -110,8 +110,9 @@ You can inspect which backend a model will use:
 import AuraCore
 
 let backend = BackendRouter.recommendedBackend(for: .llama3_1_8b_gguf)
-// → .llamaCpp (on a Mac with 16 GB)
-// → .layerStreaming (on a 6 GB iPhone)
+// → .llamaCpp      (Mac with 16 GB)
+// → .layerStreaming (entitled 6 GB iPhone — ~3 GB budget)
+// → refused as .tooLarge without the memory entitlements (~1.5 GB budget)
 ```
 
 ---
@@ -960,7 +961,7 @@ AuraCore
 ├── InferenceBackend (protocol)
 │   ├── MLXBackend          →  MLXLLM / MLXVLM (GPU, Apple Silicon, ≤4B models)
 │   ├── LlamaCppBackend     →  LocalLLMClient → llama.cpp Metal (GGUF, 7B–70B, macOS)
-│   └── LayerStreamingBackend → LocalLLMClient → mmap streaming (GGUF, 7B–13B, iOS)
+│   └── LayerStreamingBackend → LocalLLMClient → mmap streaming (GGUF, 7B–12B, iOS)
 │
 ├── BackendRouter           →  selects backend by model.format + HardwareAnalyzer
 ├── AuraEngine              →  thin delegator to InferenceBackend

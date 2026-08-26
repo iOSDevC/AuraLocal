@@ -181,8 +181,22 @@ struct ModelsTab: View {
                         .font(.subheadline)
                     LabeledContent("Memory", value: String(format: "%.1f GB", profile.totalMemoryGB))
                         .font(.subheadline)
-                    LabeledContent("Available", value: String(format: "%.1f GB", profile.availableMemoryGB))
-                        .font(.subheadline)
+                    LabeledContent("Available") {
+                        // Distinguish a real reading from the estimate. The OS reports "unknown"
+                        // exactly when the process is at its jetsam limit, and every safety check
+                        // treats that as pressure — so a rosy number here without the caveat would
+                        // contradict what the engine is actually doing.
+                        if HardwareProfile.availableMemoryBytes() != nil {
+                            Text(String(format: "%.1f GB", profile.availableMemoryGB))
+                        } else {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text(String(format: "~%.1f GB", profile.availableMemoryGB))
+                                Text("estimated — OS reported unknown")
+                                    .font(.caption2).foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                    .font(.subheadline)
                     LabeledContent("Compatible models", value: "\(runnableText.count + runnableVision.count + runnableOCR.count)")
                         .font(.subheadline)
                 } header: {

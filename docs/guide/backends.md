@@ -125,7 +125,7 @@ Disk (GGUF file)
     → KV cache (~32 MB at 1024 ctx, GQA)
     → Activations + overhead (~80 MB)
 ─────────────────────────────────────
-Total peak: ≤750 MB  (safe under iOS jetsam ~1.5 GB limit)
+Total peak footprint: small and roughly constant, whatever the model's size
 ```
 
 **Characteristics:**
@@ -173,7 +173,7 @@ Modern models use Grouped-Query Attention (GQA), which dramatically reduces KV c
 | GPU layers | Up to all layers | 0 (CPU only) |
 | Context window | 8192 (≥32 GB) / 4096 tokens | 1024–2048 tokens (streaming reduces to 512 under memory pressure) |
 | Threads | 8 | 4 |
-| Max viable model | 70B (80 GB Mac) | 13B (streaming) |
+| Max viable model | 70B (80 GB Mac) | 12B (streaming, entitled) |
 | Background inference | Continues | Paused by `BackgroundLifecycle` |
 
 ---

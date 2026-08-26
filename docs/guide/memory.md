@@ -64,15 +64,19 @@ During llama.cpp inference, `MemoryBudgetManager` monitors RAM every 32 tokens. 
 property on it. To read available RAM from your own code, use the public `HardwareProfile`:
 
 ```swift
-// One source of truth: HardwareProfile.availableMemoryBytes() asks the OS —
-// os_proc_available_memory() on iOS, the kernel VM stats on macOS — and returns
-// nil when it cannot tell. Safety-critical callers treat nil as danger.
+// One source of truth. Asks the OS — os_proc_available_memory() on iOS, kernel VM
+// stats on macOS — and returns nil when it genuinely cannot tell.
+if let bytes = HardwareProfile.availableMemoryBytes() {
+    print("\(Double(bytes) / 1_073_741_824) GB available")
+} else {
+    // iOS reports this exactly when the process is AT or OVER its jetsam limit.
+    // AuraCore treats it as pressure: allocation refused, context shrunk to 512.
+    // Do not substitute a fraction-of-RAM guess here — that is the bug this replaced.
+}
 
-let availableGB = HardwareProfile.current().availableMemoryGB   // current available RAM (GB)
-
-// Internally, the adaptive context behaves roughly like:
-//   → 2048 tokens on Mac / high-RAM device
-//   → 512 tokens on a 6 GB iPhone under pressure
+// For display and fit estimates, the convenience property falls back to a rough
+// number so the UI always has something to show:
+let availableGB = HardwareProfile.current().availableMemoryGB
 ```
 
 If memory becomes critical mid-generation (checked every 32 tokens), the layer-streaming
@@ -84,11 +88,18 @@ backend stops early and returns the partial text generated so far — it does no
 
 ### iOS
 
-| Device RAM | App budget | Max model (streaming) | Default context |
-|-----------|-----------|----------------------|----------------|
-| 6 GB | ~1.5 GB | 13B (Q4_K_M streaming) | 1024 tokens |
-| 8 GB | ~2.5 GB | 13B (Q4_K_M streaming) | 2048 tokens |
-| 16 GB | ~6 GB | 13B full load | 4096 tokens |
+What actually fits depends far more on the **entitlements** than on the device, because they set
+the app's budget. Streaming is offered only while RAM can still cache a third of the weights —
+below that llama.cpp re-reads them from storage every token and decode collapses.
+
+| App budget | Streams | Refused | Notes |
+|-----------|---------|---------|-------|
+| ~1.5 GB (no entitlement) | up to ~4 GB of weights (7B Q4) | **8B and larger** | the strongest argument for adding both entitlements |
+| ~3 GB (6 GB device, entitled) | up to ~7.5 GB (8B, 9B, 12B Q4) | 32B+ | |
+| ~4.5 GB (8 GB device, entitled) | same, with more headroom | 32B+ | 3B-class models load fully instead of streaming |
+
+Computed from the shipping catalog with the current fit rules — no 13B model is in the catalog, and
+32B never fits an iPhone at any budget.
 
 ### macOS
 

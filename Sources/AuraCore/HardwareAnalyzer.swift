@@ -112,7 +112,7 @@ public struct HardwareProfile: Sendable {
     /// free at the exact moment the app was about to be jetsammed, so every pressure check built on
     /// it read "plenty of room" precisely when it should have fired. Callers decide what unknown
     /// means for them — safety-critical ones must assume the worst.
-    nonisolated static func availableMemoryBytes() -> Int? {
+    public nonisolated static func availableMemoryBytes() -> Int? {
         #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
         let available = os_proc_available_memory()
         return available > 0 ? Int(available) : nil
