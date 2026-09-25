@@ -284,7 +284,8 @@
       "defaultDocumentPrompt": null,
       "numLayers": 40,
       "kvHeads": 8,
-      "headDim": 96
+      "headDim": 96,
+      "maxContextLength": 4096
     },
     {
       "id": "gemma2_9b_gguf",
@@ -299,7 +300,8 @@
       "defaultDocumentPrompt": null,
       "numLayers": 42,
       "kvHeads": 4,
-      "headDim": 256
+      "headDim": 256,
+      "maxContextLength": 8192
     },
     {
       "id": "llama3_1_70b_gguf",
@@ -691,7 +693,8 @@
       "defaultDocumentPrompt": null,
       "numLayers": 32,
       "kvHeads": 8,
-      "headDim": 128
+      "headDim": 128,
+      "maxContextLength": 8192
     },
     {
       "id": "fingpt_sentiment_lfm2_1_2b_gguf",

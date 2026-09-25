@@ -73,4 +73,42 @@ final class ContextWindowTests: XCTestCase {
         #endif
     }
 
+    // MARK: - maxContextLength ceiling
+
+    /// A model whose weights only support a short window must never be handed a bigger one,
+    /// no matter how much memory is free — GPT-2-family position tables have no rows past their
+    /// trained length, so overshooting breaks generation instead of degrading it.
+    func testDeclaredMaxContextCapsTheMemoryDerivedWindow() {
+        let phi = Model.phi3_medium_gguf
+        XCTAssertEqual(phi.maxContextLength, 4096, "precondition: Phi-3-medium is a 4k model")
+
+        let uncapped = HardwareAnalyzer.recommendedContextWindow(
+            for: modelWithoutDeclaredCap(phi), availableGB: 24)
+        XCTAssertGreaterThan(uncapped, 4096, "precondition: memory alone would grant more than 4k")
+
+        XCTAssertEqual(HardwareAnalyzer.recommendedContextWindow(for: phi, availableGB: 24), 4096)
+    }
+
+    /// The cap must not inflate a window that memory already constrained below it.
+    func testDeclaredMaxContextNeverRaisesTheWindow() {
+        let ctx = HardwareAnalyzer.recommendedContextWindow(for: .gemma2_9b_gguf, availableGB: 6)
+        XCTAssertLessThanOrEqual(ctx, 8192)
+    }
+
+    /// Catalog entries that declare no ceiling keep the pure memory-derived behaviour.
+    func testUndeclaredMaxContextLeavesWindowUntouched() {
+        XCTAssertNil(Model.llama3_1_8b_gguf.maxContextLength)
+        let ctx = HardwareAnalyzer.recommendedContextWindow(for: .llama3_1_8b_gguf, availableGB: 12)
+        XCTAssertGreaterThan(ctx, 1024)
+    }
+
+    private func modelWithoutDeclaredCap(_ model: Model) -> Model {
+        Model(id: model.id, repoID: model.repoID, displayName: model.displayName,
+              category: model.category, domain: model.domain, docTags: model.docTags,
+              format: model.format, approximateSizeMB: model.approximateSizeMB,
+              isUncensored: model.isUncensored, ggufFilename: model.ggufFilename,
+              defaultDocumentPrompt: model.defaultDocumentPrompt, numLayers: model.numLayers,
+              kvHeads: model.kvHeads, headDim: model.headDim, maxContextLength: nil,
+              downloadURL: model.downloadURL, localFileURL: model.localFileURL)
+    }
 }

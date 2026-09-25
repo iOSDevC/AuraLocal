@@ -150,6 +150,11 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
     /// Head dimension for KV-cache calculation (0 = use flat estimate).
     public let headDim: Int
 
+    /// Context length the weights actually support, when it is lower than what the memory budget
+    /// would grant — learned position tables (GPT-2 family) break past it instead of degrading.
+    /// `nil` = no ceiling beyond memory. Absent in JSON decodes as `nil`.
+    public let maxContextLength: Int?
+
     /// Explicit download URL for a **user-supplied** model — e.g. a Hugging Face
     /// `…/resolve/<rev>/<file>.gguf` URL the user pasted. `nil` for catalog models, which derive the URL
     /// from `repoID`+`ggufFilename` at the pinned `main` revision. When set, the downloader fetches this
@@ -343,7 +348,7 @@ public extension Model {
                                downloadURL: URL?, localFileURL: URL?) -> Model {
         Model(id: id, repoID: repoID, displayName: displayName, category: .text, domain: nil, docTags: false,
               format: .gguf, approximateSizeMB: 0, isUncensored: false, ggufFilename: filename,
-              defaultDocumentPrompt: nil, numLayers: 0, kvHeads: 0, headDim: 0,
+              defaultDocumentPrompt: nil, numLayers: 0, kvHeads: 0, headDim: 0, maxContextLength: nil,
               downloadURL: downloadURL, localFileURL: localFileURL)
     }
 }

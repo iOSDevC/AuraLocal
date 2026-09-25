@@ -453,10 +453,21 @@ public enum HardwareAnalyzer {
     /// Falls back to the platform tier when the catalog lacks KV metadata
     /// (`kvHeads == 0`, e.g. MLX entries, which manage their cache differently).
     ///
+    /// Never exceeds ``Model/maxContextLength`` when the catalog declares one.
+    ///
     /// - Parameter availableGB: override the live memory reading (for tests).
     public static func recommendedContextWindow(
         for model: Model,
         availableGB: Double? = nil
+    ) -> Int {
+        let affordable = memoryBasedContextWindow(for: model, availableGB: availableGB)
+        guard let supported = model.maxContextLength, supported > 0 else { return affordable }
+        return min(affordable, supported)
+    }
+
+    private static func memoryBasedContextWindow(
+        for model: Model,
+        availableGB: Double?
     ) -> Int {
         #if os(macOS)
         let ceiling  = 32_768
