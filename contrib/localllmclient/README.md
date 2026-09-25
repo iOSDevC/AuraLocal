@@ -87,3 +87,30 @@ every downstream integrator. Wait for these to land upstream in a tagged release
 Nothing in AuraLocal depends on these patches. The iOS work that shipped without them —
 jetsam fail-safe, the `extended-virtual-addressing` entitlement, prefill batch sizing, and the
 context-window anchor — is already in the repo and stands on its own.
+
+## Separately blocked on upstream: the vendored llama.cpp build
+
+`Package.swift` in LocalLLMClient hardcodes `let llamaVersion = "b8851"` (2026-04-19) and fetches the
+matching xcframework by URL + checksum, so the build number is not something a dependent package can
+override. Tag `0.5.0` and `main` both sit on b8851 as of 2026-09-25.
+
+That build cannot load **`qwen35`** GGUFs that carry an MTP block (Qwen3.8-27B and its derivatives,
+e.g. `ukisai/Swift-1.5-Qwen3.8-27B-GGUF`). b8851 registers the arch and its pre-tokenizer, so it
+looks supported, but it derives layer recurrence arithmetically instead of reading
+`qwen35.attention.recurrent_layers`: with `block_count` 65 the MTP block is misclassified as
+recurrent, and the load throws on the `blk.64.ssm_*` tensors the file does not contain. The loader
+fix landed upstream in llama.cpp PR #24025, first shipped in **b9495** (2026-06-03).
+
+Until LocalLLMClient bumps `llamaVersion` to b9495 or later, that whole family is MLX-only here — see
+`swift15_qwen38_27b_mlx` in `models.json`. Standalone llama.cpp and LM Studio at a current build run
+the GGUFs today; AuraLocal cannot, and forking to fix it is ruled out above.
+
+### MLX conversions of that family: check the weight prefix first
+
+`mlx-swift-lm`'s `qwen3_5` expects the vision tower under `vision_tower.*` and drops
+`vision_tower`/`model.visual` in `sanitize`. Conversions that emit a top-level **`visual.*`** prefix
+fall through every rename branch, get `language_model.` prepended, and fail `update(parameters:)` with
+hundreds of unhandled keys. Verified against the weight maps: `mlx-community/Qwen3.5-27B-4bit` and
+`orcarouter/Qwen3.8-27B-Uncensored-MLX` use `vision_tower.*` and load; `ukisai/Swift-1.5-4bit-MLX` and
+`ukisai/Swift-1.5-5bit-MLX` use `visual.*` and do not, which is why the catalog carries the
+`-TextOnly` conversion (`language_model.*` only) instead.
