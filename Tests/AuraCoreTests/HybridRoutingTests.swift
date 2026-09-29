@@ -86,6 +86,25 @@ final class HybridRoutingTests: XCTestCase {
         XCTAssertTrue(EscalationRouter.isLowConfidence(medium, domain: .security))
     }
 
+    func testSpanishRefusalsAreLowConfidence() {
+        let refusals = [
+            "No estoy seguro de cuál es la respuesta correcta a esta pregunta.",
+            "No estoy segura de poder responder con precisión a lo que preguntas.",
+            "Lo siento, no lo sé; esa información no aparece en el documento.",
+            "Como modelo de lenguaje, no tengo acceso a datos en tiempo real sobre esto.",
+            "No puedo confirmar esa cifra sin revisar el contrato original completo.",
+            "Desconozco el importe exacto del recibo que mencionas en tu mensaje.",
+        ]
+        for answer in refusals {
+            XCTAssertTrue(EscalationRouter.isLowConfidence(answer, domain: nil), answer)
+        }
+    }
+
+    func testSpanishImpersonalPhrasingIsNotARefusal() {
+        let confident = "El total del recibo es 42,50 €; no se incluyen propinas ni cargos por servicio."
+        XCTAssertFalse(EscalationRouter.isLowConfidence(confident, domain: nil))
+    }
+
     // MARK: - Policy defaults
 
     func testPolicyDefaultsToOff() {

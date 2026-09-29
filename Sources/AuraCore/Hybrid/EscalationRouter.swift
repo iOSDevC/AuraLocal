@@ -107,7 +107,16 @@ public enum EscalationRouter {
 
     private static func containsRefusal(_ answer: String) -> Bool {
         let lowered = answer.lowercased()
-        return ["i'm not sure", "i am not sure", "i cannot", "i can't", "i don't know",
-                "i do not know", "as an ai", "unable to"].contains { lowered.contains($0) }
+        return refusalPhrases.contains { lowered.contains($0) }
     }
+
+    // Spanish keeps the accented forms only: unaccented "no se" also matches ordinary
+    // impersonal phrasing ("no se puede", "no se ha indicado").
+    private static let refusalPhrases = [
+        "i'm not sure", "i am not sure", "i cannot", "i can't", "i don't know",
+        "i do not know", "as an ai", "unable to",
+        "no estoy segur", "no puedo", "no sé", "no lo sé", "desconozco",
+        "como modelo de lenguaje", "como una ia", "soy una ia",
+        "no soy capaz", "me es imposible", "no me es posible",
+    ]
 }
