@@ -52,6 +52,10 @@ struct ContentView: View {
                     HybridTab()
                 }
 
+                Tab("ML", systemImage: "brain") {
+                    MLToolsTab()
+                }
+
                 Tab("Image", systemImage: "photo.on.rectangle.angled") {
                     ImageGenTab()
                 }
