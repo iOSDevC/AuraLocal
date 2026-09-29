@@ -23,8 +23,8 @@ Lightweight on-device LLM & VLM Swift package for iOS/macOS/visionOS. Run Qwen3,
 - **Token-optimized hybrid inference** — A **mixed pipeline**: the same `AuraLocal.stream()` API drives on-device GGUF, your own llama-server/Ollama, or a cloud model — chosen per request. Stay local by default; escalate to a stronger model only when needed, and **cut the tokens sent to the remote** via selective-context compression (**~2–4×**), a response cache (repeat calls cost **$0**), and payload redaction. Every escalation prints a receipt — *"sent 800 of 6,000 tokens · $0.004"*. Fail-closed and consent-gated. See [Hybrid Inference](#hybrid-inference-local--remote).
 - **GitHub Models remote target** — Bring your GitHub/Copilot account into the hybrid line via GitHub's official OpenAI-compatible endpoint (`models.github.ai/inference`) — BYOK with a `models:read` PAT stored in the Keychain, working from iOS, macOS, and visionOS.
 - **Agent orchestration (per-step escalation)** — The agent crew routes each *sub-task* to the cheapest capable executor: a weak local draft transparently escalates to a bigger model through the same compression + consent + cost machinery — not just the top-level answer.
-- **Native on-device tools** — `SystemToolRegistry` discovers Apple-framework tools that support the local SLMs (Vision OCR, NaturalLanguage embeddings) with no model download, availability-checked per device.
-- **`aura` CLI & binaries** — A headless integration harness (`aura providers | tools | ask | ocr`) plus build scripts for a release CLI and a drag-to-Applications `.dmg`. See [CLI & Binaries](#cli--binaries).
+- **On-device ML tools, not just LLMs** — Typed, availability-checked wrappers over Apple's ML frameworks with no model download and no extra dependencies: Vision (OCR lines, image classification, barcodes & QR, face detection), NaturalLanguage (language ID, named entities, sentiment, embeddings), SoundAnalysis (303 everyday sounds), a runner for **any Core ML model**, and **on-device Create ML training** of text classifiers. `SystemToolRegistry` reports what runs on each device. See [On-device ML tools](#on-device-ml-tools).
+- **`aura` CLI & binaries** — A headless integration harness (`aura providers | tools | ask | ocr | ml`) plus build scripts for a release CLI and a drag-to-Applications `.dmg`. See [CLI & Binaries](#cli--binaries).
 
 ---
 
@@ -78,7 +78,7 @@ If your package imports `AuraCore`, add the C++ interop setting:
 
 | Module | Contents |
 |--------|----------|
-| `AuraCore` | Core inference, dual-backend engine, models, conversation persistence, hybrid escalation |
+| `AuraCore` | Core inference, dual-backend engine, models, conversation persistence, hybrid escalation, on-device ML tools |
 | `AuraUI` | SwiftUI views and ViewModels for drop-in UI |
 | `AuraVoice` | Full-duplex voice interface (STT + TTS), 100% local |
 | `AuraDocs` | RAG document library — PDF, DOCX, text, images |
@@ -295,6 +295,46 @@ limit) — don't co-load an LLM. FLUX does **not** run on iPhone (far too large)
 
 ---
 
+## On-device ML tools
+
+Not everything needs an LLM. `AuraCore` wraps Apple's machine-learning frameworks as typed tools
+that run on-device with no model download, no network and no extra package dependencies:
+
+| Category | Tools |
+|---|---|
+| Vision | `VisionOCRTool` (text, or lines with boxes), `VisionImageClassificationTool`, `VisionBarcodeTool` (QR + 23 other symbologies), `VisionFaceDetectionTool` (detection only) |
+| Language | `NLLanguageIdentificationTool`, `NLEntityRecognitionTool`, `NLSentimentTool`, `NLEmbeddingTool` |
+| Audio | `SoundClassificationTool` (303 everyday sounds in an audio file) |
+| Custom models | `CoreMLModelTool` (describe and run any Core ML model), `TextClassifierTool` (Create ML text classifiers) |
+| Training | `TextClassifierTrainer` (train a text classifier on-device with Create ML) |
+
+```swift
+import Foundation
+import AuraCore
+
+// Read a QR code and the text around it.
+let scan = try Data(contentsOf: URL(fileURLWithPath: "/path/to/ticket.png"))
+let codes = try VisionBarcodeTool().detectBarcodes(inImageData: scan)
+let lines = try VisionOCRTool().recognizeLines(inImageData: scan)
+print(codes.compactMap(\.payload), lines.map(\.text))
+
+// Train an expense classifier on-device, then use it.
+let report = try await TextClassifierTrainer().train(
+    csvAt: URL(fileURLWithPath: "/path/to/expenses.csv"),
+    writingModelTo: URL.documentsDirectory.appending(path: "Expenses.mlmodel"),
+    algorithm: .transferLearning(.bertEmbedding))
+let category = try await TextClassifierTool(modelAt: report.modelURL).classify("Taxi al aeropuerto").label
+```
+
+Every tool reports `availability()` instead of failing at call time: for example, Vision
+classification, barcodes and faces report unavailable in the Simulator, and Create ML training is
+unavailable in the iOS / visionOS Simulator. `SystemToolRegistry.discover()` lists them all with
+their availability. Try them with `aura tools` and `aura ml …`, or in the **ML** tab of the
+example app. Full guide, with a train → ship → classify walkthrough and a bring-your-own-model
+section: [On-device ML tools](docs/guide/ml-tools.md).
+
+---
+
 ## CLI & Binaries
 
 Two ways to run and ship these features beyond the source package.
@@ -307,9 +347,12 @@ handy as a reference and in CI. Build with `scripts/build-cli.sh` (or
 
 ```
 aura providers                      # detect Ollama / llama-server + models
-aura tools                          # list on-device tools (Vision OCR, embeddings)
+aura tools                          # list on-device ML tools by category, with availability
 aura ask "<prompt>" [--model <id>]  # ask GitHub Models (default openai/gpt-4o)
 aura ocr <image>                    # extract text via native Vision OCR
+aura ml <subcommand> …              # on-device ML: classify-image, barcodes, faces, ocr-lines,
+                                    # language, entities, sentiment, similarity, sounds,
+                                    # coreml-describe, coreml-predict, train-text, classify-text
 ```
 
 `ask` reads a GitHub fine-grained PAT (`models:read`) from `AURA_GITHUB_TOKEN` /
