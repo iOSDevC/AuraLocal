@@ -16,6 +16,19 @@ final class SystemToolsTests: XCTestCase {
         for info in infos { XCTAssertFalse(info.summary.isEmpty) }
     }
 
+    func testRegistryListsEveryZeroConfigurationToolInCategoryOrder() {
+        let ids = SystemToolRegistry.all.map(\.id)
+        XCTAssertEqual(ids, [
+            "system.vision.ocr", "system.vision.classify", "system.vision.barcodes", "system.vision.faces",
+            "system.nl.language", "system.nl.entities", "system.nl.sentiment", "system.nl.embedding",
+            "system.audio.sounds", "training.text-classifier",
+        ])
+        let order = SystemToolCategory.allCases
+        let ranks = SystemToolRegistry.all.compactMap { tool in order.firstIndex(of: tool.category) }
+        XCTAssertEqual(ranks, ranks.sorted())
+        XCTAssertFalse(SystemToolRegistry.all.contains { $0.category == .customModel })
+    }
+
     func testAvailableToolsAreAllAvailable() async {
         let available = await SystemToolRegistry.availableTools()
         XCTAssertTrue(available.allSatisfy { $0.isAvailable })

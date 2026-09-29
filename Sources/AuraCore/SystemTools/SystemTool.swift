@@ -29,6 +29,17 @@ public enum SystemToolCategory: String, Sendable, CaseIterable {
     case audio
     case customModel
     case training
+
+    /// Human-readable section title for listings and UI.
+    public var displayName: String {
+        switch self {
+        case .vision: "Vision"
+        case .language: "Language"
+        case .audio: "Audio"
+        case .customModel: "Custom models"
+        case .training: "Training"
+        }
+    }
 }
 
 // MARK: - SystemTool
@@ -65,10 +76,20 @@ public extension SystemTool {
 /// them so an SLM (or the app) can lean on the OS instead of a downloaded model.
 public enum SystemToolRegistry {
 
-    /// Every known native tool (some may be unavailable on this device/OS).
+    /// Every zero-configuration tool, in ``SystemToolCategory`` order (some may be
+    /// unavailable on this device/OS). ``CoreMLModelTool`` and ``TextClassifierTool`` are
+    /// not listed: each wraps one model file, so create them with its URL and use them directly.
     public static let all: [any SystemTool] = [
         VisionOCRTool(),
+        VisionImageClassificationTool(),
+        VisionBarcodeTool(),
+        VisionFaceDetectionTool(),
+        NLLanguageIdentificationTool(),
+        NLEntityRecognitionTool(),
+        NLSentimentTool(),
         NLEmbeddingTool(),
+        SoundClassificationTool(),
+        TextClassifierTrainer(),
     ]
 
     /// A discovered tool with its resolved availability.
