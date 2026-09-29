@@ -2,8 +2,8 @@ import Foundation
 import AuraCore
 import AuraImageGen
 
-/// `aura` — a small headless CLI that drives AuraLocal's hybrid + native-tool
-/// features, as an integration reference and CI smoke-test harness. macOS.
+/// `aura` — a small headless CLI that drives AuraLocal's hybrid, native-tool and
+/// on-device ML features, as an integration reference and CI smoke-test harness. macOS.
 @main
 @MainActor
 struct AuraCLI {
@@ -17,6 +17,7 @@ struct AuraCLI {
             case "tools":            await runTools()
             case "ask":              try await runAsk(rest)
             case "ocr":              try runOCR(rest)
+            case "ml":               try await runML(rest)
             case "imagegen":         try await runImageGen(rest)
             case "help", "-h", "--help": printUsage()
             default:
@@ -51,11 +52,19 @@ struct AuraCLI {
 
     // MARK: - tools
 
-    /// List on-device native tools (Vision OCR, NaturalLanguage embeddings) + availability.
+    /// List the on-device tools by category, each with its availability on this Mac.
     static func runTools() async {
-        for tool in await SystemToolRegistry.discover() {
-            print("\(tool.isAvailable ? "●" : "○") \(tool.displayName)  [\(tool.id)]")
-            print("    \(tool.isAvailable ? tool.summary : (tool.availability.reason ?? "unavailable"))")
+        let tools = await SystemToolRegistry.discover()
+        for category in SystemToolCategory.allCases {
+            let members = tools.filter { $0.category == category }
+            print(category.displayName)
+            if category == .customModel && members.isEmpty {
+                print("  Created per model file (CoreMLModelTool, TextClassifierTool) — see `aura ml coreml-describe`.")
+            }
+            for tool in members {
+                print("  \(tool.isAvailable ? "●" : "○") \(tool.displayName)  [\(tool.id)]")
+                print("      \(tool.isAvailable ? tool.summary : (tool.availability.reason ?? "unavailable"))")
+            }
         }
     }
 
@@ -180,9 +189,13 @@ struct AuraCLI {
 
         USAGE:
           aura providers                      Detect local providers (Ollama / llama-server)
-          aura tools                          List on-device tools (Vision OCR, embeddings)
+          aura tools                          List on-device ML tools by category, with availability
           aura ask "<prompt>" [--model <id>]  Ask GitHub Models (hybrid remote); default openai/gpt-4o
           aura ocr <image>                    Extract text from an image via native Vision OCR
+          aura ml <subcommand> …              Run an on-device ML tool (`aura ml help` lists them):
+                                                classify-image, barcodes, faces, ocr-lines, language,
+                                                entities, sentiment, similarity, sounds, coreml-describe,
+                                                coreml-predict, train-text, classify-text
           aura imagegen "<prompt>" [--lora <p>]  Generate an image via mflux/FLUX (macOS; needs mflux)
 
         ENV:
@@ -191,6 +204,7 @@ struct AuraCLI {
     }
 
     static func err(_ message: String) {
+        fflush(stdout)   // keep stdout and stderr in order when both go to one pipe
         FileHandle.standardError.write(Data(message.utf8))
     }
 }
