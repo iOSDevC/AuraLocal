@@ -44,15 +44,8 @@ public struct VisionOCRTool: SystemTool {
         languages: [String] = [],
         accurate: Bool = true
     ) throws -> Recognized {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = accurate ? .accurate : .fast
-        request.usesLanguageCorrection = true
-        if !languages.isEmpty { request.recognitionLanguages = languages }
-
-        let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        try handler.perform([request])
-
-        let observations = (request.results as? [VNRecognizedTextObservation]) ?? []
+        let observations = try Self.observations(
+            using: VisionImageInput.handler(for: image), languages: languages, accurate: accurate)
         var lines: [String] = []
         var confidenceSum: Float = 0
         for observation in observations {
@@ -74,10 +67,61 @@ public struct VisionOCRTool: SystemTool {
         languages: [String] = [],
         accurate: Bool = true
     ) throws -> Recognized {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        guard let image = VisionImageInput.decode(data)?.image else {
             throw ToolError.invalidImage
         }
         return try recognizeText(in: image, languages: languages, accurate: accurate)
+    }
+
+    // MARK: - Lines with position
+
+    /// One recognized line and where it sits, so a caller can anchor a value (an amount,
+    /// a date) to its position. `boundingBox` is normalized 0…1 with Vision's bottom-left origin.
+    public struct RecognizedLine: Sendable, Equatable {
+        public let text: String
+        public let confidence: Float   // 0…1
+        public let boundingBox: CGRect
+    }
+
+    /// OCR a `CGImage` line by line, in Vision's reading order. Same options as ``recognizeText(in:languages:accurate:)``.
+    public func recognizeLines(
+        in image: CGImage,
+        languages: [String] = [],
+        accurate: Bool = true
+    ) throws -> [RecognizedLine] {
+        try Self.observations(using: VisionImageInput.handler(for: image), languages: languages, accurate: accurate)
+            .compactMap(Self.recognizedLine(from:))
+    }
+
+    /// OCR raw image bytes line by line. Boxes follow the image's EXIF orientation, i.e. the
+    /// upright image as displayed. Throws ``ToolError/invalidImage`` if undecodable.
+    public func recognizeLines(
+        inImageData data: Data,
+        languages: [String] = [],
+        accurate: Bool = true
+    ) throws -> [RecognizedLine] {
+        guard let handler = VisionImageInput.handler(forImageData: data) else {
+            throw ToolError.invalidImage
+        }
+        return try Self.observations(using: handler, languages: languages, accurate: accurate)
+            .compactMap(Self.recognizedLine(from:))
+    }
+
+    private static func observations(
+        using handler: VNImageRequestHandler,
+        languages: [String],
+        accurate: Bool
+    ) throws -> [VNRecognizedTextObservation] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = accurate ? .accurate : .fast
+        request.usesLanguageCorrection = true
+        if !languages.isEmpty { request.recognitionLanguages = languages }
+        try handler.perform([request])
+        return request.results ?? []
+    }
+
+    private static func recognizedLine(from observation: VNRecognizedTextObservation) -> RecognizedLine? {
+        guard let best = observation.topCandidates(1).first else { return nil }
+        return RecognizedLine(text: best.string, confidence: best.confidence, boundingBox: observation.boundingBox)
     }
 }
