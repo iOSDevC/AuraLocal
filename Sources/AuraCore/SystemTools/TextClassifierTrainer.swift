@@ -73,7 +73,8 @@ public struct TextClassifierTrainer: SystemTool {
     public enum Validation: Sendable, Equatable {
         /// Create ML decides how many examples to hold out.
         case automatic
-        /// Hold out this fraction (0 < fraction < 1) with a fixed seed, for reproducible reports.
+        /// Hold out this fraction (0 < fraction < 1), split with `seed`. Create ML training is not
+        /// deterministic: on macOS 26 the same data and seed gave 17–67 % validation accuracy.
         case holdOut(fraction: Double, seed: Int)
         /// Train on every example; the report has no validation accuracy.
         case disabled
