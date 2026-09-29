@@ -52,7 +52,7 @@ aura ask "Explain hybrid inference in one paragraph" --model openai/gpt-4o
 
 ## On-device ML (`aura ml`)
 
-One subcommand per [on-device ML tool]({% link guide/ml-tools.md %}). Results go to stdout; notes, summaries and
+One subcommand per [on-device ML tool]({{ '/guide/ml-tools' | relative_url }}). Results go to stdout; notes, summaries and
 Create ML's training log go to stderr.
 
 ```
@@ -72,21 +72,20 @@ aura ml train-text <csv> --out <Model.mlmodel> [--algorithm maxent|crf|static|be
 aura ml classify-text <Model.mlmodel> "<text>" [--max N]
 ```
 
-Language subcommands read stdin when the text is `-`. Image boxes are normalized 0…1 with the
-origin at the bottom-left, as Vision reports them.
+`language`, `entities` and `sentiment` read stdin when the text is `-`. Image boxes are normalized
+0…1 with the origin at the bottom-left, as Vision reports them.
 
 ```sh
 $ aura ml train-text expenses.csv --out Expenses.mlmodel --algorithm bert --holdout 0.2 --seed 7 2>/dev/null
 /absolute/path/to/Expenses.mlmodel
 $ aura ml classify-text Expenses.mlmodel "Pagué el taxi del hotel a la estación"
 label  transport
-0.75  transport
-0.17  food
-0.08  housing
+1.00  transport
+0.00  housing
+0.00  food
 ```
 
-Create ML training is not deterministic, so another run on the same CSV can give different
-accuracies and probabilities (one run labelled this phrase `housing`).
+Training is reproducible: the same CSV and `--seed` give the same split, accuracies and model.
 
 ## Homebrew
 

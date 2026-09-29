@@ -23,7 +23,7 @@ Lightweight on-device LLM & VLM Swift package for iOS/macOS/visionOS. Run Qwen3,
 - **Token-optimized hybrid inference** — A **mixed pipeline**: the same `AuraLocal.stream()` API drives on-device GGUF, your own llama-server/Ollama, or a cloud model — chosen per request. Stay local by default; escalate to a stronger model only when needed, and **cut the tokens sent to the remote** via selective-context compression (**~2–4×**), a response cache (repeat calls cost **$0**), and payload redaction. Every escalation prints a receipt — *"sent 800 of 6,000 tokens · $0.004"*. Fail-closed and consent-gated. See [Hybrid Inference](#hybrid-inference-local--remote).
 - **GitHub Models remote target** — Bring your GitHub/Copilot account into the hybrid line via GitHub's official OpenAI-compatible endpoint (`models.github.ai/inference`) — BYOK with a `models:read` PAT stored in the Keychain, working from iOS, macOS, and visionOS.
 - **Agent orchestration (per-step escalation)** — The agent crew routes each *sub-task* to the cheapest capable executor: a weak local draft transparently escalates to a bigger model through the same compression + consent + cost machinery — not just the top-level answer.
-- **On-device ML tools, not just LLMs** — Typed, availability-checked wrappers over Apple's ML frameworks with no model download and no extra dependencies: Vision (OCR lines, image classification, barcodes & QR, face detection), NaturalLanguage (language ID, named entities, sentiment, embeddings), SoundAnalysis (303 everyday sounds), a runner for **any Core ML model**, and **on-device Create ML training** of text classifiers. `SystemToolRegistry` reports what runs on each device. See [On-device ML tools](#on-device-ml-tools).
+- **On-device ML tools, not just LLMs** — Typed, availability-checked wrappers over Apple's ML frameworks, using models that ship with the OS and no extra dependencies: Vision (OCR lines, image classification, barcodes & QR, face detection), NaturalLanguage (language ID, named entities, sentiment, embeddings), SoundAnalysis (303 everyday sounds), a runner for **your own Core ML models**, and **on-device Create ML training** of text classifiers. `SystemToolRegistry` reports which built-in tools run on each device. See [On-device ML tools](#on-device-ml-tools).
 - **`aura` CLI & binaries** — A headless integration harness (`aura providers | tools | ask | ocr | ml`) plus build scripts for a release CLI and a drag-to-Applications `.dmg`. See [CLI & Binaries](#cli--binaries).
 
 ---
@@ -298,14 +298,16 @@ limit) — don't co-load an LLM. FLUX does **not** run on iPhone (far too large)
 ## On-device ML tools
 
 Not everything needs an LLM. `AuraCore` wraps Apple's machine-learning frameworks as typed tools
-that run on-device with no model download, no network and no extra package dependencies:
+that run on-device with no extra package dependencies. The analysis tools use models that ship
+with the OS, so they need no download and work offline; BERT transfer learning may first download
+OS embedding assets for the text's script.
 
 | Category | Tools |
 |---|---|
 | Vision | `VisionOCRTool` (text, or lines with boxes), `VisionImageClassificationTool`, `VisionBarcodeTool` (QR + 23 other symbologies), `VisionFaceDetectionTool` (detection only) |
 | Language | `NLLanguageIdentificationTool`, `NLEntityRecognitionTool`, `NLSentimentTool`, `NLEmbeddingTool` |
 | Audio | `SoundClassificationTool` (303 everyday sounds in an audio file) |
-| Custom models | `CoreMLModelTool` (describe and run any Core ML model), `TextClassifierTool` (Create ML text classifiers) |
+| Custom models | `CoreMLModelTool` (describe and run your own Core ML models), `TextClassifierTool` (Create ML text classifiers) |
 | Training | `TextClassifierTrainer` (train a text classifier on-device with Create ML) |
 
 ```swift
@@ -313,8 +315,10 @@ import Foundation
 import AuraCore
 
 // Read a QR code and the text around it.
+let reader = VisionBarcodeTool()
+guard await reader.availability().isAvailable else { return }   // false in the Simulator
 let scan = try Data(contentsOf: URL(fileURLWithPath: "/path/to/ticket.png"))
-let codes = try VisionBarcodeTool().detectBarcodes(inImageData: scan)
+let codes = try reader.detectBarcodes(inImageData: scan)
 let lines = try VisionOCRTool().recognizeLines(inImageData: scan)
 print(codes.compactMap(\.payload), lines.map(\.text))
 
@@ -326,10 +330,11 @@ let report = try await TextClassifierTrainer().train(
 let category = try await TextClassifierTool(modelAt: report.modelURL).classify("Taxi al aeropuerto").label
 ```
 
-Every tool reports `availability()` instead of failing at call time: for example, Vision
-classification, barcodes and faces report unavailable in the Simulator, and Create ML training is
-unavailable in the iOS / visionOS Simulator. `SystemToolRegistry.discover()` lists them all with
-their availability. Try them with `aura tools` and `aura ml …`, or in the **ML** tab of the
+Every tool reports `availability()`; check it before calling, since the execution methods do not.
+For example, Vision classification, barcodes and faces report unavailable in the Simulator, and
+Create ML training is unavailable in the iOS / visionOS Simulator.
+`SystemToolRegistry.discover()` lists the built-in tools with their availability;
+`CoreMLModelTool` and `TextClassifierTool` are created per model file instead. Try them with `aura tools` and `aura ml …`, or in the **ML** tab of the
 example app. Full guide, with a train → ship → classify walkthrough and a bring-your-own-model
 section: [On-device ML tools](docs/guide/ml-tools.md).
 
