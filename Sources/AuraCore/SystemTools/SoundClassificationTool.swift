@@ -1,3 +1,5 @@
+import AVFAudio
+import CoreMedia
 import Foundation
 import SoundAnalysis
 import Synchronization
@@ -16,20 +18,24 @@ public struct SoundClassificationTool: SystemTool {
 
     public enum ToolError: LocalizedError {
         case unreadableAudio(String)
+        case audioTooShort(seconds: Double, minimum: Double)
         case classifierUnavailable(String)
         case analysisFailed(String)
 
         public var errorDescription: String? {
             switch self {
             case .unreadableAudio(let reason): "The audio file could not be opened: \(reason)"
+            case .audioTooShort(let seconds, let minimum):
+                "The audio lasts \(String(format: "%.2f", seconds)) s; sound classification needs at least "
+                    + "\(String(format: "%.1f", minimum)) s."
             case .classifierUnavailable(let reason): "The built-in sound classifier could not be loaded: \(reason)"
             case .analysisFailed(let reason): "Sound analysis failed: \(reason)"
             }
         }
     }
 
-    /// How the classifier's per-window scores (≈3 s windows, 50 % overlap) become one
-    /// score per sound for the whole file.
+    /// How the classifier's per-window scores (3 s windows, 50 % overlap; one window of the
+    /// file's own length when it is shorter) become one score per sound for the whole file.
     public enum Aggregation: Sendable {
         /// Highest confidence in any window — "does this sound occur anywhere?"
         case peak
@@ -58,11 +64,22 @@ public struct SoundClassificationTool: SystemTool {
     }
 
     /// Classify the sounds in an audio file (any format AVFoundation reads), best first.
-    /// Scores are aggregated across analysis windows per `aggregation`.
+    /// Scores are aggregated across analysis windows per `aggregation`. Audio shorter than
+    /// the classifier's minimum window (0.5 s) throws ``ToolError/audioTooShort(seconds:minimum:)``.
     public func classify(
         audioFileAt url: URL,
         maxResults: Int = 5,
         aggregation: Aggregation = .peak
+    ) async throws -> [Classification] {
+        try await classify(audioFileAt: url, maxResults: maxResults, aggregation: aggregation,
+                           collector: WindowCollector())
+    }
+
+    func classify(
+        audioFileAt url: URL,
+        maxResults: Int,
+        aggregation: Aggregation,
+        collector: WindowCollector
     ) async throws -> [Classification] {
         guard maxResults > 0 else { return [] }
         let analyzer: SNAudioFileAnalyzer
@@ -72,7 +89,7 @@ public struct SoundClassificationTool: SystemTool {
             throw ToolError.unreadableAudio(error.localizedDescription)
         }
         let request = try Self.makeRequest()
-        let collector = WindowCollector()
+        try Self.fitWindow(of: request, toAudioAt: url)
         try analyzer.add(request, withObserver: collector)
 
         let canceller = AnalysisCanceller(analyzer: analyzer)
@@ -99,6 +116,35 @@ public struct SoundClassificationTool: SystemTool {
         }
     }
 
+    /// The classifier only scores whole windows (3 s by default), so shorter audio is
+    /// analysed as a single window of its own length.
+    private static func fitWindow(of request: SNClassifySoundRequest, toAudioAt url: URL) throws {
+        guard let file = try? AVAudioFile(forReading: url), file.fileFormat.sampleRate >= 1 else { return }
+        let length = CMTime(value: file.length, timescale: CMTimeScale(file.fileFormat.sampleRate.rounded()))
+        guard length < request.windowDuration else { return }
+        let constraint = request.windowDurationConstraint
+        guard let window = longestWindow(notExceeding: length, in: constraint) else {
+            throw ToolError.audioTooShort(seconds: length.seconds, minimum: shortestWindow(in: constraint).seconds)
+        }
+        request.windowDuration = window
+    }
+
+    private static func longestWindow(notExceeding length: CMTime, in constraint: SNTimeDurationConstraint) -> CMTime? {
+        switch constraint {
+        case .durationRange(let range): length >= range.start ? min(length, range.end) : nil
+        case .enumeratedDurations(let durations): durations.filter { $0 <= length }.max()
+        @unknown default: length
+        }
+    }
+
+    private static func shortestWindow(in constraint: SNTimeDurationConstraint) -> CMTime {
+        switch constraint {
+        case .durationRange(let range): range.start
+        case .enumeratedDurations(let durations): durations.min() ?? .zero
+        @unknown default: .zero
+        }
+    }
+
     fileprivate static func makeClassification(_ entry: (key: String, value: Double)) -> Classification {
         Classification(identifier: entry.key, confidence: min(max(entry.value, 0), 1))
     }
@@ -106,7 +152,7 @@ public struct SoundClassificationTool: SystemTool {
 
 /// Receives SoundAnalysis callbacks, which may arrive on any thread; all state sits
 /// behind a `Mutex`, so the observer is genuinely `Sendable`.
-private final class WindowCollector: NSObject, SNResultsObserving, Sendable {
+final class WindowCollector: NSObject, SNResultsObserving, Sendable {
     private struct Tally {
         var peaks: [String: Double] = [:]
         var sums: [String: Double] = [:]
@@ -117,8 +163,9 @@ private final class WindowCollector: NSObject, SNResultsObserving, Sendable {
     private let scores = Mutex(Tally())
 
     var failure: String? { scores.withLock { $0.failure } }
+    var windowCount: Int { scores.withLock { $0.windowCount } }
 
-    func request(_ request: any SNRequest, didProduce result: any SNResult) {
+    func request(_: any SNRequest, didProduce result: any SNResult) {
         guard let window = result as? SNClassificationResult else { return }
         let classifications = window.classifications
         scores.withLock { state in
@@ -130,7 +177,7 @@ private final class WindowCollector: NSObject, SNResultsObserving, Sendable {
         }
     }
 
-    func request(_ request: any SNRequest, didFailWithError error: any Error) {
+    func request(_: any SNRequest, didFailWithError error: any Error) {
         let reason = error.localizedDescription
         scores.withLock { $0.failure = reason }
     }

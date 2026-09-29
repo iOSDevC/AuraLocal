@@ -3,14 +3,10 @@ import CoreML
 import CoreGraphics
 import CryptoKit
 
-/// Generic on-device runner for **any Core ML model** the app ships or downloads —
-/// Create ML output, models converted with coremltools, etc. It is the bridge that
-/// lets a custom model sit next to the system tools. Accepts `.mlmodel` / `.mlpackage`
-/// (compiled once and cached under Caches) or an already compiled `.mlmodelc`.
-///
-/// Thread safety: `MLModel` is not `Sendable`, so the loaded model lives in a private
-/// actor that runs on its own serial queue. Copies of a tool share that actor: calls
-/// are serialized per tool and blocking Core ML work never occupies the cooperative pool.
+/// On-device runner for a Core ML model the app ships or downloads (Create ML output,
+/// coremltools conversions): `.mlmodel` / `.mlpackage`, compiled once and cached, or `.mlmodelc`.
+/// `MLModel` is not `Sendable`, so it lives in an actor on its own serial queue, shared by
+/// copies of the tool; blocking Core ML and file work stays off the cooperative pool.
 public struct CoreMLModelTool: SystemTool {
     public let id: String
     public let displayName: String
@@ -144,19 +140,14 @@ public struct CoreMLModelTool: SystemTool {
         public func ranked(limit: Int = .max) -> [(label: String, probability: Double)] {
             probabilities
                 .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
-                .prefix(limit)
+                .prefix(max(0, limit))
                 .map { (label: $0.key, probability: $0.value) }
         }
     }
 
     public func availability() async -> SystemToolAvailability {
-        do {
-            try CompiledModelCache.validate(modelURL)
-        } catch {
-            return .unavailable(reason: error.localizedDescription)
-        }
-        if let failure = await host.loadFailure {
-            return .unavailable(reason: failure)
+        if let reason = await host.unavailabilityReason() {
+            return .unavailable(reason: reason)
         }
         return .available
     }
@@ -208,12 +199,21 @@ private actor ModelHost {
     private let cacheDirectory: URL?
     private var model: MLModel?
     private var compiled: URL?
-    private(set) var loadFailure: String?
+    private var lastFailure: ModelLoadFailure?
 
     init(source: URL, computeUnits: MLComputeUnits, cacheDirectory: URL?) {
         self.source = source
         self.computeUnits = computeUnits
         self.cacheDirectory = cacheDirectory
+    }
+
+    func unavailabilityReason() -> String? {
+        do {
+            try CompiledModelCache.validate(source)
+        } catch {
+            return error.localizedDescription
+        }
+        return lastFailure?.reportedReason(for: source)
     }
 
     func compiledURL() async throws -> URL {
@@ -223,7 +223,7 @@ private actor ModelHost {
             compiled = url
             return url
         } catch {
-            loadFailure = error.localizedDescription
+            lastFailure = ModelLoadFailure(source: source, error: error)
             throw error
         }
     }
@@ -263,12 +263,28 @@ private actor ModelHost {
         do {
             let loaded = try MLModel(contentsOf: url, configuration: configuration)
             model = loaded
-            loadFailure = nil
+            lastFailure = nil
             return loaded
         } catch {
-            loadFailure = error.localizedDescription
+            lastFailure = ModelLoadFailure(source: source, error: error)
             throw CoreMLModelTool.ToolError.loadFailed(error.localizedDescription)
         }
+    }
+}
+
+/// A failed compile or load, reported by `availability()` only while the model file is
+/// unchanged, so replacing or fixing the file makes the tool available again.
+struct ModelLoadFailure: Sendable {
+    let fingerprint: String
+    let reason: String
+
+    init(source: URL, error: any Error) {
+        fingerprint = CompiledModelCache.fingerprint(of: source)
+        reason = error.localizedDescription
+    }
+
+    func reportedReason(for source: URL) -> String? {
+        fingerprint == CompiledModelCache.fingerprint(of: source) ? reason : nil
     }
 }
 
@@ -284,7 +300,6 @@ enum CompiledModelCache {
     }()
 
     private static let supportedExtensions: Set<String> = ["mlmodel", "mlpackage", "mlmodelc"]
-    private static let stampKeys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey]
 
     static func validate(_ url: URL) throws {
         let ext = url.pathExtension.lowercased()
@@ -296,7 +311,12 @@ enum CompiledModelCache {
         }
     }
 
-    static func compiledURL(for source: URL, in directory: URL?) async throws -> URL {
+    /// Runs on the caller's actor, so a model host keeps the file work on its own queue.
+    static func compiledURL(
+        for source: URL,
+        in directory: URL?,
+        isolation: isolated (any Actor)? = #isolation
+    ) async throws -> URL {
         try validate(source)
         if source.pathExtension.lowercased() == "mlmodelc" { return source }
 
@@ -328,7 +348,7 @@ enum CompiledModelCache {
 
     static func fingerprint(of url: URL) -> String {
         let nested = FileManager.default
-            .enumerator(at: url, includingPropertiesForKeys: Array(stampKeys))?
+            .enumerator(at: url, includingPropertiesForKeys: nil)?
             .allObjects
             .compactMap { $0 as? URL } ?? []
         let stamps = ([url] + nested).map(stamp).sorted()
@@ -336,9 +356,12 @@ enum CompiledModelCache {
         return SHA256.hash(data: Data(key.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Read with FileManager: URL resource values stay cached on a URL instance, so a replaced
+    /// file would keep its old stamp.
     private static func stamp(of file: URL) -> String {
-        let values = try? file.resourceValues(forKeys: stampKeys)
-        let modified = values?.contentModificationDate?.timeIntervalSince1970 ?? 0
-        return "\(file.path):\(values?.fileSize ?? 0):\(modified)"
+        let attributes = try? FileManager.default.attributesOfItem(atPath: file.path)
+        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+        let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return "\(file.path):\(size):\(modified)"
     }
 }

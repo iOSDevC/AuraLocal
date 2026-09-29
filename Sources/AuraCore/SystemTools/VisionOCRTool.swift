@@ -83,7 +83,8 @@ public struct VisionOCRTool: SystemTool {
         public let boundingBox: CGRect
     }
 
-    /// OCR a `CGImage` line by line, in Vision's reading order. Same options as ``recognizeText(in:languages:accurate:)``.
+    /// OCR a `CGImage` line by line, in Vision's reading order. Same options as
+    /// ``recognizeText(in:languages:accurate:)``.
     public func recognizeLines(
         in image: CGImage,
         languages: [String] = [],
@@ -115,7 +116,12 @@ public struct VisionOCRTool: SystemTool {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = accurate ? .accurate : .fast
         request.usesLanguageCorrection = true
-        if !languages.isEmpty { request.recognitionLanguages = languages }
+        // Without languages Vision assumes en-US and silently misses non-Latin scripts.
+        if languages.isEmpty {
+            request.automaticallyDetectsLanguage = true
+        } else {
+            request.recognitionLanguages = languages
+        }
         try handler.perform([request])
         return request.results ?? []
     }

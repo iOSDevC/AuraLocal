@@ -1,15 +1,9 @@
 import Foundation
 import NaturalLanguage
 
-/// On-device sentiment scoring via Apple's **NaturalLanguage** framework: a
-/// score from -1 (negative) to 1 (positive) with no model download.
-///
-/// Measured on macOS 26.7 (M1 Pro): real scores for en, es, fr, de, it and pt. Other
-/// languages (zh-Hans, ja, ru, nl, ko…) have no model; the framework then answers 0.0,
-/// which this tool reports as `nil` so it is never mistaken for "neutral".
-/// Scores come in steps of 0.2 and lean negative: neutral statements scored -0.8…0.0
-/// ("The meeting is at three o'clock." → -0.6), so a negative score only means "negative"
-/// near -1. Clear praise reliably scored 0.8…1.0.
+/// On-device sentiment scoring via Apple's **NaturalLanguage** framework: a score from
+/// -1 (negative) to 1 (positive) with no model download. For a language without a model the
+/// framework answers 0.0, reported here as `nil` so it is never mistaken for "neutral".
 public struct NLSentimentTool: SystemTool {
     public let id = "system.nl.sentiment"
     public let displayName = "Sentiment (NaturalLanguage)"

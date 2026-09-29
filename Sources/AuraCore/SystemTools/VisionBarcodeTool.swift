@@ -63,7 +63,9 @@ public struct VisionBarcodeTool: SystemTool {
         return try detectBarcodes(using: handler, symbologies: symbologies)
     }
 
-    private func detectBarcodes(using handler: VNImageRequestHandler, symbologies: [String]) throws -> [DetectedBarcode] {
+    private func detectBarcodes(
+        using handler: VNImageRequestHandler, symbologies: [String]
+    ) throws -> [DetectedBarcode] {
         let request = VNDetectBarcodesRequest()
         if !symbologies.isEmpty {
             let supported = Set(try request.supportedSymbologies().map(\.rawValue))

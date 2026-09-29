@@ -5,12 +5,10 @@ import TabularData
 import CreateML
 #endif
 
-/// On-device **training** of a text classifier with Create ML: labelled examples in,
-/// a `.mlmodel` out, ready for ``TextClassifierTool`` or ``CoreMLModelTool``. Lets an
-/// app learn the user's own categories (expense types, tags, intents) with no server.
-///
-/// Platforms: Create ML ships in the macOS, iOS and visionOS device SDKs but not in the
-/// iOS / visionOS Simulator SDKs, where `availability()` says so and `train` throws.
+/// On-device **training** of a text classifier with Create ML: labelled examples in, a
+/// `.mlmodel` out, ready for ``TextClassifierTool`` or ``CoreMLModelTool``.
+/// Create ML is in the macOS, iOS and visionOS device SDKs but not in the Simulator SDKs,
+/// where `availability()` says so and `train` throws.
 public struct TextClassifierTrainer: SystemTool {
     public let id = "training.text-classifier"
     public let displayName = "Text classifier training (Create ML)"
@@ -22,6 +20,7 @@ public struct TextClassifierTrainer: SystemTool {
     public enum ToolError: LocalizedError {
         case trainingUnavailable
         case notEnoughData(String)
+        case embeddingAssetsUnavailable(language: String)
         case invalidValidationFraction(Double)
         case invalidOutputURL(String)
         case invalidCSV(String)
@@ -31,6 +30,9 @@ public struct TextClassifierTrainer: SystemTool {
             switch self {
             case .trainingUnavailable: "Create ML is not available on this platform."
             case .notEnoughData(let reason): "Not enough training data: \(reason)"
+            case .embeddingAssetsUnavailable(let language):
+                "The OS has not downloaded the BERT embedding assets for “\(language)” yet. Connect to the "
+                    + "internet and retry, or call NLContextualEmbedding.requestAssets()."
             case .invalidValidationFraction(let fraction):
                 "The validation fraction must be between 0 and 1, got \(fraction)."
             case .invalidOutputURL(let path):
@@ -51,7 +53,8 @@ public struct TextClassifierTrainer: SystemTool {
         }
     }
 
-    /// Pretrained embeddings for transfer learning; the OS provides them per language.
+    /// Pretrained embeddings for transfer learning. The OS provides them per language and may
+    /// have to download BERT's first; transfer learning needs at least ~10 examples.
     public enum Embedding: Sendable, Equatable {
         case staticEmbedding
         case elmoEmbedding
@@ -73,18 +76,18 @@ public struct TextClassifierTrainer: SystemTool {
     public enum Validation: Sendable, Equatable {
         /// Create ML decides how many examples to hold out.
         case automatic
-        /// Hold out this fraction (0 < fraction < 1), split with `seed`. Create ML training is not
-        /// deterministic: on macOS 26 the same data and seed gave 17–67 % validation accuracy.
+        /// Hold out this fraction (0 < fraction < 1). The same examples, order and `seed` hold out
+        /// the same rows.
         case holdOut(fraction: Double, seed: Int)
         /// Train on every example; the report has no validation accuracy.
         case disabled
     }
 
     public struct Metadata: Sendable, Equatable {
-        public var author: String
-        public var shortDescription: String
-        public var version: String
-        public var license: String?
+        public let author: String
+        public let shortDescription: String
+        public let version: String
+        public let license: String?
 
         public init(
             author: String = "AuraLocal",
@@ -128,7 +131,7 @@ public struct TextClassifierTrainer: SystemTool {
         validation: Validation = .automatic,
         metadata: Metadata = Metadata()
     ) async throws -> Report {
-        let textsByLabel = try Self.group(examples)
+        let usable = try Self.usableExamples(examples)
         guard outputURL.isFileURL, outputURL.pathExtension.lowercased() == "mlmodel" else {
             throw ToolError.invalidOutputURL(outputURL.absoluteString)
         }
@@ -147,8 +150,14 @@ public struct TextClassifierTrainer: SystemTool {
                         validation: Self.validationData(validation),
                         algorithm: Self.modelAlgorithm(algorithm),
                         language: language)
-                    return try Self.fit(
-                        textsByLabel, parameters: parameters, writingTo: outputURL, metadata: modelMetadata)
+                    do {
+                        return try Self.fit(
+                            usable, parameters: parameters, writingTo: outputURL, metadata: modelMetadata)
+                    } catch let error as ToolError {
+                        throw error
+                    } catch {
+                        throw Self.explained(error, examples: usable, algorithm: algorithm, language: language)
+                    }
                 })
             }
         }
@@ -200,29 +209,31 @@ public struct TextClassifierTrainer: SystemTool {
         return Example(text: text, label: label)
     }
 
-    private static func group(_ examples: [Example]) throws -> [String: [String]] {
+    /// Rows keep the caller's order: the hold-out split is by position, so an order that changes
+    /// per process (a dictionary grouped by label) would make the seed useless.
+    static func trainingFrame(_ examples: [Example]) -> DataFrame {
+        ["text": examples.map(\.text), "label": examples.map(\.label)]
+    }
+
+    private static func usableExamples(_ examples: [Example]) throws -> [Example] {
         let usable = examples.compactMap { example((text: $0.text, label: $0.label)) }
-        let textsByLabel = Dictionary(grouping: usable, by: \.label).mapValues { $0.map(\.text) }
-        guard textsByLabel.count >= 2 else {
-            let reason = "examples for at least two labels are required, got \(textsByLabel.count)."
-            throw ToolError.notEnoughData(reason)
+        let labelCount = Set(usable.map(\.label)).count
+        guard labelCount >= 2 else {
+            throw ToolError.notEnoughData("examples for at least two labels are required, got \(labelCount).")
         }
-        return textsByLabel
+        return usable
     }
 
     #if canImport(CreateML)
+    /// Create ML's own training error propagates unchanged, so `train` can explain it.
     private static func fit(
-        _ textsByLabel: [String: [String]],
+        _ examples: [Example],
         parameters: MLTextClassifier.ModelParameters,
         writingTo outputURL: URL,
         metadata: MLModelMetadata
     ) throws -> Report {
-        let classifier: MLTextClassifier
-        do {
-            classifier = try MLTextClassifier(trainingData: textsByLabel, parameters: parameters)
-        } catch {
-            throw ToolError.trainingFailed(error.localizedDescription)
-        }
+        let classifier = try MLTextClassifier(
+            trainingData: trainingFrame(examples), textColumn: "text", labelColumn: "label", parameters: parameters)
         do {
             try FileManager.default.createDirectory(
                 at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -233,10 +244,33 @@ public struct TextClassifierTrainer: SystemTool {
         return Report(
             modelURL: outputURL,
             classLabels: (classifier.model.modelDescription.classLabels ?? []).map { "\($0)" }.sorted(),
-            exampleCount: textsByLabel.values.reduce(0) { $0 + $1.count },
+            exampleCount: examples.count,
             trainingAccuracy: accuracy(classifier.trainingMetrics),
             validationAccuracy: accuracy(classifier.validationMetrics))
     }
+
+    /// Create ML reports missing embedding assets and too few examples only as generic errors.
+    private static func explained(
+        _ error: any Error, examples: [Example], algorithm: Algorithm, language: NLLanguage?
+    ) -> ToolError {
+        guard case .transferLearning(let embedding) = algorithm else {
+            return .trainingFailed(error.localizedDescription)
+        }
+        if embedding == .bertEmbedding,
+           let detected = language ?? NLLanguageRecognizer.dominantLanguage(
+               for: examples.map(\.text).joined(separator: "\n")),
+           NLContextualEmbedding(language: detected)?.hasAvailableAssets == false {
+            return .embeddingAssetsUnavailable(language: detected.rawValue)
+        }
+        if examples.count < minimumTransferLearningExamples {
+            return .notEnoughData("transfer learning needs about \(minimumTransferLearningExamples) examples, "
+                                  + "got \(examples.count); use .maxEnt or .crf for fewer.")
+        }
+        return .trainingFailed(error.localizedDescription)
+    }
+
+    /// Measured on macOS 26.7: 9 examples failed and 10 trained, for every embedding and label split.
+    private static let minimumTransferLearningExamples = 10
 
     private static func accuracy(_ metrics: MLClassifierMetrics) -> Double? {
         metrics.isValid ? 1 - metrics.classificationError : nil

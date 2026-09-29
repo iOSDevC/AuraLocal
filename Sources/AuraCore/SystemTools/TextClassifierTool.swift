@@ -2,13 +2,9 @@ import Foundation
 import CoreML
 import NaturalLanguage
 
-/// Runs a **Create ML text classifier** through NaturalLanguage's `NLModel`: text in,
-/// predicted label plus per-label probabilities out (e.g. expense category, intent,
-/// ticket priority). Train one on-device with ``TextClassifierTrainer`` or ship one made
-/// in the Create ML app. Accepts `.mlmodel` (compiled once, cached) or `.mlmodelc`.
-///
-/// Thread safety: `NLModel` is not `Sendable`; it lives in a private actor on its own
-/// serial queue, shared by copies of the tool.
+/// Runs a **Create ML text classifier** through NaturalLanguage's `NLModel`: text in, label
+/// plus per-label probabilities out. Accepts `.mlmodel` (compiled once, cached) or `.mlmodelc`.
+/// `NLModel` is not `Sendable`; it lives in an actor on its own queue, shared by copies.
 public struct TextClassifierTool: SystemTool {
     public let id: String
     public let displayName: String
@@ -37,17 +33,20 @@ public struct TextClassifierTool: SystemTool {
     public enum ToolError: LocalizedError {
         case modelUnavailable(String)
         case notATextClassifier(String)
+        case predictionFailed
 
         public var errorDescription: String? {
             switch self {
             case .modelUnavailable(let reason): "The text classifier model is unavailable: \(reason)"
             case .notATextClassifier(let reason): "The model is not a text classifier: \(reason)"
+            case .predictionFailed:
+                "The model returned no label for the text (seen with BERT-based models in the Simulator)."
             }
         }
     }
 
     public struct Classification: Sendable, Equatable {
-        /// Best label; `nil` for blank input.
+        /// Best label; `nil` only for blank input.
         public let label: String?
         /// Probability of each of the top labels (they sum to ≈1 when every label is requested).
         public let hypotheses: [String: Double]
@@ -61,18 +60,14 @@ public struct TextClassifierTool: SystemTool {
     }
 
     public func availability() async -> SystemToolAvailability {
-        do {
-            try CompiledModelCache.validate(modelURL)
-        } catch {
-            return .unavailable(reason: error.localizedDescription)
-        }
-        if let failure = await host.loadFailure {
-            return .unavailable(reason: failure)
+        if let reason = await host.unavailabilityReason() {
+            return .unavailable(reason: reason)
         }
         return .available
     }
 
-    /// Classify `text`. Blank text returns an empty result rather than a guess.
+    /// Classify `text`. Blank text returns an empty result rather than a guess; a model that
+    /// cannot label non-blank text throws ``ToolError/predictionFailed``.
     public func classify(_ text: String, maxHypotheses: Int = 3) async throws -> Classification {
         try await host.classify(text, maxHypotheses: maxHypotheses)
     }
@@ -91,11 +86,20 @@ private actor TextModelHost {
     private let cacheDirectory: URL?
     private var model: NLModel?
     private var classLabels: [String] = []
-    private(set) var loadFailure: String?
+    private var lastFailure: ModelLoadFailure?
 
     init(source: URL, cacheDirectory: URL?) {
         self.source = source
         self.cacheDirectory = cacheDirectory
+    }
+
+    func unavailabilityReason() -> String? {
+        do {
+            try CompiledModelCache.validate(source)
+        } catch {
+            return error.localizedDescription
+        }
+        return lastFailure?.reportedReason(for: source)
     }
 
     func classify(_ text: String, maxHypotheses: Int) async throws -> TextClassifierTool.Classification {
@@ -103,10 +107,14 @@ private actor TextModelHost {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return TextClassifierTool.Classification(label: nil, hypotheses: [:])
         }
+        // Seen in the Simulator with a BERT model: nil and no hypotheses, without an error.
+        guard let label = model.predictedLabel(for: text) else {
+            throw TextClassifierTool.ToolError.predictionFailed
+        }
         let hypotheses = maxHypotheses > 0
             ? model.predictedLabelHypotheses(for: text, maximumCount: maxHypotheses)
             : [:]
-        return TextClassifierTool.Classification(label: model.predictedLabel(for: text), hypotheses: hypotheses)
+        return TextClassifierTool.Classification(label: label, hypotheses: hypotheses)
     }
 
     func labels() async throws -> [String] {
@@ -120,7 +128,7 @@ private actor TextModelHost {
         do {
             compiled = try await CompiledModelCache.compiledURL(for: source, in: cacheDirectory)
         } catch {
-            loadFailure = error.localizedDescription
+            lastFailure = ModelLoadFailure(source: source, error: error)
             throw TextClassifierTool.ToolError.modelUnavailable(error.localizedDescription)
         }
         if let model { return model }
@@ -132,13 +140,13 @@ private actor TextModelHost {
             }
             classLabels = (core.modelDescription.classLabels ?? []).map { "\($0)" }.sorted()
             model = classifier
-            loadFailure = nil
+            lastFailure = nil
             return classifier
         } catch let error as TextClassifierTool.ToolError {
-            loadFailure = error.localizedDescription
+            lastFailure = ModelLoadFailure(source: source, error: error)
             throw error
         } catch {
-            loadFailure = error.localizedDescription
+            lastFailure = ModelLoadFailure(source: source, error: error)
             throw TextClassifierTool.ToolError.notATextClassifier(error.localizedDescription)
         }
     }

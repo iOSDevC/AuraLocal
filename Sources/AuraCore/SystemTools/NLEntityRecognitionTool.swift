@@ -1,13 +1,9 @@
 import Foundation
 import NaturalLanguage
 
-/// On-device named-entity recognition via Apple's **NaturalLanguage** framework:
-/// people, places and organizations, with no model download. Lets an SLM ground
-/// "who / where / which company" in exact spans instead of guessing them.
-/// Resilient: text without names, or in a language without a name model, returns
-/// an empty list. Name models exist for en, es, fr, de, it and pt (checked on macOS 26.7);
-/// Spanish multi-word organizations can absorb a leading common noun
-/// ("periódico El Espectador").
+/// On-device named-entity recognition via Apple's **NaturalLanguage** framework: people,
+/// places and organizations as exact spans, with no model download. Text without names, or
+/// in a language without a name model, returns an empty list.
 public struct NLEntityRecognitionTool: SystemTool {
     public let id = "system.nl.entities"
     public let displayName = "Named entities (NaturalLanguage)"

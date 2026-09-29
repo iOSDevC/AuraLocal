@@ -60,7 +60,7 @@ public struct VisionFaceDetectionTool: SystemTool {
         return (request.results ?? []).map(Self.detectedFace(from:))
     }
 
-    private static func detectedFace(from observation: VNFaceObservation) -> DetectedFace {
+    static func detectedFace(from observation: VNFaceObservation) -> DetectedFace {
         DetectedFace(boundingBox: observation.boundingBox,
                      confidence: observation.confidence,
                      roll: observation.roll?.doubleValue,
