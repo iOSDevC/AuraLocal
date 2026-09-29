@@ -11,6 +11,7 @@ public struct VisionOCRTool: SystemTool {
     public let id = "system.vision.ocr"
     public let displayName = "On-device OCR (Vision)"
     public let summary = "Extract text from an image or document page using Apple's Vision framework — no model download, works offline."
+    public let category = SystemToolCategory.vision
 
     public init() {}
 

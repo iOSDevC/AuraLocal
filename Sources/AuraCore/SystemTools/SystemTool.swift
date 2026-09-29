@@ -20,6 +20,17 @@ public enum SystemToolAvailability: Sendable, Equatable {
     }
 }
 
+// MARK: - Category
+
+/// What kind of input a tool works on, for grouping in listings and UI.
+public enum SystemToolCategory: String, Sendable, CaseIterable {
+    case vision
+    case language
+    case audio
+    case customModel
+    case training
+}
+
 // MARK: - SystemTool
 
 /// A capability backed by an on-device Apple framework (Vision, NaturalLanguage,
@@ -36,9 +47,16 @@ public protocol SystemTool: Sendable {
     /// One line describing what the tool gives the model (used in UI / tool listings).
     var summary: String { get }
 
+    var category: SystemToolCategory { get }
+
     /// Check availability on the current device. Must never throw — return
     /// `.unavailable(reason:)` instead.
     func availability() async -> SystemToolAvailability
+}
+
+public extension SystemTool {
+    /// Tools defined outside AuraCore are most often wrappers around a custom model.
+    var category: SystemToolCategory { .customModel }
 }
 
 // MARK: - Registry / discovery
@@ -58,6 +76,7 @@ public enum SystemToolRegistry {
         public let id: String
         public let displayName: String
         public let summary: String
+        public let category: SystemToolCategory
         public let availability: SystemToolAvailability
         public var isAvailable: Bool { availability.isAvailable }
     }
@@ -67,11 +86,14 @@ public enum SystemToolRegistry {
         var infos: [ToolInfo] = []
         for tool in all {
             let availability = await tool.availability()
-            infos.append(ToolInfo(
-                id: tool.id, displayName: tool.displayName,
-                summary: tool.summary, availability: availability))
+            infos.append(info(for: tool, availability: availability))
         }
         return infos
+    }
+
+    private static func info(for tool: any SystemTool, availability: SystemToolAvailability) -> ToolInfo {
+        ToolInfo(id: tool.id, displayName: tool.displayName, summary: tool.summary,
+                 category: tool.category, availability: availability)
     }
 
     /// Only the tools that are actually usable right now.

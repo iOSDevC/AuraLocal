@@ -9,6 +9,7 @@ public struct NLEmbeddingTool: SystemTool {
     public let id = "system.nl.embedding"
     public let displayName = "On-device embeddings (NaturalLanguage)"
     public let summary = "Produce a semantic vector for text using Apple's NaturalLanguage — no model download, for offline semantic search."
+    public let category = SystemToolCategory.language
 
     public init() {}
 
