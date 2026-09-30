@@ -66,6 +66,12 @@ for p in providers where p.isAvailable {
 }
 ```
 
+Ollama also lists **cloud models** (`deepseek-v4-pro:cloud`, `gpt-oss:120b-cloud`) that it forwards
+to `ollama.com`. They carry `remoteHost` and `runsLocally == false`. `bestLocalTarget()` and
+`AskTargetResolver.resolve` without a `baseURL` skip them, so the target they pick never forwards
+the prompt to Ollama's cloud. A `baseURL` is classified by its host only: a local URL serving a
+`:cloud` model named with `model:` still counts as `.localNetwork`.
+
 ## Escalate a request
 
 `HybridEscalator` compresses the context toward the remote's budget, checks the response
@@ -110,24 +116,49 @@ raises the bar for the latter).
   (estimated prompt tokens + `maxTokens` at list price); spend already recorded in `CostLedger`
   is not counted. Over the cap, the router still offers, with the reason `.costCapped`.
 - Only the first candidate is tried: the LAN box if one is running, otherwise the first cloud
-  key found (Anthropic, then OpenAI, then a leftover `cloud.github-models` key), or the first
-  of the `targets:` you pass. An error from it, such as HTTP 429, is thrown to the caller;
+  key found (Anthropic, then OpenAI), or the first of the `targets:` you pass. An error from it, such as HTTP 429, is thrown to the caller;
   there is no fall-through to the next target.
 
 ## Cloud targets (BYOK)
 
 `HybridEscalator.cloudTargets(allowCloud:)` builds cloud targets from Keychain keys:
-`cloud.anthropic` (`AnthropicProvider`, default model `claude-sonnet-4-5`) and `cloud.openai`
-(OpenAI, `gpt-4o`). Keys are stored in the Keychain, never in source, files, or logs. Save a key
-once (e.g. from a settings screen): `try KeychainStore.save(key, for: "cloud.openai")`.
+`cloud.anthropic` (`AnthropicProvider`, default model `RemoteTarget.defaultAnthropicModel`,
+`claude-sonnet-4-5`) and `cloud.openai` (OpenAI, `RemoteTarget.defaultOpenAIModel`, `gpt-4o`).
+Keys are stored in the Keychain, never in source, files, or logs. Save a key once (e.g. from a
+settings screen): `try KeychainStore.save(key, for: "cloud.openai")`.
 Works from iOS, macOS, and visionOS.
 
-{: .warning }
-> GitHub retired GitHub Models on 2026-07-30. `OpenAICompatibleProvider.gitHubModels(apiKey:)`
-> and the `cloud.github-models` Keychain slot are still in the code, but the endpoint no longer
-> serves completions, so escalations to it fail. A saved `cloud.github-models` key still adds a
-> dead target to `cloudTargets`, and it is the one chosen when no LAN box and no Anthropic or
-> OpenAI key is available. Remove it with `KeychainStore.delete(for: "cloud.github-models")`.
+{: .note }
+> GitHub retired GitHub Models on 2026-07-30. `OpenAICompatibleProvider.gitHubModels(apiKey:)` and
+> the `cloudTargets` overload taking `gitHubModelsModel:` are `unavailable` (a compile error that
+> names the replacements), and `cloudTargets` no longer reads the `cloud.github-models` Keychain
+> account. A key already saved there stays until you delete it with
+> `KeychainStore.delete(for: "cloud.github-models")` (the Example app's Hybrid settings offer a button).
+
+## Pick one target (`AskTargetResolver`)
+
+For a one-shot ask, `AskTargetResolver.resolve` turns a provider choice into a single
+`RemoteTarget`. It is what `aura ask` uses, and a pure function: you pass the environment, a
+Keychain reader and the detected local providers, so it does no I/O of its own.
+
+```swift
+import AuraCore
+
+let target = try AskTargetResolver.resolve(
+    .auto,                                        // .auto / .local / .openAI / .anthropic
+    environment: ProcessInfo.processInfo.environment,
+    readKey: KeychainStore.read(for:),            // read only for .openAI / .anthropic
+    localProviders: await LocalProviderDetector.detectAll())
+let result = try await HybridEscalator().escalate(
+    to: target, context: "", question: prompt, redactPII: !target.isLocalNetwork)
+```
+
+Without a `baseURL:`, `.auto` and `.local` return your llama-server, else Ollama, and never a
+cloud target; they throw `AskTargetResolver.Failure.noLocalProvider` when neither runs.
+`.openAI` / `.anthropic` take the key from `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`, else the Keychain, and throw
+`.missingAPIKey` without one. `baseURL:` (with `model:`) targets any OpenAI-compatible server;
+a loopback or private-network host gets the origin `.localNetwork(.llamaServer)`, any other
+host `.cloud`. Each `Failure` has an `errorDescription` that says what to do next.
 
 ## Per-step escalation (agent orchestration)
 
@@ -157,12 +188,12 @@ await crew.run(topic: "Q3 security posture", policy: policy, consent: myConsentG
   The preview is compressed with `policy.keepRatio` while the request sent uses 0.5, so the previewed
   context equals the sent context only at the default `keepRatio` of 0.5; the request also carries
   the question and system prompt.
-- **`PIIRedactor`** strips obvious secrets/PII (code-safe, high-precision), only on
-  `escalate(to:…, redactPII: true)`.
+- **`PIIRedactor`** strips obvious secrets/PII (code-safe, high-precision) from the context and
+  the question, only on `escalate(to:…, redactPII: true)`.
 - **`CostLedger`** records per-escalation token usage and cost. Only `cloud.anthropic` ($3 in /
   $15 out per 1M tokens) and `cloud.openai` ($2.50 / $10) have prices; local-network targets and
-  every other provider id (`cloud.github-models`, any custom `OpenAICompatibleProvider`) are
-  recorded, and projected, at $0.
+  every other provider id (any custom `OpenAICompatibleProvider`, including an
+  `AskTargetResolver` base URL) are recorded, and projected, at $0.
 - **`ResponseCache`** avoids paying twice for a repeated request. It is keyed on provider id,
   model id and the user payload (context + question), not on the system prompt or `maxTokens`,
   and is held in memory (64 entries, FIFO, cleared on relaunch).
@@ -174,9 +205,9 @@ await crew.run(topic: "Q3 security posture", policy: policy, consent: myConsentG
 | Discovery | `LocalProviderDetector`, `LocalProviderStatus` |
 | Providers | `RemoteLLMProvider`, `OpenAICompatibleProvider` (llama-server / Ollama / OpenAI), `AnthropicProvider` |
 | Transport | internal (`RemoteBackend` adapts a `RemoteLLMProvider` to `InferenceBackend`; not public API) |
-| Routing | `EscalationRouter` (R1–R7), `EscalationPolicy`, `RoutingDecision`, `HybridEscalator` |
+| Routing | `EscalationRouter` (R1–R7), `EscalationPolicy`, `RoutingDecision`, `HybridEscalator`, `AskTargetResolver` |
 | Compression | `ContextCompressor` + pluggable `SelfInfoScorer` |
 | Privacy & cost | `ConsentGate`, `KeychainStore`, `PIIRedactor`, `CostLedger`, `ResponseCache`, `NetworkMonitor` |
 
-See also the [CLI]({{ '/guide/cli' | relative_url }}). `aura ask` used this path with GitHub
-Models and no longer works since that service was retired.
+See also the [CLI]({{ '/guide/cli' | relative_url }}): `aura ask` resolves its target with
+`AskTargetResolver` and sends it through `HybridEscalator.escalate(to:)`.

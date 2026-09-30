@@ -35,7 +35,8 @@ swift build -c release --product aura
 ```
 aura providers                      # detect Ollama / llama-server + models
 aura tools                          # list on-device ML tools by category, with availability
-aura ask "<prompt>" [--model <id>]  # defunct: calls GitHub Models, retired by GitHub on 2026-07-30
+aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>]
+         [--base-url <url>] [--max-tokens N]  # ask a bigger model; local unless you name a cloud API
 aura ocr <image>                    # native Vision OCR; ignores EXIF orientation (camera photos: aura ml ocr-lines)
 aura ml <subcommand> …              # run an on-device ML tool (see below)
 aura models search|check|devices …  # which Hugging Face models AuraLocal can run (see below)
@@ -45,16 +46,64 @@ aura imagegen "<prompt>" [--model schnell|dev|<repo>] [--base-model schnell|dev]
 ```
 
 - **`providers`** / **`tools`** / **`ocr`** / **`ml`** / **`models`** need no key and no model download.
+- **`ask`** needs a running llama-server / Ollama, a named cloud provider with a key, or `--base-url`;
+  see [below](#ask-a-bigger-model-aura-ask).
 - **`imagegen`** prints the path of the PNG it wrote (`<dir>/image.png`, a temporary folder by default).
   It defaults to `--model schnell` (a gated repo) and `--quantize 4`, and `--lora` takes local files only;
   see [Image Generation]({{ '/guide/imagegen' | relative_url }}).
 
-{: .warning }
-> `aura ask` still sends to GitHub Models (`OpenAICompatibleProvider.gitHubModels`), which GitHub
-> retired on 2026-07-30. The command fails and has no other remote. From Swift, `HybridEscalator`
-> can still escalate to a LAN `llama-server`/Ollama target (`HybridEscalator.bestLocalTarget()`) or a
-> BYOK Anthropic/OpenAI key (`HybridEscalator.cloudTargets(allowCloud:)`); see
-> [Hybrid Inference]({{ '/guide/hybrid' | relative_url }}).
+## Ask a bigger model (`aura ask`)
+
+```
+aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>]
+         [--base-url <url>] [--max-tokens N]
+```
+
+`--provider` picks where the prompt goes:
+
+| `--provider` | Target | Key |
+|---|---|---|
+| `auto` (default), `local` | A running `llama-server` (`127.0.0.1:8080/v1`), else Ollama (`localhost:11434`); the model with the largest trained context (Ollama: its first listed model) | none |
+| `openai` | `https://api.openai.com/v1`, default model `gpt-4o` | `OPENAI_API_KEY`, else Keychain account `cloud.openai` |
+| `anthropic` | Anthropic Messages API, default model `claude-sonnet-4-5` | `ANTHROPIC_API_KEY`, else Keychain account `cloud.anthropic` |
+
+- **`auto` never picks a cloud API.** It also skips Ollama cloud models (`name:cloud`, which Ollama
+  forwards to `ollama.com`; `aura providers` marks them). With no on-machine model running, it exits 1
+  and lists the options (start llama-server / Ollama, `--provider openai|anthropic`, or `--base-url`).
+- **`--model <id>`** overrides the default. For `auto` / `local` it selects the local server that
+  serves that model (`llama3` also matches Ollama's `llama3:latest`) and fails if none does.
+- **`--base-url <url> --model <id>`** sends to any other OpenAI-compatible server (`chat/completions`
+  is appended to the URL, e.g. `http://192.168.1.20:8080/v1`). `--model` is required: llama-server
+  accepts any id, other servers need a real one. An optional key comes from `AURA_API_KEY` (sent as
+  a Bearer token). A loopback, private-network (`10.*`, `172.16–31.*`, `192.168.*`, IPv6 ULA),
+  link-local, `localhost`, `*.local` or `*.home.arpa` host counts as your own machine; any other host
+  counts as cloud. The check looks at the host only, so a local server that forwards the model
+  elsewhere (an Ollama `:cloud` model named with `--model`) still counts as local. `--base-url` can't
+  be combined with `--provider openai|anthropic`, and `--provider local --base-url` accepts only a
+  local-network host.
+- **`--max-tokens N`** caps the answer (default 512).
+
+```sh
+aura ask "Summarize RFC 9110 in one sentence" > answer.txt      # your llama-server / Ollama
+aura ask "Review this function: …" --provider anthropic          # sends to Anthropic
+aura ask "Hello" --base-url http://192.168.1.20:8080/v1 --model qwen3-32b
+```
+
+The answer goes to stdout, so it pipes cleanly. A receipt goes to stderr:
+`— via <provider> · <model>[ · <in> in / <out> out][ · cached]`. Token counts appear when the
+server reports them; a repeated identical request is served from the in-memory response cache
+and ends in `· cached`. `aura ask --help` prints the usage.
+
+For a cloud target, obvious secrets and PII in the prompt (emails, API keys, tokens) are redacted
+before sending (`redactPII: true`); a local-network target gets the prompt verbatim. Keychain keys use the
+service `dev.auralocal.remote` (`KeychainStore`). Exit codes: 0 success, 1 no target or a failed
+request, 2 a usage error (missing prompt, unknown flag or provider, an invalid `--base-url` or one
+without `--model`, conflicting options). The choice itself is `AskTargetResolver.resolve` in `AuraCore`; see
+[Hybrid Inference]({{ '/guide/hybrid' | relative_url }}).
+
+{: .note }
+> `aura ask` used GitHub Models until GitHub retired it on 2026-07-30. `AURA_GITHUB_TOKEN`,
+> `GITHUB_TOKEN` and the Keychain account `cloud.github-models` are no longer read.
 
 ## On-device ML (`aura ml`)
 
@@ -123,8 +172,9 @@ personal Homebrew tap.
 
 {: .warning }
 > The Homebrew tap is not published yet (`github.com/iOSDevC/homebrew-aura` does not resolve),
-> and the only released tarball (v0.1.0) predates `aura ml`, `aura models` and `aura imagegen`.
-> Build from source (above) to get the commands on this page. Once the tap is live:
+> and the only released tarball (v0.1.0) predates `aura ml`, `aura models` and `aura imagegen`, and
+> its `aura ask` still calls the retired GitHub Models. Build from source (above) to get the commands
+> on this page. Once the tap is live:
 
 ```sh
 brew tap iOSDevC/aura

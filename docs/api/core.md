@@ -646,6 +646,15 @@ public enum LocalProviderDetector {
         timeout: TimeInterval = 2.0
     ) async -> [LocalProviderStatus]
 }
+
+public struct LocalProviderModel: Sendable, Codable, Identifiable, Hashable {
+    let name: String
+    let sizeBytes: Int64?                // Ollama: size; llama-server: meta.size
+    let quantization: String?            // Ollama only
+    let contextLength: Int?              // llama-server only
+    let remoteHost: String?              // Ollama cloud models: "https://ollama.com:443"
+    var runsLocally: Bool                // false with a remoteHost or a ":cloud" / "-cloud" tag
+}
 ```
 
 ### HybridEscalator
@@ -675,10 +684,20 @@ public final class HybridEscalator {
         context: String,
         question: String,
         maxTokens: Int = 1024,
-        redactPII: Bool = false,
+        redactPII: Bool = false,           // PIIRedactor on the context and the question
         onToken: @escaping @MainActor (String) -> Void = { _ in }
     ) async throws -> Result
 
+    // Your llama-server (preferred) or Ollama, with its largest-context model; nil if none runs.
+    // Skips models with runsLocally == false (Ollama cloud models forward prompts off the machine).
+    static func bestLocalTarget() async -> RemoteTarget?
+    // BYOK targets from the Keychain: "cloud.anthropic", then "cloud.openai". [] when !allowCloud.
+    static func cloudTargets(
+        allowCloud: Bool,
+        anthropicModel: String = RemoteTarget.defaultAnthropicModel,   // "claude-sonnet-4-5"
+        openAIModel: String = RemoteTarget.defaultOpenAIModel          // "gpt-4o"
+    ) -> [RemoteTarget]
+    // The LAN box first, then cloudTargets(allowCloud: policy.allowCloud).
     static func candidateTargets(policy: EscalationPolicy) async -> [RemoteTarget]
 
     public struct Result: Sendable {
@@ -718,9 +737,10 @@ public protocol RemoteLLMProvider: Sendable { /* id, displayName, retentionNote,
 public struct OpenAICompatibleProvider: RemoteLLMProvider {
     init(id: String, displayName: String, baseURL: URL, apiKey: String? = nil,
          streaming: Bool = true, retentionNote: String = "Sent to an OpenAI-compatible endpoint.")
-    // Build from a detected local llama-server / Ollama endpoint.
+    // Build from a detected local llama-server / Ollama endpoint (Ollama requests go to <root>/v1).
     static func from(_ status: LocalProviderStatus) -> OpenAICompatibleProvider
-    // GitHub Models preset. Still compiles, but its endpoint no longer serves requests.
+    // Unavailable: GitHub retired GitHub Models on 2026-07-30. Calling it is a compile error.
+    @available(*, unavailable, message: "GitHub retired GitHub Models on 2026-07-30. …")
     static func gitHubModels(apiKey: String) -> OpenAICompatibleProvider
 }
 
@@ -730,14 +750,58 @@ public struct RemoteTarget: Sendable {
     let contextLength: Int?
     let origin: Origin                 // .cloud / .localNetwork(LocalProviderKind)
     init(provider: any RemoteLLMProvider, modelID: String, contextLength: Int? = nil, origin: Origin)
+    var isLocalNetwork: Bool
+
+    static let defaultOpenAIModel: String      // "gpt-4o"
+    static let defaultAnthropicModel: String   // "claude-sonnet-4-5"
 }
 ```
 
-{: .warning }
-> GitHub retired GitHub Models on 2026-07-30. `OpenAICompatibleProvider.gitHubModels(apiKey:)` still
-> targets `models.github.ai/inference`, so requests through it fail, and a key stored under
-> `"cloud.github-models"` still makes `HybridEscalator.cloudTargets` add that target. Use the OpenAI
-> or Anthropic keys, or a local llama-server / Ollama.
+{: .note }
+> GitHub retired GitHub Models on 2026-07-30. `OpenAICompatibleProvider.gitHubModels(apiKey:)` and
+> `HybridEscalator.cloudTargets(allowCloud:anthropicModel:openAIModel:gitHubModelsModel:)` are
+> `unavailable`, so old callers get a compile error with the migration path. A key stored under
+> `"cloud.github-models"` is no longer read and stays in the Keychain until you delete it.
+
+### AskTargetResolver
+
+The provider choice behind `aura ask`, as a pure function: no network, no Keychain access of its own.
+Without a `baseURL`, `.auto` / `.local` never return a cloud target; a prompt leaves the machine
+only when the caller names `.openAI` / `.anthropic` or passes a base URL. A `baseURL` is
+classified by its host alone: loopback or private network is `.localNetwork(.llamaServer)`,
+anything else `.cloud` (also under `.auto`).
+
+```swift
+public enum AskTargetResolver {
+    enum Choice: String, Sendable, CaseIterable {
+        case auto, local                 // llama-server, else Ollama (HybridEscalator.bestLocalTarget order)
+        case openAI = "openai"           // key: OPENAI_API_KEY, else Keychain "cloud.openai"
+        case anthropic                   // key: ANTHROPIC_API_KEY, else Keychain "cloud.anthropic"
+    }
+
+    enum Failure: Error, Equatable, LocalizedError {
+        case noLocalProvider
+        case modelNotServedLocally(model: String, available: [String])
+        case missingAPIKey(provider: Choice, environmentVariable: String, keychainAccount: String)
+        case conflictingOptions(String)  // baseURL with .openAI/.anthropic, or .local with a public host
+        case modelRequired               // baseURL without a model
+        case invalidBaseURL(String)
+        var isUsageError: Bool           // true for the last three (aura exits 2; otherwise 1)
+    }
+
+    static func resolve(
+        _ choice: Choice,
+        model: String? = nil,             // nil: the provider's default (local: largest context window)
+        baseURL: String? = nil,           // any OpenAI-compatible server; key from AURA_API_KEY
+        environment: [String: String],
+        readKey: (String) -> String?,     // e.g. KeychainStore.read(for:); called only for .openAI/.anthropic
+        localProviders: [LocalProviderStatus]   // from LocalProviderDetector.detectAll()
+    ) throws(Failure) -> RemoteTarget
+}
+```
+
+A `baseURL` host that is loopback, private (RFC 1918, IPv6 ULA), link-local, `localhost`, `*.local` or
+`*.home.arpa` gets the origin `.localNetwork(.llamaServer)`; any other host is `.cloud`.
 
 ### Keys, cost & privacy
 
@@ -745,7 +809,7 @@ public struct RemoteTarget: Sendable {
 // BYOK API keys — Keychain only (WhenUnlockedThisDeviceOnly, never iCloud-synced).
 // Accounts read by AuraLocal: "cloud.anthropic" · "cloud.openai" · "download.huggingface"
 // (Hugging Face token for gated repos, KeychainDownloadAuth.huggingFaceAccount; also used by
-// ModelCompatibilityChecker). "cloud.github-models" is still read, but that service is retired.
+// ModelCompatibilityChecker). "cloud.github-models" is no longer read (GitHub Models was retired).
 public enum KeychainStore {
     static func save(_ key: String, for account: String) throws
     static func read(for account: String) -> String?

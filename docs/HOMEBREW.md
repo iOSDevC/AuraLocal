@@ -25,8 +25,9 @@ SwiftPM dependency fetch.
 - **`Formula/aura.rb` installs v0.1.0**, which predates `aura imagegen`, `aura ml` and
   `aura models`: that binary has only `providers`, `tools`, `ask` and `ocr`. The newer
   commands need a new release or a source build (`swift build -c release --product aura`).
-- **`aura ask` does not work in any build**: it only targets GitHub Models, which GitHub retired
-  on 2026-07-30, and the CLI has no other provider.
+- **`aura ask` in v0.1.0 is broken**: that binary only targets GitHub Models, which GitHub retired
+  on 2026-07-30. From source (and the next release), `ask` uses a local llama-server/Ollama by
+  default, or OpenAI/Anthropic/an OpenAI-compatible `--base-url` when named.
 
 ## What's in the repo
 

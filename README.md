@@ -225,14 +225,15 @@ model, reusing the same compression, consent, and cost machinery. Fail-closed: a
 | Discovery | `LocalProviderDetector`, `LocalProviderStatus`, `LocalProviderModel` |
 | Providers | `RemoteLLMProvider`, `OpenAICompatibleProvider` (llama-server / Ollama / OpenAI), `AnthropicProvider` |
 | Transport (internal) | SSE parsing (inside the providers' `stream(_:)`) and a remote `InferenceBackend` used by `HybridEscalator.escalate(to:…)` |
-| Routing | `EscalationRouter` (R1–R7), `EscalationPolicy`, `RoutingDecision` |
+| Routing | `EscalationRouter` (R1–R7), `EscalationPolicy`, `RoutingDecision`, `AskTargetResolver` (one target for a one-shot ask) |
 | Compression | `ContextCompressor` + pluggable `SelfInfoScorer` (default `HeuristicScorer`) |
 | Privacy & cost | `ConsentGate`, `KeychainStore` (BYOK, this-device-only), `PIIRedactor`, `CostLedger`, `ResponseCache`, `NetworkMonitor` |
 
 > **GitHub Models is retired.** GitHub shut down GitHub Models on 2026-07-30.
-> `OpenAICompatibleProvider.gitHubModels(apiKey:)`, the `cloud.github-models` Keychain target in
-> `HybridEscalator.cloudTargets`, and `aura ask` still point at it and no longer work. Use your own
-> llama-server/Ollama box or an Anthropic/OpenAI key instead.
+> `OpenAICompatibleProvider.gitHubModels(apiKey:)` is now `unavailable` (a compile error naming the
+> replacements), `HybridEscalator.cloudTargets` no longer reads the `cloud.github-models` Keychain
+> key, and `aura ask` uses your own llama-server/Ollama box, or an Anthropic/OpenAI key when you
+> name that provider.
 
 **Privacy & cost:** cloud API keys live only in the Keychain (never in source, files,
 or logs). `ConsentGate` receives the target, the projected cost and a compressed preview of the
@@ -388,7 +389,8 @@ handy as a reference and in CI. Build with `scripts/build-cli.sh` (or
 ```
 aura providers                      # detect Ollama / llama-server + models
 aura tools                          # list on-device ML tools by category, with availability
-aura ask "<prompt>" [--model <id>]  # broken: calls GitHub Models, retired by GitHub on 2026-07-30
+aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>] [--base-url <url>]
+                                    # ask a bigger model: your llama-server/Ollama unless you name a cloud API
 aura ocr <image>                    # extract text via native Vision OCR
 aura ml <subcommand> …              # on-device ML: classify-image, barcodes, faces, ocr-lines,
                                     # language, entities, sentiment, similarity, sounds,
@@ -397,8 +399,10 @@ aura imagegen "<prompt>" [--lora <path>] …  # FLUX image generation via mflux 
 aura models search|check|devices …  # which Hugging Face models run here, and why not
 ```
 
-`ask` still targets GitHub Models (token from `AURA_GITHUB_TOKEN` / `GITHUB_TOKEN` or the Keychain
-`cloud.github-models`), which GitHub retired on 2026-07-30, so it fails. All flags:
+`ask` sends to a running llama-server, else Ollama, and never picks a cloud API on its own.
+`--provider openai` / `--provider anthropic` use `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (else the
+Keychain accounts `cloud.openai` / `cloud.anthropic`); `--base-url <url> --model <id>` targets any
+other OpenAI-compatible server, with an optional `AURA_API_KEY`. All flags:
 [CLI guide](docs/guide/cli.md).
 
 ### Demo app (`.dmg`)
