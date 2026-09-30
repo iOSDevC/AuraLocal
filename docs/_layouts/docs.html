@@ -620,7 +620,7 @@
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
         </span>
         {% if page.parent %}
-          <a href="{{ '/guide/' | relative_url }}">{{ page.parent }}</a>
+          <a href="{% if page.parent == 'API Reference' %}{{ '/api/' | relative_url }}{% else %}{{ '/guide/' | relative_url }}{% endif %}">{{ page.parent }}</a>
           <span class="docs-breadcrumb-sep" aria-hidden="true">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
           </span>
@@ -690,7 +690,7 @@
             <a href="{{ '/guide/models' | relative_url }}">Models</a>
             <a href="https://github.com/iOSDevC/AuraLocal" target="_blank" rel="noopener">GitHub</a>
           </nav>
-          <p class="ds-footer-copy">MIT License &copy; 2026 iOSDevC &nbsp;&middot;&nbsp; Built with Swift 6.0 on Apple Silicon.</p>
+          <p class="ds-footer-copy">MIT License &copy; 2026 iOSDevC &nbsp;&middot;&nbsp; Built with Swift 6.1 on Apple Silicon.</p>
         </div>
       </footer>
     </div>

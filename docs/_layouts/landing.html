@@ -930,13 +930,13 @@
 
       <h1 id="hero-heading">
         On-device inference.<br>
-        <em>No cloud. No keys.</em>
+        <em>Local by default.</em>
       </h1>
 
       <p class="hero-sub">
         Run Llama, Qwen, Mistral, and Gemma entirely on iPhone, iPad, and Mac.
-        MLX for small models on GPU. llama.cpp for large models up to 70B.
-        Your data never leaves the device.
+        MLX on the Apple Silicon GPU. llama.cpp/GGUF for models up to 70B.
+        Your data stays on the device unless you opt into hybrid escalation.
       </p>
 
       <div class="hero-actions">
@@ -951,7 +951,7 @@
 
       <div class="install-box" role="region" aria-label="Install command">
         <span class="install-label">Package.swift</span>
-        <code class="install-code">.package(url: "https://github.com/iOSDevC/AuraLocal", branch: "main")</code>
+        <code class="install-code">.package(url: "https://github.com/iOSDevC/AuraLocal", revision: "&lt;commit SHA from main&gt;")</code>
         <button class="copy-btn" onclick="copyInstall(this)" aria-label="Copy install command">Copy</button>
       </div>
 
@@ -966,7 +966,7 @@
       <div class="platform-item"><strong>iOS</strong> 18+</div>
       <div class="platform-item"><strong>macOS</strong> 15+</div>
       <div class="platform-item"><strong>visionOS</strong> 2+</div>
-      <div class="platform-item"><strong>Swift</strong> 6.0</div>
+      <div class="platform-item"><strong>Swift</strong> 6.1+</div>
       <div class="platform-item"><strong>MLX</strong> + llama.cpp</div>
       <div class="platform-item"><strong>MIT</strong> License</div>
     </div>
@@ -1002,7 +1002,7 @@
               <h4>MLXBackend</h4>
               <div class="arch-card-meta">
                 <span>Apple Silicon GPU</span>
-                <span>0.5B &ndash; 4B models</span>
+                <span>Up to 35B on a Mac</span>
                 <span>iOS + macOS</span>
                 <span>20 &ndash; 45 tok/s</span>
               </div>
@@ -1016,7 +1016,7 @@
               <h4>LlamaCppBackend</h4>
               <div class="arch-card-meta">
                 <span>Full Metal offload</span>
-                <span>7B &ndash; 70B models</span>
+                <span>1B &ndash; 70B models</span>
                 <span>macOS primary</span>
                 <span>8 &ndash; 20 tok/s</span>
               </div>
@@ -1030,8 +1030,8 @@
               <h4>LayerStreaming</h4>
               <div class="arch-card-meta">
                 <span>mmap demand-paging</span>
-                <span>7B &ndash; 13B on iOS</span>
-                <span>Peak RAM &le; 750 MB</span>
+                <span>7B &ndash; 14B on iOS</span>
+                <span>Peak RAM &lt; 1 GB</span>
                 <span>2 &ndash; 6 tok/s</span>
               </div>
             </div>
@@ -1062,7 +1062,7 @@
             </svg>
           </div>
           <h3>Fully Private</h3>
-          <p>Every inference call runs on-device. Prompts, images, and documents never touch a server or leave the device.</p>
+          <p>Inference runs on-device by default. Prompts, images and documents leave the device only if you enable hybrid escalation, which is off by default and consent-gated.</p>
         </div>
 
         <div class="feature-card">
@@ -1084,7 +1084,7 @@
             </svg>
           </div>
           <h3>Layer Streaming</h3>
-          <p>Run 7B models on a 6 GB iPhone with peak RAM under 750 MB. The OS pages weights from disk on demand.</p>
+          <p>Run 7B models on a 6 GB iPhone with peak RAM under 1 GB. The OS pages weights from disk on demand.</p>
         </div>
 
         <div class="feature-card">
@@ -1108,7 +1108,7 @@
             </svg>
           </div>
           <h3>Voice Pipeline</h3>
-          <p>Full-duplex voice with on-device STT, LLM streaming, and sentence-level TTS pipelining. Zero network calls.</p>
+          <p>Turn-based voice with on-device STT, LLM streaming, and sentence-level TTS pipelining. Zero network calls.</p>
         </div>
 
         <div class="feature-card">
@@ -1133,7 +1133,7 @@
             </svg>
           </div>
           <h3>Hybrid Escalation</h3>
-          <p>Local-first and opt-in. Escalate a hard turn to your own llama-server or GitHub Models — with token-saving compression, consent, and cost accounting. Off by default.</p>
+          <p>Local-first and opt-in. Escalate a hard turn to your own llama-server / Ollama box or a bring-your-own-key Anthropic or OpenAI endpoint — with token-saving compression, consent, and cost accounting. Off by default.</p>
         </div>
 
         <div class="feature-card">
@@ -1154,7 +1154,7 @@
             </svg>
           </div>
           <h3>aura CLI</h3>
-          <p>A headless integration harness — <code>aura providers</code>, <code>tools</code>, <code>ask</code>, and <code>ocr</code>. Ships via a Homebrew tap.</p>
+          <p>A headless integration harness — <code>aura providers</code>, <code>tools</code>, <code>ocr</code>, <code>ml</code>, <code>imagegen</code> and <code>models</code>. Build it from source with <code>swift build -c release --product aura</code>; the Homebrew tap is not published yet.</p>
         </div>
 
       </div>
@@ -1300,7 +1300,7 @@
 <span class="c">// Manual control</span>
 <span class="k">try</span> <span class="k">await</span> session.<span class="f">startListening</span>()
 session.<span class="f">interrupt</span>()   <span class="c">// stop TTS mid-sentence</span>
-session.<span class="f">cancel</span>()      <span class="c">// cancel everything</span></code></pre>
+session.<span class="f">cancel</span>()      <span class="c">// stop recording + TTS (not an LLM reply in progress)</span></code></pre>
             </div>
           </div>
 
@@ -1453,7 +1453,7 @@ print(answer.text)
               <p class="module-name">import AuraCore</p>
             </div>
           </div>
-          <p>Inference engine, model management, conversation persistence, and hardware analysis. Required by all other modules.</p>
+          <p>Inference engine, model management, conversation persistence, and hardware analysis. Required by every module except AuraAppleIntelligence.</p>
           <span class="module-link">
             API Reference
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -1473,7 +1473,7 @@ print(answer.text)
               <p class="module-name">import AuraUI</p>
             </div>
           </div>
-          <p>Drop-in SwiftUI tabbed interface covering Text Chat, Vision, OCR, and Models browser. Zero configuration needed.</p>
+          <p>Prebuilt SwiftUI views: <code>TextChatTab</code>, <code>VisionTab</code> and <code>OCRTab</code> to place in your own <code>TabView</code>, plus <code>ModelSection</code>, a model list section.</p>
           <span class="module-link">
             API Reference
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -1494,7 +1494,7 @@ print(answer.text)
               <p class="module-name">import AuraVoice</p>
             </div>
           </div>
-          <p>Full-duplex voice pipeline. SFSpeechRecognizer &rarr; LLM streaming &rarr; AVSpeechSynthesizer, with sentence-level pipelining.</p>
+          <p>Turn-based voice pipeline. SFSpeechRecognizer &rarr; LLM streaming &rarr; AVSpeechSynthesizer, with sentence-level pipelining.</p>
           <span class="module-link">
             API Reference
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -1585,7 +1585,7 @@ print(answer.text)
         <a href="{{ '/guide/benchmarks' | relative_url }}">Benchmarks</a>
         <a href="https://github.com/iOSDevC/AuraLocal" target="_blank" rel="noopener">GitHub</a>
       </nav>
-      <p class="footer-copy">MIT License &copy; 2026 iOSDevC &nbsp;&middot;&nbsp; Built with Swift 6.0 on Apple Silicon.</p>
+      <p class="footer-copy">MIT License &copy; 2026 iOSDevC &nbsp;&middot;&nbsp; Built with Swift 6.1 on Apple Silicon.</p>
     </div>
   </footer>
 
@@ -1609,7 +1609,7 @@ print(answer.text)
 
     // Copy install command to clipboard
     function copyInstall(btn) {
-      var text = '.package(url: "https://github.com/iOSDevC/AuraLocal", branch: "main")';
+      var text = '.package(url: "https://github.com/iOSDevC/AuraLocal", revision: "<commit SHA from main>")';
       navigator.clipboard.writeText(text).then(function() {
         var original = btn.textContent;
         btn.textContent = "Copied";
