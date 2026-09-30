@@ -11,6 +11,12 @@ import Foundation
 // llama.cpp — LocalLLMClient 0.5.0 declares `llamaVersion = "b8851"` in its Package.swift. Names are the
 //   values of `LLM_ARCH_NAMES` in https://raw.githubusercontent.com/ggml-org/llama.cpp/b8851/src/llama-arch.cpp,
 //   minus `clip` (a projector placeholder) and `(unknown)`.
+//
+// Regenerate:
+//   grep -o '"[^"]*": create(' .build/checkouts/mlx-swift-lm/Libraries/MLXLLM/LLMModelFactory.swift
+//     (same for MLXVLM/VLMModelFactory.swift, first `creators:` block only; the second one lists processors)
+//   curl -s https://raw.githubusercontent.com/ggml-org/llama.cpp/<build>/src/llama-arch.cpp \
+//     | awk '/LLM_ARCH_NAMES = \{/,/^\};/' | grep -o '"[^"]*"'
 
 /// Model types and architectures the pinned runtimes accept. See the header comment for provenance.
 public enum PinnedRuntimes {
