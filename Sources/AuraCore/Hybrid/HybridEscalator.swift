@@ -109,6 +109,7 @@ public final class HybridEscalator {
         let didCompress = compressed.originalTokens > compressed.compressedTokens
         ledger.record(
             provider: target.provider.id,
+            model: target.modelID,
             usage: backend.lastUsage,
             origin: target.origin,
             compressionRatio: didCompress ? compressed.ratio : nil)
@@ -205,21 +206,13 @@ public final class HybridEscalator {
         }
         guard let target = candidates.first else { return nil }   // R2: no target
 
-        let promptTokens = ContextCompressor.estimateTokens((systemPrompt ?? "") + context + question)
-        let projected = CostLedger.projectedCost(target: target, inputTokens: promptTokens, maxOutput: maxTokens)
+        let input = routingInput(
+            policy: policy, target: target,
+            promptTokens: ContextCompressor.estimateTokens((systemPrompt ?? "") + context + question),
+            maxTokens: maxTokens, localContextWindow: localContextWindow,
+            localAnswer: localAnswer, domain: domain)
 
-        let decision = EscalationRouter.decide(RoutingInput(
-            policy: policy,
-            hasCandidateTarget: true,
-            candidateIsCloud: !target.isLocalNetwork,
-            online: NetworkMonitor.shared.isOnline,
-            promptTokens: promptTokens,
-            localContextWindow: localContextWindow,
-            localAnswer: localAnswer,
-            domain: domain,
-            projectedCostUSD: projected))
-
-        switch decision {
+        switch EscalationRouter.decide(input) {
         case .stayLocal:
             return nil
         case .escalate:
@@ -229,12 +222,37 @@ public final class HybridEscalator {
         case .offer:
             let budget = max(256, Int(Double(target.contextLength ?? 8192) * policy.keepRatio) - maxTokens)
             let preview = compressor.compress(context: context, question: question, budgetTokens: budget)
-            guard await consent.requestConsent(target: target, preview: preview, projectedCostUSD: projected) else {
+            guard await consent.requestConsent(
+                target: target, preview: preview, projectedCostUSD: input.projectedCostUSD) else {
                 throw AuraError.escalationDeclined
             }
             return try await escalate(to: target, systemPrompt: systemPrompt,
                                       context: context, question: question,
                                       maxTokens: maxTokens, onToken: onToken)
         }
+    }
+
+    /// The router's view of one request, priced by this escalator's ledger and
+    /// counting what the ledger's session has already spent.
+    func routingInput(
+        policy: EscalationPolicy,
+        target: RemoteTarget,
+        promptTokens: Int,
+        maxTokens: Int,
+        localContextWindow: Int,
+        localAnswer: String?,
+        domain: Model.Domain?
+    ) -> RoutingInput {
+        RoutingInput(
+            policy: policy,
+            hasCandidateTarget: true,
+            candidateIsCloud: !target.isLocalNetwork,
+            online: NetworkMonitor.shared.isOnline,
+            promptTokens: promptTokens,
+            localContextWindow: localContextWindow,
+            localAnswer: localAnswer,
+            domain: domain,
+            projectedCostUSD: ledger.projectedCost(target: target, inputTokens: promptTokens, maxOutput: maxTokens),
+            sessionSpentUSD: ledger.sessionCostUSD)
     }
 }
