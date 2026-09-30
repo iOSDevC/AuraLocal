@@ -73,6 +73,12 @@ public actor DocumentLibrary {
     private let vectorStore: VectorStore
     private let chunker:     DocumentChunker
     
+    /// The provider identity the stored vectors are known to match; `nil` until checked.
+    private var matchedIdentity: EmbeddingIndexIdentity?
+    /// The latest identity check or re-embed; each one waits for the previous.
+    private var indexJob: Task<Void, Error>?
+    private static let embedBatchSize = 50
+
     // MARK: - Init
     
     public init(
@@ -104,6 +110,7 @@ public actor DocumentLibrary {
         self.embeddingProvider = embeddingProvider
         self.llm               = llm
         self.visionLLM         = visionLLM
+        self.matchedIdentity   = nil
     }
     
     // MARK: - Lifecycle
@@ -139,6 +146,9 @@ public actor DocumentLibrary {
             if let existing = docs.first(where: { $0.id == docID }) { return existing }
         }
         
+        // Stored vectors must come from this provider before new ones join them
+        try await prepareIndex(onProgress: onProgress)
+
         // Parse
         await onProgress("Parsing \(url.lastPathComponent)…")
         let dispatcher = DocumentParserDispatcher(visionLLM: visionLLM)
@@ -148,20 +158,21 @@ public actor DocumentLibrary {
         await onProgress("Chunking \(parsed.title)…")
         var chunks = chunker.chunk(document: parsed, documentID: docID)
         
-        // Embed in batches of 50
+        // Embed in batches
         await onProgress("Embedding \(chunks.count) chunks…")
-        let batchSize = 50
+        let truncatedBefore = await truncatedInputCount(of: embedder)
+        let batchSize = Self.embedBatchSize
         for batchStart in stride(from: 0, to: chunks.count, by: batchSize) {
             let batchEnd   = min(batchStart + batchSize, chunks.count)
             let texts      = chunks[batchStart..<batchEnd].map(\.text)
-            var embeddings = try await embedder.embedBatch(Array(texts))
+            var embeddings = try await embedder.embedDocuments(texts)
             for i in 0..<embeddings.count {
                 VectorMath.normalize(&embeddings[i])
                 chunks[batchStart + i].embedding = embeddings[i]
             }
-            let pct = Int(Double(batchEnd) / Double(chunks.count) * 100)
-            await onProgress("Embedding \(parsed.title): \(pct)%")
+            await onProgress("Embedding \(parsed.title): \(Self.percent(batchEnd, of: chunks.count))%")
         }
+        let truncated = await truncatedInputCount(of: embedder) - truncatedBefore
         
         // Persist
         try await vectorStore.insertDocument(
@@ -172,7 +183,8 @@ public actor DocumentLibrary {
         )
         try await vectorStore.insertChunks(chunks)
         
-        await onProgress("'\(parsed.title)' indexed ✓ (\(chunks.count) chunks)")
+        let truncationNote = truncated > 0 ? ", \(truncated) cut at the model's token limit" : ""
+        await onProgress("'\(parsed.title)' indexed ✓ (\(chunks.count) chunks\(truncationNote))")
         
         return IndexedDocument(
             id:         docID,
@@ -196,8 +208,10 @@ public actor DocumentLibrary {
             throw DocumentError.libraryNotReady
         }
         
+        try await prepareIndex(onProgress: { _ in })
+
         // Embed query
-        var queryVec = try await embedder.embed(question)
+        var queryVec = try await embedder.embedQuery(question)
         VectorMath.normalize(&queryVec)
         
         // Hybrid retrieval
@@ -254,6 +268,139 @@ public actor DocumentLibrary {
         return DocumentAnswer(text: answer, sources: sources)
     }
     
+    // MARK: - Index identity
+
+    /// True when the stored vectors came from a different embedding provider (or predate identity
+    /// tracking and have another length), so the next ``add(url:onProgress:)`` or
+    /// ``ask(_:topK:maxContextTokens:systemPrompt:)`` re-embeds them first. Call
+    /// ``reembedAll(onProgress:)`` up front to show progress instead.
+    public func indexNeedsReembedding() async throws -> Bool {
+        guard let embedder = embeddingProvider else { throw DocumentError.libraryNotReady }
+        return try await reconciliation(for: embedder) == .reembed
+    }
+
+    /// Recomputes every stored vector from its stored chunk text with the configured provider, in
+    /// batches, and records the provider's identity. Documents are not parsed again.
+    /// Progress messages read like `"Re-embedding 50/400 chunks: 12%"`.
+    public func reembedAll(onProgress: @escaping @MainActor (String) -> Void = { _ in }) async throws {
+        guard let embedder = embeddingProvider else { throw DocumentError.libraryNotReady }
+        try await runIndexJob(embedder: embedder, forceReembed: true, onProgress: onProgress)
+    }
+
+    private func prepareIndex(onProgress: @escaping @MainActor (String) -> Void) async throws {
+        guard let embedder = embeddingProvider else { throw DocumentError.libraryNotReady }
+        if matchedIdentity == Self.identity(of: embedder) { return }
+        try await runIndexJob(embedder: embedder, forceReembed: false, onProgress: onProgress)
+    }
+
+    /// Chains index jobs so concurrent add/ask calls wait for one re-embed instead of starting two.
+    private func runIndexJob(
+        embedder: any EmbeddingProvider,
+        forceReembed: Bool,
+        onProgress: @escaping @MainActor (String) -> Void
+    ) async throws {
+        let previous = indexJob
+        let job = Task {
+            _ = await previous?.result
+            try await self.reconcileIndex(embedder: embedder, forceReembed: forceReembed, onProgress: onProgress)
+        }
+        indexJob = job
+        try await job.value
+    }
+
+    private func reconcileIndex(
+        embedder: any EmbeddingProvider,
+        forceReembed: Bool,
+        onProgress: @escaping @MainActor (String) -> Void
+    ) async throws {
+        let configured = Self.identity(of: embedder)
+        if !forceReembed {
+            if matchedIdentity == configured { return }
+            switch try await reconciliation(for: embedder) {
+            case .upToDate:
+                matchedIdentity = configured
+                return
+            case .adopt:
+                try await vectorStore.setEmbeddingIdentity(configured)
+                matchedIdentity = configured
+                return
+            case .reembed:
+                break
+            }
+        }
+        try await reembed(with: embedder, identity: configured, onProgress: onProgress)
+    }
+
+    private func reconciliation(for embedder: any EmbeddingProvider) async throws
+        -> EmbeddingIndexIdentity.Reconciliation {
+        let configured = Self.identity(of: embedder)
+        let stored = try await vectorStore.embeddingIdentity()
+        if stored == configured { return .upToDate }
+        return EmbeddingIndexIdentity.reconciliation(
+            stored: stored,
+            configured: configured,
+            storedVectorLengths: try await vectorStore.storedVectorLengths(),
+            storedVectorCount: try await vectorStore.chunkCount()
+        )
+    }
+
+    private func reembed(
+        with embedder: any EmbeddingProvider,
+        identity: EmbeddingIndexIdentity,
+        onProgress: @escaping @MainActor (String) -> Void
+    ) async throws {
+        matchedIdentity = nil
+        // Matches no provider, so a run interrupted halfway is redone on next use.
+        let pending = EmbeddingIndexIdentity(identifier: "pending:\(identity.identifier)", dimensions: identity.dimensions)
+        try await vectorStore.setEmbeddingIdentity(pending)
+        await vectorStore.clearEmbeddingCache()
+        if let auto = embedder as? AutoEmbeddingProvider, !auto.usesDenseModel {
+            await refreshCorpus()
+        }
+        let total = try await vectorStore.chunkCount()
+        await onProgress("Re-embedding \(total) chunks…")
+        var done = 0
+        var cursor: Int64 = 0
+        while let page = try await reembedPage(after: cursor, embedder: embedder) {
+            cursor = page.lastRowID
+            done += page.count
+            await onProgress("Re-embedding \(done)/\(total) chunks: \(Self.percent(done, of: total))%")
+        }
+        try await vectorStore.setEmbeddingIdentity(identity)
+        matchedIdentity = identity
+    }
+
+    /// Re-embeds the next page of chunks after `rowID`; `nil` when none are left.
+    private func reembedPage(
+        after rowID: Int64,
+        embedder: any EmbeddingProvider
+    ) async throws -> (lastRowID: Int64, count: Int)? {
+        let page = try await vectorStore.chunkTexts(afterRowID: rowID, limit: Self.embedBatchSize)
+        guard let last = page.last else { return nil }
+        var vectors = try await embedder.embedDocuments(page.map(\.text))
+        guard vectors.count == page.count else {
+            throw DocumentError.embeddingFailed("\(vectors.count) vectors for \(page.count) chunks")
+        }
+        for index in vectors.indices {
+            VectorMath.normalize(&vectors[index])
+        }
+        try await vectorStore.updateEmbeddings(zip(page, vectors).map { (id: $0.0.id, vector: $0.1) })
+        return (last.rowID, page.count)
+    }
+
+    private static func identity(of embedder: any EmbeddingProvider) -> EmbeddingIndexIdentity {
+        EmbeddingIndexIdentity(identifier: embedder.identifier, dimensions: embedder.dimensions)
+    }
+
+    private static func percent(_ done: Int, of total: Int) -> Int {
+        total > 0 ? done * 100 / total : 100
+    }
+
+    private func truncatedInputCount(of embedder: any EmbeddingProvider) async -> Int {
+        guard let reporter = embedder as? any TruncationReporting else { return 0 }
+        return await reporter.truncatedInputCount()
+    }
+
     // MARK: - Library management
     
     /// List all documents currently indexed in the library.

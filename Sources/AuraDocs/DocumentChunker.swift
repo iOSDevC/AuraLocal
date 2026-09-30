@@ -145,7 +145,8 @@ struct DocumentChunker {
 /// Implement this protocol to plug in your own embedding backend
 /// (e.g. OpenAI, Cohere, or a local MLX model). The built-in
 /// ``TFIDFEmbeddingProvider`` and ``AutoEmbeddingProvider`` work
-/// fully offline with no downloads.
+/// fully offline with no downloads; ``CoreMLEmbeddingProvider`` runs a
+/// dense Core ML model such as multilingual-e5-small.
 public protocol EmbeddingProvider: Sendable {
     /// Embed a single string. Returns a normalized float vector.
     func embed(_ text: String) async throws -> [Float]
@@ -153,6 +154,16 @@ public protocol EmbeddingProvider: Sendable {
     func embedBatch(_ texts: [String]) async throws -> [[Float]]
     /// Dimensionality of the output vectors.
     var dimensions: Int { get }
+
+    /// Embed a search query. Asymmetric models (e5) embed queries differently from documents.
+    /// Defaults to ``embed(_:)``.
+    func embedQuery(_ text: String) async throws -> [Float]
+    /// Embed document chunks for indexing. Defaults to ``embedBatch(_:)``.
+    func embedDocuments(_ texts: [String]) async throws -> [[Float]]
+    /// Stable name of the vector space: vectors from providers with different identifiers are not
+    /// comparable, and ``DocumentLibrary`` re-embeds its index when this changes. Defaults to the
+    /// type name plus ``dimensions``.
+    var identifier: String { get }
 }
 
 public extension EmbeddingProvider {
@@ -163,6 +174,23 @@ public extension EmbeddingProvider {
         }
         return results
     }
+
+    func embedQuery(_ text: String) async throws -> [Float] {
+        try await embed(text)
+    }
+
+    func embedDocuments(_ texts: [String]) async throws -> [[Float]] {
+        try await embedBatch(texts)
+    }
+
+    var identifier: String {
+        "\(String(reflecting: type(of: self)))/\(dimensions)"
+    }
+}
+
+/// Providers that can say how many inputs they truncated, so indexing can report it.
+protocol TruncationReporting: Sendable {
+    func truncatedInputCount() async -> Int
 }
 
 // MARK: - TFIDFEmbeddingProvider
@@ -178,6 +206,8 @@ public actor TFIDFEmbeddingProvider: EmbeddingProvider {
     public static let vocabSize = 4096
 
     public nonisolated let dimensions = TFIDFEmbeddingProvider.vocabSize
+    public static let vectorSpaceIdentifier = "aura.tfidf-hash/\(vocabSize)"
+    public nonisolated let identifier = TFIDFEmbeddingProvider.vectorSpaceIdentifier
 
     /// IDF weights built from all indexed documents.
     private var idf: [Int: Float] = [:]
@@ -280,31 +310,98 @@ public actor TFIDFEmbeddingProvider: EmbeddingProvider {
 
 /// Recommended default embedding provider for ``DocumentLibrary``.
 ///
-/// Currently wraps ``TFIDFEmbeddingProvider`` for fully offline operation.
-/// Designed to transparently upgrade to MLX-based dense embeddings when
-/// `mlx-swift-lm` exposes a public `TextEmbedder` API.
-public actor AutoEmbeddingProvider: EmbeddingProvider {
+/// ``init()`` uses ``TFIDFEmbeddingProvider``: fully offline, nothing to download.
+/// ``init(embeddingModelAt:compiledModelsDirectory:)`` opts into a dense Core ML model
+/// (multilingual-e5-small) when its bundle is installed and valid, and falls back to TF-IDF
+/// otherwise; ``backendName()`` and ``denseModelProblem`` say which one is used and why.
+public actor AutoEmbeddingProvider: EmbeddingProvider, TruncationReporting {
 
-    public nonisolated let dimensions = TFIDFEmbeddingProvider.vocabSize
+    /// Where ``DocsTab`` looks for, and imports, the e5 bundle:
+    /// `Application Support/AuraLocal/embeddings/multilingual-e5-small`.
+    public static let defaultModelBundleURL: URL = {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return support.appendingPathComponent("AuraLocal/embeddings/multilingual-e5-small", isDirectory: true)
+    }()
+
+    public nonisolated let dimensions: Int
+    public nonisolated let identifier: String
+    /// Why the requested Core ML bundle is not used; `nil` when it is, or when none was requested.
+    public nonisolated let denseModelProblem: String?
 
     private let tfidf = TFIDFEmbeddingProvider()
+    private let dense: CoreMLEmbeddingProvider?
 
-    public init() {}
+    public init() {
+        dense = nil
+        dimensions = TFIDFEmbeddingProvider.vocabSize
+        identifier = TFIDFEmbeddingProvider.vectorSpaceIdentifier
+        denseModelProblem = nil
+    }
+
+    /// Uses the Core ML embedding bundle at `bundleURL` when it is present and valid (checked on
+    /// disk, without loading the model), TF-IDF otherwise. Call ``warmUp()`` before use.
+    public init(embeddingModelAt bundleURL: URL?, compiledModelsDirectory: URL? = nil) {
+        var problem: String?
+        var provider: CoreMLEmbeddingProvider?
+        if let bundleURL {
+            do {
+                provider = try CoreMLEmbeddingProvider(bundleAt: bundleURL,
+                                                       compiledModelsDirectory: compiledModelsDirectory)
+            } catch {
+                problem = error.localizedDescription
+            }
+        }
+        dense = provider
+        dimensions = provider?.dimensions ?? TFIDFEmbeddingProvider.vocabSize
+        identifier = provider?.identifier ?? TFIDFEmbeddingProvider.vectorSpaceIdentifier
+        denseModelProblem = problem
+    }
+
+    /// True when a Core ML model, not TF-IDF, produces the vectors.
+    public nonisolated var usesDenseModel: Bool { dense != nil }
 
     public func updateCorpus(texts: [String]) async {
         await tfidf.updateCorpus(texts: texts)
     }
 
     public func embed(_ text: String) async throws -> [Float] {
-        try await tfidf.embed(text)
+        if let dense { return try await dense.embed(text) }
+        return try await tfidf.embed(text)
     }
 
     public func embedBatch(_ texts: [String]) async throws -> [[Float]] {
-        try await tfidf.embedBatch(texts)
+        if let dense { return try await dense.embedBatch(texts) }
+        return try await tfidf.embedBatch(texts)
+    }
+
+    public func embedQuery(_ text: String) async throws -> [Float] {
+        if let dense { return try await dense.embedQuery(text) }
+        return try await tfidf.embed(text)
+    }
+
+    public func embedDocuments(_ texts: [String]) async throws -> [[Float]] {
+        if let dense { return try await dense.embedDocuments(texts) }
+        return try await tfidf.embedBatch(texts)
+    }
+
+    /// Compiles and loads the Core ML model and runs it once per sequence bucket; a no-op for
+    /// TF-IDF. The first Neural Engine load compiles on-device and can take tens of seconds.
+    @discardableResult
+    public func warmUp() async throws -> Duration {
+        guard let dense else { return .zero }
+        return try await dense.warmUp()
+    }
+
+    /// Inputs longer than the model's token limit that were truncated so far (0 for TF-IDF).
+    public func truncatedInputCount() async -> Int {
+        guard let dense else { return 0 }
+        return await dense.truncatedInputCount()
     }
 
     public func backendName() -> String {
-        "TF-IDF (local, no model required)"
+        guard let dense else { return "TF-IDF (local, no model required)" }
+        return "\(dense.modelName) (Core ML, on-device)"
     }
 }
 

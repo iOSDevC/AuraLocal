@@ -9,8 +9,12 @@ import AuraCore
 /// Provides file import, indexing progress, document list with swipe-to-export/delete,
 /// and a grounded chat sheet powered by ``DocumentLibrary``.
 public struct DocsTab: View {
+    /// One importer serves both pickers: two `.fileImporter`s on one view conflict.
+    private enum ImportKind { case documents, embeddingModel }
+
     @StateObject private var vm = DocsViewModel()
     @State private var showFilePicker  = false
+    @State private var pendingImport   = ImportKind.documents
     @State private var showChat        = false
     @State private var showExportSheet = false
     
@@ -28,8 +32,14 @@ public struct DocsTab: View {
             .navigationTitle("Documents")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button { showFilePicker = true } label: {
+                    Button { pick(.documents) } label: {
                         Image(systemName: "plus")
+                    }
+                    .disabled(vm.isIndexing || !vm.isReady)
+                }
+                ToolbarItem(placement: .secondaryAction) {
+                    Button("Import embedding model…", systemImage: "square.and.arrow.down") {
+                        pick(.embeddingModel)
                     }
                     .disabled(vm.isIndexing || !vm.isReady)
                 }
@@ -50,11 +60,17 @@ public struct DocsTab: View {
             }
             .fileImporter(
                 isPresented: $showFilePicker,
-                allowedContentTypes: supportedTypes,
-                allowsMultipleSelection: true
+                allowedContentTypes: pendingImport == .documents ? supportedTypes : [.folder],
+                allowsMultipleSelection: pendingImport == .documents
             ) { result in
-                if case .success(let urls) = result {
-                    Task { await vm.index(urls: urls) }
+                guard case .success(let urls) = result else { return }
+                switch pendingImport {
+                    case .documents:
+                        Task { await vm.index(urls: urls) }
+                    case .embeddingModel:
+                        if let folder = urls.first {
+                            Task { await vm.importEmbeddingModel(from: folder) }
+                        }
                 }
             }
             .sheet(isPresented: $showChat) {
@@ -88,15 +104,44 @@ public struct DocsTab: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Button("Add Documents") { showFilePicker = true }
+                Button("Add Documents") { pick(.documents) }
                     .buttonStyle(.borderedProminent)
+                embeddingStatus
             }
         }
         .padding()
     }
+
+    private var embeddingStatus: some View {
+        VStack(spacing: 2) {
+            Text("Embeddings: \(vm.embeddingBackend)")
+            if let note = vm.embeddingNote {
+                Text(note)
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+    }
+
+    private func pick(_ kind: ImportKind) {
+        pendingImport = kind
+        showFilePicker = true
+    }
     
     private var documentList: some View {
         List {
+            if vm.isPreparingIndex {
+                Section {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text(vm.progress)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
             // Indexing progress
             if vm.isIndexing {
                 Section {
@@ -145,6 +190,8 @@ public struct DocsTab: View {
                 }
             } header: {
                 Text("\(vm.documents.count) document\(vm.documents.count == 1 ? "" : "s")")
+            } footer: {
+                embeddingStatus
             }
         }
     }
@@ -488,10 +535,16 @@ final class DocsViewModel: ObservableObject {
     @Published var indexingFile       = ""
     @Published var indexingProgress:  Double = 0
     @Published var exportedURLs:      [URL] = []
+    @Published var isPreparingIndex   = false
+    @Published var embeddingBackend   = ""
+    /// Why the installed embedding model is not in use, if it isn't.
+    @Published var embeddingNote:     String?
     private(set) var documentChat: DocumentChat?
     
     private let library = DocumentLibrary.shared
     private let store   = ConversationStore.shared
+    private var llm: AuraLocal?
+    private var vlm: AuraLocal?
     
     // MARK: - Setup
     
@@ -505,19 +558,87 @@ final class DocsViewModel: ObservableObject {
             let vlm = try await ModelManager.shared.load(.fastVLM_0_5b_fp16) { [weak self] p in
                 Task { @MainActor [weak self] in self?.progress = p }
             }
-            let embedder = AutoEmbeddingProvider()
-            
-            await library.configure(embeddingProvider: embedder, llm: llm, visionLLM: vlm)
+            self.llm = llm
+            self.vlm = vlm
             try await library.open()
+            try await useEmbedder(await makeEmbedder(), llm: llm, vlm: vlm)
             
             documentChat = DocumentChat(library: library, llm: llm, store: store)
             documents    = try await library.allDocuments()
             
-            let backend = await embedder.backendName()
-            progress = "Ready - \(backend)"
+            progress = "Ready - \(embeddingBackend)"
             isReady  = true
         } catch {
             progress = "Error: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Embedding model
+
+    /// multilingual-e5-small when its bundle is installed and loads, TF-IDF otherwise.
+    private func makeEmbedder() async -> AutoEmbeddingProvider {
+        embeddingNote = nil
+        let bundle = AutoEmbeddingProvider.defaultModelBundleURL
+        guard FileManager.default.fileExists(atPath: bundle.path) else { return AutoEmbeddingProvider() }
+        let dense = AutoEmbeddingProvider(embeddingModelAt: bundle)
+        guard dense.usesDenseModel else {
+            embeddingNote = dense.denseModelProblem
+            return dense
+        }
+        progress = "Preparing the embedding model (the first run compiles it for this device)…"
+        do {
+            try await dense.warmUp()
+            return dense
+        } catch {
+            embeddingNote = "Embedding model unavailable, using TF-IDF: \(error.localizedDescription)"
+            return AutoEmbeddingProvider()
+        }
+    }
+
+    /// Configures the library and re-embeds stored chunks if they came from another provider.
+    private func useEmbedder(_ embedder: AutoEmbeddingProvider, llm: AuraLocal, vlm: AuraLocal?) async throws {
+        await library.configure(embeddingProvider: embedder, llm: llm, visionLLM: vlm)
+        embeddingBackend = await embedder.backendName()
+        guard try await library.indexNeedsReembedding() else { return }
+        isPreparingIndex = true
+        defer { isPreparingIndex = false }
+        try await library.reembedAll { [weak self] message in self?.progress = message }
+    }
+
+    /// Copies a picked bundle folder to ``AutoEmbeddingProvider/defaultModelBundleURL`` and
+    /// switches the library to it (re-embedding what is already indexed).
+    func importEmbeddingModel(from folder: URL) async {
+        guard let llm else { return }
+        isReady = false
+        isPreparingIndex = true
+        progress = "Importing \(folder.lastPathComponent)…"
+        do {
+            try await Task.detached {
+                try Self.installBundle(from: folder, to: AutoEmbeddingProvider.defaultModelBundleURL)
+            }.value
+            try await useEmbedder(await makeEmbedder(), llm: llm, vlm: vlm)
+            progress = "Ready - \(embeddingBackend)"
+        } catch {
+            progress = "Import failed: \(error.localizedDescription)"
+        }
+        isPreparingIndex = false
+        isReady = true
+    }
+
+    private nonisolated static func installBundle(from source: URL, to destination: URL) throws {
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        try CoreMLTextEmbeddingTool.validateBundle(at: source)
+        let files = FileManager.default
+        let parent = destination.deletingLastPathComponent()
+        try files.createDirectory(at: parent, withIntermediateDirectories: true)
+        let staging = parent.appendingPathComponent(".import-\(UUID().uuidString)", isDirectory: true)
+        defer { try? files.removeItem(at: staging) }
+        try files.copyItem(at: source, to: staging)
+        if files.fileExists(atPath: destination.path) {
+            _ = try files.replaceItemAt(destination, withItemAt: staging)
+        } else {
+            try files.moveItem(at: staging, to: destination)
         }
     }
     
