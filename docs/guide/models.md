@@ -295,7 +295,7 @@ decides it. Any blocker means **Won't run**.
 | `mlx.rope` | a rope type `RoPEUtils.initializeRope` does not implement, or a `longrope` without its three fields | `initializeRope` calls `fatalError` — the app crashes |
 | `mlx.category` | a VLM-only type without vision tensors | vision needs a registered VLM type **and** vision weights; otherwise the model loads as text |
 | `gguf.architecture` | `general.architecture` not in b8851's `LLM_ARCH_NAMES`, added later (`qwen4exp` → b10660), or an encoder / diffusion architecture | llama.cpp rejects unknown architectures |
-| `gguf.qwen35-nextn` | `qwen35` / `qwen35moe` with `nextn_predict_layers` > 0 | b8851 marks recurrent layers arithmetically and demands `ssm_*` tensors the MTP block lacks; fixed upstream in b9180 (PR #22673; the checker's message still cites b9495) |
+| `gguf.qwen35-nextn` | `qwen35` / `qwen35moe` with `nextn_predict_layers` > 0 | b8851 marks recurrent layers arithmetically and demands `ssm_*` tensors the MTP block lacks; fixed upstream in b9180 (PR #22673) |
 | `gguf.shards` | every quant is split (`-0000N-of-0000M`); a caveat when only some are | the GGUF path loads one file |
 | `fit` | the weights (MLX) or every single-file quant (GGUF) are too large for the device | `HardwareAnalyzer.assess` against the device budget |
 | `imagegen` | a text-to-image pipeline on an iPhone preset (a caveat on a Mac: mflux support is not verified) | AuraImageGen drives mflux on macOS only |
@@ -322,7 +322,7 @@ Verified on 2026-09-29 with `aura models check <repo> --device mac-32gb` (M1 Pro
 | `ukisai/Swift-1.5-4bit-MLX` | Won't run | `visual.*` (501 tensors) is not mapped by the qwen3_5 sanitize |
 | `ukisai/Swift-1.5-3bit-MLX-TextOnly` | Runs, with caveats | text: only `language_model.*`; 10.96 GB of weights, Excellent · 12.0 of 20.0 GB; custom license |
 | `mlx-community/Qwen3.5-27B-4bit` | Runs | vision: `language_model` + `vision_tower`; Good · 16.0 of 20.0 GB |
-| `ukisai/Swift-1.5-Qwen3.8-27B-GGUF` | Won't run | `qwen35`, `block_count` 65 with 1 NextN layer: needs llama.cpp b9180 or later (the checker message says b9495; 17 of 22 quants would otherwise load fully) |
+| `ukisai/Swift-1.5-Qwen3.8-27B-GGUF` | Won't run | `qwen35`, `block_count` 65 with 1 NextN layer: needs llama.cpp b9180 or later (17 of 22 quants would otherwise load fully) |
 | `ukisai/Swift-1.5-Qwen3.8-Flash-Next-GGUF` | Won't run | `qwen4exp` needs b10660; every quant is split; the smallest (IQ1_S) is 65.3 GB |
 | `Edge0/Edge0-35B-A3B-preview` | Won't run | `lora_edge0_35b.safetensors` (620 tensors) and `prerouter_edge0_35b.safetensors` (99) are outside the weight map |
 | `medicalai/ClinicalBERT` | Won't run | `fill-mask`, `DistilBertForMaskedLM`; only `pytorch_model.bin` |

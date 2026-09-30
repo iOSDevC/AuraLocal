@@ -499,7 +499,7 @@ extension CompatibilityRules {
     }
 
     static let ggufNextNRule = CompatibilityRule(
-        id: "gguf.qwen35-nextn", summary: "qwen35 with an MTP block needs llama.cpp b9495"
+        id: "gguf.qwen35-nextn", summary: "qwen35 with an MTP block needs llama.cpp b9180"
     ) { input in
         guard input.weightFormat == .gguf, let header = input.ggufMetadata,
               let arch = header.architecture, ["qwen35", "qwen35moe"].contains(arch),

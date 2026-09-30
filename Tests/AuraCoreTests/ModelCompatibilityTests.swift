@@ -245,7 +245,7 @@ extension ModelCompatibilityTests {
 
         XCTAssertEqual(report.status, .notRunnable)
         let blocker = try XCTUnwrap(report.blockers.first { $0.rule == "gguf.qwen35-nextn" })
-        XCTAssertTrue(blocker.detail.contains("b9495"))
+        XCTAssertTrue(blocker.detail.contains("b9180"))
         XCTAssertEqual(report.quantFits.count, 2)
     }
 

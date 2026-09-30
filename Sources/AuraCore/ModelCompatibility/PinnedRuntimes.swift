@@ -79,8 +79,8 @@ public enum PinnedRuntimes {
 
     /// qwen35 / qwen35moe GGUFs that carry an MTP (NextN) block fail on b8851; fixed later.
     static let qwen35NextNFix = LlamaCppMilestone(
-        build: "b9495", date: "2026-06-03",
-        change: "PR #24025 excludes the NextN block from the recurrent-layer pattern")
+        build: "b9180", date: "2026-05-16",
+        change: "PR #22673 flags the NextN layers non-recurrent")
 }
 
 /// A llama.cpp release that changed what loads.
