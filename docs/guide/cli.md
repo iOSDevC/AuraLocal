@@ -35,21 +35,26 @@ swift build -c release --product aura
 ```
 aura providers                      # detect Ollama / llama-server + models
 aura tools                          # list on-device ML tools by category, with availability
-aura ask "<prompt>" [--model <id>]  # ask GitHub Models (default openai/gpt-4o)
-aura ocr <image>                    # extract text from an image via native Vision OCR
+aura ask "<prompt>" [--model <id>]  # defunct: calls GitHub Models, retired by GitHub on 2026-07-30
+aura ocr <image>                    # native Vision OCR; ignores EXIF orientation (camera photos: aura ml ocr-lines)
 aura ml <subcommand> …              # run an on-device ML tool (see below)
 aura models search|check|devices …  # which Hugging Face models AuraLocal can run (see below)
+aura imagegen "<prompt>" [--model schnell|dev|<repo>] [--base-model schnell|dev]
+              [--lora <file.safetensors> [--lora-scale S]]... [--steps N] [--seed N]
+              [--quantize 3|4|6|8] [--low-ram] [--out <dir>]   # FLUX via mflux (macOS; needs uv tool install mflux)
 ```
 
-- **`ask`** reads a GitHub fine-grained PAT (`models:read`) from `AURA_GITHUB_TOKEN` /
-  `GITHUB_TOKEN`, or the Keychain (`cloud.github-models`) — never from source or CI logs.
-  The answer goes to stdout; a receipt (provider · tokens · compression) goes to stderr.
 - **`providers`** / **`tools`** / **`ocr`** / **`ml`** / **`models`** need no key and no model download.
+- **`imagegen`** prints the path of the PNG it wrote (`<dir>/image.png`, a temporary folder by default).
+  It defaults to `--model schnell` (a gated repo) and `--quantize 4`, and `--lora` takes local files only;
+  see [Image Generation]({{ '/guide/imagegen' | relative_url }}).
 
-```sh
-export AURA_GITHUB_TOKEN=ghp_…
-aura ask "Explain hybrid inference in one paragraph" --model openai/gpt-4o
-```
+{: .warning }
+> `aura ask` still sends to GitHub Models (`OpenAICompatibleProvider.gitHubModels`), which GitHub
+> retired on 2026-07-30. The command fails and has no other remote. From Swift, `HybridEscalator`
+> can still escalate to a LAN `llama-server`/Ollama target (`HybridEscalator.bestLocalTarget()`) or a
+> BYOK Anthropic/OpenAI key (`HybridEscalator.cloudTargets(allowCloud:)`); see
+> [Hybrid Inference]({{ '/guide/hybrid' | relative_url }}).
 
 ## On-device ML (`aura ml`)
 
@@ -68,8 +73,9 @@ aura ml similarity "<a>" "<b>" [--lang en]             # sentence-embedding dist
 aura ml sounds <audio file> [--max N] [--mean] | --list  # classify everyday sounds
 aura ml coreml-describe <model>                        # inputs, outputs, labels, metadata
 aura ml coreml-predict <model> <input>=<value>...      # run one prediction
-aura ml train-text <csv> --out <Model.mlmodel> [--algorithm maxent|crf|static|bert]
-                   [--language es] [--holdout 0.2 [--seed 7] | --no-validation]
+aura ml train-text <csv> --out <Model.mlmodel> [--text-column text] [--label-column label]
+                   [--algorithm maxent|crf|static|bert] [--language es]
+                   [--holdout 0.2 [--seed 7] | --no-validation]
 aura ml classify-text <Model.mlmodel> "<text>" [--max N]
 ```
 
@@ -107,11 +113,18 @@ Model: qwen35 · 65 layers · context 262144 · 22 quants
 ```
 
 `--entry` prints only the `models.json` entry of a runnable model; `--json` prints the whole report.
+`--device` defaults to `this-device` (see `aura models devices`); `--limit` defaults to 15 (1–100).
+`search` and `check` query huggingface.co, so they need a network connection.
 
 ## Homebrew
 
-`aura` ships as a prebuilt tarball (binary + `llama.framework`, co-located) installed via a
-personal Homebrew tap:
+`aura` can be packaged as a prebuilt tarball (binary + `llama.framework`, co-located) for a
+personal Homebrew tap.
+
+{: .warning }
+> The Homebrew tap is not published yet (`github.com/iOSDevC/homebrew-aura` does not resolve),
+> and the only released tarball (v0.1.0) predates `aura ml`, `aura models` and `aura imagegen`.
+> Build from source (above) to get the commands on this page. Once the tap is live:
 
 ```sh
 brew tap iOSDevC/aura
@@ -124,5 +137,5 @@ for the release + tap runbook (`scripts/package-cli.sh` builds the tarball).
 
 {: .note }
 > The prebuilt-tarball path is used because Homebrew's install sandbox blocks the SwiftPM
-> dependency fetch. macOS arm64; the binary is development-signed (notarize for wider
-> distribution).
+> dependency fetch. macOS arm64; the binary carries only the linker's ad-hoc signature and is not
+> notarized.

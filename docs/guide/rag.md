@@ -29,7 +29,7 @@ query
         → LLM with retrieved context
 ```
 
-Two-stage hybrid search: FTS5 for fast keyword recall, cosine similarity for semantic precision. All vectors stored as BLOBs in a single SQLite database. When FTS5 finds no keyword match, every chunk is scored by cosine alone. See [Embedding providers](#embedding-providers) for choosing the vectors.
+Two-stage hybrid search: FTS5 for fast keyword recall, cosine similarity for semantic precision. All vectors stored as BLOBs in a single SQLite database. The vectors, TF-IDF or e5, only re-rank the up to 20 chunks that share at least one word with the question; every chunk is scored by cosine alone only when FTS5 finds no keyword match at all. Cross-language retrieval therefore depends on keyword overlap (see [Limits and costs](#limits-and-costs)). See [Embedding providers](#embedding-providers) for choosing the vectors.
 
 ---
 
@@ -52,9 +52,12 @@ try await library.open()
 try await library.add(url: pdfURL) { progress in   // @discardableResult -> IndexedDocument
     print(progress)  // "Embedding Contract: 67%"
 }
-try await library.add(url: imageURL)  // OCR only if a visionLLM was passed to configure()
+try await library.add(url: imageURL)  // needs the visionLLM passed to configure(); without one it throws DocumentError.unsupportedFormat
 
-await library.refreshCorpus()  // rebuild TF-IDF after batch indexing
+// TF-IDF only: updates the in-memory IDF weights used for later queries and new chunks.
+// Stored vectors keep theirs (reembedAll() re-applies them), and each call counts the whole
+// corpus again, so repeated calls skew the weights.
+await library.refreshCorpus()
 
 // 3. Ask
 let answer = try await library.ask("What is the total contract value?")
@@ -63,6 +66,11 @@ for source in answer.sources {
     print("[\(source.documentTitle) p.\(source.pageNumber)] \(source.excerpt)")
 }
 ```
+
+{: .warning }
+> Re-adding a file skips it only within the same launch: document IDs come from the path's
+> `hashValue`, which Swift seeds per process, so after a relaunch `add(url:)` indexes the same file
+> again. Check `allDocuments()` by `url` before re-adding.
 
 ---
 
@@ -137,7 +145,8 @@ took ~35 s on an M1 Pro**; loading it again from the compiled cache and running 
 
 ### The model bundle
 
-A bundle is a folder; its name does not matter:
+A bundle is a folder. Its name becomes the tool's `id` (`coreml.text-embedding.<folder name>`), but the
+index identity comes from the manifest (`model_id@revision`):
 
 ```
 multilingual-e5-small/
@@ -170,7 +179,7 @@ reason naming it, e.g. `Invalid embedding-model.json: missing “pad_token_id”
 **Build the bundle** with the conversion script (macOS, [uv](https://docs.astral.sh/uv/)):
 
 ```sh
-uv run scripts/embeddings/convert_e5_coreml.py --out ~/models/multilingual-e5-small
+uv run scripts/embeddings/convert_e5_coreml.py --out /path/to/multilingual-e5-small
 ```
 
 It downloads the pinned model revision, converts it for the Neural Engine, refuses to write the
@@ -183,7 +192,7 @@ model…** in `DocsTab`.
 
 ### Using the model without AuraDocs
 
-`CoreMLTextEmbeddingTool` (in `AuraCore`) is the tool underneath, usable for semantic search,
+`CoreMLTextEmbeddingTool` (in `AuraCore`, listed with the other [on-device ML tools]({{ '/guide/ml-tools' | relative_url }})) is the tool underneath, usable for semantic search,
 deduplication or clustering:
 
 ```swift
@@ -244,12 +253,13 @@ that is already set.
 |--------|----------------|
 | PDF | PDFKit text extraction per page |
 | DOCX | ZIP + XML (no external libs) |
-| TXT, MD, Markdown | Plain text |
-| PNG, JPG, JPEG, HEIC, TIFF, BMP | OCR via the `visionLLM:` passed to `configure()` (omit it and images are skipped) |
+| TXT, MD, Markdown, RTF | Plain text (RTF is read as raw text, markup included) |
+| Source and config files (Swift, Obj-C, C/C++, Rust, Go, Python, Ruby, JS/TS, shell, PHP, Lua, Java, Kotlin, Gradle, C#, JSON, YAML, TOML, XML, plist, SQL, HTML, CSS/SCSS) | Plain text; the title keeps the extension |
+| PNG, JPG, JPEG, HEIC, TIFF, BMP | OCR via the `visionLLM:` passed to `configure()`; without one, `add(url:)` throws `DocumentError.unsupportedFormat` |
 
 ---
 
-## Stateful Document Chat
+## Document Chat
 
 ```swift
 import AuraDocs
@@ -258,13 +268,18 @@ let chat = DocumentChat(library: library, llm: llm)
 
 let r1 = try await chat.send("What is the payment schedule?")   // send(_:topK:) -> DocumentAnswer
 let r2 = try await chat.send("What are the late payment penalties?")
-// r2 has context from r1
+// r2 is answered from the documents alone: each send retrieves independently; earlier turns
+// are saved to ConversationStore but not given to the model
 
 for msg in chat.messages {
     print("[\(msg.role)] \(msg.text)")
     msg.sources.forEach { print("  Source: \($0.documentTitle)") }
 }
 ```
+
+{: .note }
+> `DocumentChat` keeps the transcript (`messages`) but answers each question independently, so write
+> follow-ups as complete questions ("What are the late payment penalties?", not "And the penalties?").
 
 ---
 

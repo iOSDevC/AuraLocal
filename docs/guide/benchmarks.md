@@ -9,10 +9,10 @@ description: "AuraLocal performance benchmarks — tokens per second, RAM usage,
 # Benchmarks
 {: .no_toc }
 
-Performance measurements for on-device LLM inference across Apple devices.
+Illustrative performance figures for on-device LLM inference across Apple devices.
 
 {: .note }
-> Benchmarks measured with AuraLocal v1.3.0, default Q4_K_M quantization for GGUF and 4-bit for MLX. Results vary by prompt complexity and thermal state.
+> These figures are carried over from the first version of these docs (2026-03-31) and have not been re-measured on the current release, so treat them as illustrative. They assume Q4_K_M quantization for GGUF and 4-bit for MLX; results vary by prompt complexity and thermal state. The one measured point, recorded in `HardwareAnalyzer`'s decode-speed estimate: an M1 Pro decodes 11.78 GB of GGUF weights at 12.1 tok/s.
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -51,7 +51,7 @@ Performance measurements for on-device LLM inference across Apple devices.
 | Qwen 2.5 7B | ~2–3 tok/s | ~3–4 tok/s | ~4–5 tok/s |
 
 {: .note }
-> Layer-streaming runs CPU-only on iOS. Speed is lower than macOS GPU inference but enables models that would otherwise be impossible to run on the device at all.
+> Layer-streaming pages weights from disk on demand (mmap) and still offloads layers to Metal on a device. Speed is lower than full-load inference but enables models that would otherwise not fit on the device at all.
 
 ---
 
@@ -120,6 +120,7 @@ GGUF layer-streaming loads faster because only the first few layers are paged in
 ## How to Reproduce
 
 ```swift
+import Foundation
 import AuraCore
 
 let start = Date()

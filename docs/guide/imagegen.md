@@ -2,7 +2,7 @@
 layout: docs
 title: Image Generation
 parent: Guide
-nav_order: 8
+nav_order: 8.5
 description: "FLUX text-to-image + lora.safetensors on macOS via mflux — install, ungated models, the Swift/CLI API, and measured performance."
 ---
 
@@ -41,7 +41,9 @@ path is an **ungated pre-quantized** repo, which downloads with no auth:
 - `dhairyashil/FLUX.1-schnell-mflux-8bit` (8-bit)
 
 > Using an alias with `--quantize` downloads the **full** model (tens of GB) and quantizes on load;
-> a pre-quantized repo downloads only the quantized weights.
+> a pre-quantized repo downloads only the quantized weights. This is what the defaults do:
+> `ImageGenRequest(prompt:)` and `aura imagegen "…"` use `model: "schnell"` with `quantize: 4`, so
+> always pass an ungated repo in `model` (`--model`) plus `baseModel` (`--base-model`).
 
 ## Swift
 
@@ -76,8 +78,11 @@ aura imagegen "a red fox in snow" \
   --steps 4 --seed 42
 ```
 
-Flags map 1:1 onto mflux (`--model`, `--base-model`, `--steps`, `--seed`, `--quantize`, `--low-ram`,
-`--lora-paths`, `--lora-scales`).
+`aura imagegen` flags: `--model`, `--base-model`, `--steps`, `--seed`, `--quantize` and `--low-ram`
+pass straight to mflux. `--lora <file>` is repeatable, and `--lora-scale S` sets the scale of the
+`--lora` before it; they become mflux's `--lora-paths`/`--lora-scales`. `--out <dir>` picks the folder
+for `image.png` (default: a temporary folder), and the CLI prints the PNG's path. Width and height are
+fixed at 1024×1024 on the CLI; set `ImageGenRequest(width:height:)` in Swift.
 
 ## Performance (measured)
 
@@ -118,14 +123,15 @@ for hit in hits {
 
 The 2.2× is measured, not assumed — FLUX schnell 4-bit is 9.2 GB on disk and peaks ~20 GB. Validated
 against the live repo: 8.9 GB of `.safetensors` → estimated 19.7 GB peak vs ~20 GB measured. So a 6.8 GB
-FLUX correctly reads **too large** on a Mac with 13 GB free, and **good** with ~27 GB free — where naive
-size-based math would have called it "excellent" both times.
+FLUX correctly reads **too large** on a Mac with 13 GB free, **good** with ~20 GB free and **excellent** only
+from ~25 GB free — where naive size-based math would have called it "excellent" every time.
 
 `hit.gated` flags repos that need a HuggingFace login (black-forest-labs' FLUX repos are gated) so you
 can pick an ungated mirror instead.
 
 ## LoRA notes
 
-`--lora-paths` accepts **local files or HuggingFace repos**; multiple LoRAs each take a scale. mflux
+`AuraImageGen` accepts **local `.safetensors` files only** (a missing path throws
+`ImageGenError.loraNotFound`); download a Hugging Face LoRA first. Multiple LoRAs each take a scale. mflux
 also ships curated styles (`--lora-style`) and a `mflux-lora-library` / `mflux-train` toolchain for
 building your own — outside `AuraImageGen`'s scope, which is loading, not training.

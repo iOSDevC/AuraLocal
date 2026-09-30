@@ -60,7 +60,10 @@ for try await token in llm.stream("Tell me more", in: conv.id) {
 }
 ```
 
-AuraLocal loads the most recent turns that fit within the token budget before each generation call.
+Before each call AuraLocal loads the newest turns that fit `maxContextTokens` (default 3072, estimated at ~4 characters per token). When older turns have to be dropped, it snaps the oldest kept turn to a stride of up to 4 turns so llama.cpp's prompt cache survives, which can drop up to 3 extra old turns.
+
+{: .note }
+> MLX models receive the turns with their roles. GGUF models receive them flattened into one prompt: roles are dropped and only the most recent system turn is kept, so on GGUF a `summarizeAndPrune` summary replaces your system prompt.
 
 ---
 
@@ -87,7 +90,7 @@ try await llm.summarizeAndPrune(
 )
 ```
 
-This is called automatically if you use `ModelManager.shared.load()` + the conversation-aware `chat` overloads. You can also call it manually before switching models.
+Nothing calls it for you: `chat(_:in:)`, `stream(_:in:)` and `ModelManager` never prune. Call it yourself after a reply (AuraUI's `TextChatTab` does this after every turn) or before switching models.
 
 ---
 
@@ -106,15 +109,18 @@ let (reply, conversationID) = try await AuraLocal.chat(
 ## SwiftUI Integration
 
 ```swift
+import SwiftUI
 import AuraCore
 
 struct ChatView: View {
     @State private var messages: [Turn] = []
     @State private var llm: AuraLocal?
-    private let conversationID: UUID
+    let conversationID: UUID
 
     var body: some View {
-        // ...
+        List(messages) { turn in
+            Text(turn.content)
+        }
         .task {
             llm = try? await AuraLocal.text(.qwen3_1_7b)
             messages = (try? await ConversationStore.shared.turns(for: conversationID)) ?? []
@@ -123,7 +129,7 @@ struct ChatView: View {
 
     func send(_ text: String) async {
         guard let llm else { return }
-        let reply = try? await llm.chat(text, in: conversationID)
+        _ = try? await llm.chat(text, in: conversationID)
         messages = (try? await ConversationStore.shared.turns(for: conversationID)) ?? []
     }
 }

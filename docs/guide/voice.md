@@ -3,7 +3,7 @@ layout: docs
 title: Voice Interface
 parent: Guide
 nav_order: 6
-description: "Full-duplex voice pipeline with AuraVoice — on-device STT, LLM streaming, and TTS with sentence-level pipelining."
+description: "Turn-based voice pipeline with AuraVoice — on-device STT, LLM streaming, and TTS with sentence-level pipelining."
 ---
 
 # Voice Interface
@@ -29,7 +29,7 @@ Microphone
 
 Key characteristic: TTS **starts speaking after the first complete sentence** while the LLM is still generating the rest. End-to-end latency feels 2–3× lower than waiting for the full response.
 
-Language is auto-detected per utterance via `NLLanguageRecognizer` and mapped to the best available system voice (e.g. `"es"` → `"es-MX"`).
+Speech is recognized in one locale: `Config.locale`, else the device's first preferred language, else `en-US`. Each sentence of the reply is language-detected with `NLLanguageRecognizer` to pick the TTS voice (enhanced quality first). A code such as `"es"` becomes the first of the user's preferred languages that starts with it (`"es-MX"` only if listed), otherwise it stays `"es"`.
 
 ---
 
@@ -81,6 +81,7 @@ VStack {
 var config = VoiceSession.Config()
 config.silenceThreshold     = 1.4    // seconds of silence before LLM triggers
 config.maxRecordingDuration = 30     // max recording per utterance
+config.locale               = Locale(identifier: "es-MX")   // speech-recognition locale; nil = device language
 config.speakingRate         = 0.5    // TTS speed (0.0 slow → 1.0 fast)
 config.maxTokens            = 512    // max LLM tokens per response
 config.systemPrompt         = "You are a concise voice assistant."
@@ -117,7 +118,7 @@ await session.stopListening()
 // Interrupt TTS mid-sentence
 session.interrupt()
 
-// Cancel everything (recording + LLM + TTS)
+// Stop recording and TTS (an LLM reply in progress keeps generating and speaking)
 session.cancel()
 ```
 

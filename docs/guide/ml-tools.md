@@ -2,7 +2,7 @@
 layout: docs
 title: On-device ML tools
 parent: Guide
-nav_order: 7
+nav_order: 7.5
 description: "Vision, NaturalLanguage, SoundAnalysis, Core ML and Create ML as typed, availability-checked tools: classify images, read barcodes, detect faces, OCR, identify languages, find entities, score sentiment, classify sounds, run your own Core ML models and train text classifiers on-device."
 ---
 
@@ -11,11 +11,13 @@ description: "Vision, NaturalLanguage, SoundAnalysis, Core ML and Create ML as t
 
 AuraLocal is not only LLMs. `AuraCore` wraps Apple's machine-learning frameworks as **system
 tools**: typed Swift APIs that run on-device and add **no package dependencies**. The analysis
-tools use models that ship with the OS, so they need no download and work offline. The one
-exception is BERT transfer learning in `TextClassifierTrainer`: its embeddings are OS assets
-that may have to be downloaded the first time for a given script. A small local model can stay
-the reasoner while these tools do the perception work (read the text, find the barcode, detect
-the language), or you can use them on their own.
+tools use models that ship with the OS, so they need no download and work offline. The exceptions
+are the custom-model tools and BERT transfer learning. `CoreMLModelTool`, `TextClassifierTool` and
+`CoreMLTextEmbeddingTool` run a model you ship, train or import (for the multilingual-e5-small
+embedding bundle, see [Document RAG]({{ '/guide/rag' | relative_url }}#the-model-bundle)). BERT
+transfer learning in `TextClassifierTrainer` uses OS embeddings that may have to be downloaded the
+first time for a given script. A small local model can stay the reasoner while these tools do the
+perception work (read the text, find the barcode, detect the language), or you can use them on their own.
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -40,7 +42,7 @@ the language), or you can use them on their own.
 | `SoundClassificationTool` | `system.audio.sounds` | SoundAnalysis | 303 everyday sounds (speech, music, dog bark, siren…) in an audio file |
 | `CoreMLModelTool` | `coreml.<file name>` | Core ML | Describe and run a Core ML model you ship or download |
 | `TextClassifierTool` | `coreml.text-classifier.<file name>` | NaturalLanguage + Core ML | Label plus probabilities from a Create ML text classifier |
-| `CoreMLTextEmbeddingTool` | `coreml.text-embedding.<bundle name>` | Core ML | Sentence vectors from an embedding bundle such as multilingual-e5-small ([Document RAG](rag.md#embedding-providers)) |
+| `CoreMLTextEmbeddingTool` | `coreml.text-embedding.<bundle name>` | Core ML | Sentence vectors from an embedding bundle such as multilingual-e5-small ([Document RAG]({{ '/guide/rag' | relative_url }}#embedding-providers)) |
 | `TextClassifierTrainer` | `training.text-classifier` | Create ML | Train a text classifier on-device from labelled examples |
 
 Every tool follows the same contract:
