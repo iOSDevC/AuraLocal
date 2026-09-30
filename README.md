@@ -272,13 +272,12 @@ aura imagegen "a red fox in snow" \
 ### Find a model that fits your machine
 
 Search HuggingFace and filter by what this device can actually run — the Example's Image tab has
-**Search HuggingFace…** with an *"Only what fits"* toggle, plus gated/kind badges:
+**Search HuggingFace…** with an *"Only what runs"* toggle, plus gated/kind badges:
 
 ```swift
 let hits = try await HuggingFaceSearch.search("flux schnell mflux")
-let bytes = try await HuggingFaceRepo.weightBytes(repoURL: "https://huggingface.co/\(hits[0].id)",
-                                                  kind: hits[0].kind)
-let fit = HardwareAnalyzer.fitLevel(forWeightsBytes: bytes ?? 0, kind: hits[0].kind)  // .excellent … .tooLarge
+let report = await ModelCompatibilityChecker().check(hits[0].id, on: .thisDevice())
+print(report.status.label, report.headline)  // e.g. "Runs, with caveats — mflux support not verified"
 ```
 
 Fit is judged by **kind**, not raw size: an `.llm` peaks ≈1.15× its weights and can layer-stream, a

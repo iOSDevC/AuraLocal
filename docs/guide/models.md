@@ -173,8 +173,9 @@ for any Hugging Face repo: will AuraLocal, with the runtimes it pins — **mlx-s
 **llama.cpp b8851** (GGUF, via LocalLLMClient 0.5.0) — load and run it on a given device, and if not, exactly why.
 
 It reads the repo listing (`/api/models/{id}?blobs=true`), `config.json`, `model.safetensors.index.json` and, with
-HTTP Range requests, the first 4 MiB of one GGUF file or the header of a single safetensors file. Weights are
-never downloaded. Network errors, 401/403 and 404 come back as findings — the verdict is `unknown` when they hide
+HTTP Range requests, the first 4 MiB of one GGUF file or the headers of the shipped safetensors files (when there is
+no index or it is stale; a `qwen3_5` vision repo's first shard when its `__metadata__` decides the verdict). Weights
+are never downloaded. Network errors, 401/403 and 404 come back as findings — the verdict is `unknown` when they hide
 the repo listing, an MLX `config.json` or a GGUF architecture — and the checker never throws. Gated repos use the
 Hugging Face token saved in the Keychain (`download.huggingface`).
 
@@ -206,10 +207,12 @@ decides it. Any blocker means **Won't run**.
 | Rule | Blocks when | Why (pinned source) |
 |------|-------------|--------------------|
 | `format` | no MLX weights (MLX quantization in `config.json` or the `mlx` tag) and no GGUF | the catalog loads MLX conversions and GGUF only |
-| `generative` | pipeline `fill-mask`, `feature-extraction`, `zero-shot-image-classification`…, a `*ForMaskedLM`-style head, or an encoder `model_type` | the runtimes chat with text generators only |
+| `generative` | pipeline `fill-mask`, `feature-extraction`, `zero-shot-image-classification`…, a `*ForMaskedLM`-style head, an encoder `model_type`, the `sentence-transformers` / `sentence-similarity` / `feature-extraction` tags, or "embedding" in the repo or `base_model` name | the runtimes chat with text generators only; MLX embedding conversions often keep `pipeline_tag: text-generation` |
+| `mlx.config` | an MLX repo has no `config.json`, or it lacks `model_type` (unreadable — 401/404 — is a caveat and the verdict `unknown`) | `BaseConfiguration` decodes `model_type` before anything else |
 | `mlx.model-type` | top-level `model_type` is in neither `LLMTypeRegistry` (54 types) nor `VLMTypeRegistry` (17) | the factories dispatch on the top-level key; `text_config.model_type` does not count |
-| `mlx.weight-prefixes` | a `qwen3_5` / `qwen3_5_moe` tensor outside `language_model`, `model`, `lm_head`, `vision_tower`, `mtp` | the pinned `sanitize` maps only those; anything else fails `update(parameters:verify: [.all])` |
-| `mlx.extra-safetensors` | a top-level `*.safetensors` missing from the weight map | AuraLocal's downloader fetches every top-level file and `loadWeights` merges every `*.safetensors` |
+| `mlx.weight-prefixes` | a `qwen3_5` / `qwen3_5_moe` tensor outside `language_model`, `model`, `lm_head`, `vision_tower`, `mtp` — or, for vision weights whose safetensors `__metadata__.format` is `mlx`, outside `language_model` and `vision_tower` | the pinned `sanitize` maps only those (the VLM one returns MLX-format weights unchanged); anything else fails `update(parameters:verify: [.all])` |
+| `mlx.towers` | a type registered only as an LLM (e.g. `gemma3n`) whose weights hold vision or audio towers (`vision_tower`, `audio_tower`, `embed_vision`, `embed_audio`, `multi_modal_projector`…) | its pinned text model has no such modules and no LLM-only sanitize drops them |
+| `mlx.extra-safetensors` | a top-level `*.safetensors` missing from the weight map, or a map that points at some missing files; a map that references **none** of the shipped files is only a caveat (stale index) | AuraLocal's downloader fetches every top-level file and `loadWeights` merges every `*.safetensors` without reading the index, so a stale index is replaced by the shipped files' headers |
 | `mlx.rope` | a rope type `RoPEUtils.initializeRope` does not implement, or a `longrope` without its three fields | `initializeRope` calls `fatalError` — the app crashes |
 | `mlx.category` | a VLM-only type without vision tensors | vision needs a registered VLM type **and** vision weights; otherwise the model loads as text |
 | `gguf.architecture` | `general.architecture` not in b8851's `LLM_ARCH_NAMES`, added later (`qwen4exp` → b10660), or an encoder / diffusion architecture | llama.cpp rejects unknown architectures |
@@ -219,12 +222,13 @@ decides it. Any blocker means **Won't run**.
 | `imagegen` | a text-to-image pipeline on an iPhone preset (a caveat on a Mac: mflux support is not verified) | AuraImageGen drives mflux on macOS only |
 | `license` | never blocks: flags gated repos, a missing license, non-commercial (`cc-by-nc*`) and custom (`other`) licenses by name | |
 
-`mlx.config`, `mlx.tokenizer`, `gguf.header`, `gguf.projector` and `context` add caveats and context (quantization,
-unreadable files, an ignored mmproj, trained contexts below 32768 tokens) but never block.
+`mlx.tokenizer`, `gguf.header`, `gguf.projector` and `context` add caveats and context (missing tokenizer files,
+unreadable headers, an ignored mmproj, trained contexts below 32768 tokens) but never block.
 
 Fit uses the existing `HardwareAnalyzer` math: weights + runtime overhead + a GQA-aware KV cache at 2048 tokens,
 with `kvHeads` / `headDim` from `config.json` or the GGUF header. Every GGUF quant gets its own fit. Sizes are
-binary: catalog `approximateSizeMB` is MiB, because `HardwareAnalyzer` divides it by 1024 to get GiB.
+binary: catalog `approximateSizeMB` is MiB, because `HardwareAnalyzer` divides it by 1024 to get GiB. Layer, KV-head
+and head-width values past 4096, 1024 and 8192 come from a corrupt or hostile file and count as unknown.
 
 The pinned tables live in `Sources/AuraCore/ModelCompatibility/PinnedRuntimes.swift`, with the commands that
 regenerate them; `ModelCompatibilityTests` fails when the MLX sets drift from the `mlx-swift-lm` checkout.
@@ -250,21 +254,25 @@ Verified on 2026-09-29 with `aura models check <repo> --device mac-32gb` (M1 Pro
 | `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | Runs, with caveats | `qwen3_5_moe`, Marginal · 18.8 of 20.0 GB; no license declared |
 | `Qwen/Qwen2.5-7B-Instruct-GGUF` | Runs, with caveats | Q4_K_M and 6 other quants are split; Q2_K and Q3_K_M are single files |
 | `Qwen/Qwen3.8-Flash-Next` | Won't run | unconverted safetensors (335 GB); `qwen4_exp` is not registered |
+| `mlx-community/gemma-3-4b-it-qat-4bit` | Runs, with caveats | vision; its index names two shards the repo no longer ships, so the checker reads `model.safetensors` itself |
+| `mlx-community/gemma-3n-E4B-it-bf16` | Won't run | `gemma3n` is LLM-only here; `model.vision_tower` / `model.audio_tower` would be unhandled keys |
+| `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ` | Won't run | an embedding model (`sentence-transformers` tags) despite `pipeline_tag: text-generation` |
 
 ### Device presets
 
 Only this device and the 32 GB Mac are measured; every other budget is an estimate, and `DevicePreset.source`
-says where it comes from (the CLI and the app show it).
+says where it comes from (the CLI and the app show it). The 32 GB figure was measured on one M1 Pro whose
+`iogpu.wired_limit_mb` is set to 20480 by a local LaunchDaemon; a stock 32 GB Mac's default was not measured.
 
 | Preset (`--device`) | Budget | Source |
 |---------------------|--------|--------|
-| `this-device` | measured now | `HardwareProfile.current()` — memory the process can still allocate |
+| `this-device` | measured now | Mac: Metal `recommendedMaxWorkingSetSize`; iPhone: `os_proc_available_memory()` |
 | `iphone-4gb` | ≈2.0 GB | estimate: third-party jetsam measurement, ActiveHard 2098 MB on an iPhone 12 |
 | `iphone-6gb` | ≈3.0 GB | estimate: this guide's [memory budgets]({{ '/guide/memory' | relative_url }}), increased-memory-limit entitlement |
 | `iphone-8gb` | ≈4.5 GB | estimate: same source |
 | `iphone-17-pro` | ≈6.4 GB | estimate: third-party report, only with both memory entitlements |
 | `mac-16gb` | ≈10.7 GB | estimate: default Metal working set ≈ 2/3 of RAM up to 36 GB |
-| `mac-32gb` | 20.0 GB | measured on an M1 Pro: `iogpu.wired_limit_mb` 20480, `recommendedMaxWorkingSetSize` 20480 MiB |
+| `mac-32gb` | 20.0 GB | measured on one M1 Pro with `iogpu.wired_limit_mb` set to 20480; `recommendedMaxWorkingSetSize` follows it |
 | `mac-64gb` | ≈48 GB | estimate: default Metal working set ≈ 3/4 of RAM above 36 GB |
 
 ### From the command line

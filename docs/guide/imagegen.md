@@ -94,18 +94,18 @@ limit, so don't co-load an LLM. Lower resolution (512×512) is substantially fas
 
 ## Finding a model that fits (compatibility filter)
 
-`HuggingFaceSearch` searches HF, and `HardwareAnalyzer.fitLevel(forWeightsBytes:kind:)` says whether a
-result fits **this** machine. The Example's Image tab has **Search HuggingFace…**, with a
-*"Only what fits · N GB free"* toggle, gated/kind badges, and a **Use** button that fills in the model.
+`HuggingFaceSearch` searches HF, and `ModelCompatibilityChecker` says whether a result runs on **this**
+machine — for a diffusion pipeline it sizes every `.safetensors` and applies the peak multiplier below (see
+[Finding compatible models]({{ '/guide/models' | relative_url }})). The Example's Image tab has
+**Search HuggingFace…**, with an *"Only what runs"* toggle, gated/kind badges, and a **Use** button that fills
+in the model.
 
 ```swift
+let checker = ModelCompatibilityChecker()
 let hits = try await HuggingFaceSearch.search("flux schnell mflux", sort: .downloads)
 for hit in hits {
-    // sizes live in the repo tree, not the search payload
-    guard let bytes = try await HuggingFaceRepo.weightBytes(repoURL: "https://huggingface.co/\(hit.id)",
-                                                           kind: hit.kind) else { continue }
-    let fit = HardwareAnalyzer.fitLevel(forWeightsBytes: bytes, kind: hit.kind)
-    print(hit.id, hit.gated ? "(gated)" : "", fit.label)
+    let report = await checker.check(hit.id, on: .thisDevice())
+    print(hit.id, hit.gated ? "(gated)" : "", report.status.label, report.bestFit?.summary ?? "")
 }
 ```
 
