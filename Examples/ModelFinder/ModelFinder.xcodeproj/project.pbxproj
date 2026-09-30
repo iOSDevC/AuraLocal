@@ -16,11 +16,11 @@
 
 /* Begin PBXFileReference section */
 		0878B91DE302AD21A2A7084B /* ModelFinderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelFinderApp.swift; sourceTree = "<group>"; };
+		B0E8B01A5E10D07598C2A6B1 /* AuraLocal */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AuraLocal; path = ../..; sourceTree = SOURCE_ROOT; };
 		C3CC9CF08C4E1FFB1BC8CF5F /* ModelFinder.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ModelFinder.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DBC9E201BF987B01115731AD /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		DD106607FF17BC56AB9E4078 /* ReportDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportDetailView.swift; sourceTree = "<group>"; };
 		DE5DAA7E74D5DD33F4666D3C /* SearchSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchSession.swift; sourceTree = "<group>"; };
-		EF50E44B27CF7E000D679D16 /* wf_bab0d3ae-d71-2 */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "wf_bab0d3ae-d71-2"; path = ../..; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -49,7 +49,7 @@
 		AA6394E2D2A0653D37BB6F09 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				EF50E44B27CF7E000D679D16 /* wf_bab0d3ae-d71-2 */,
+				B0E8B01A5E10D07598C2A6B1 /* AuraLocal */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
