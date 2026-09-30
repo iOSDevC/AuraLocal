@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import AuraCore
 
 // SQLite3 helper
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
@@ -125,6 +126,107 @@ actor VectorStore {
         return try query("SELECT text FROM chunks;") { stmt -> String? in
             sqlite3_column_text(stmt, 0).map { String(cString: $0) }
         }
+    }
+
+    // MARK: - Index metadata
+
+    private static let providerKey = "embedding_provider"
+    private static let dimensionsKey = "embedding_dimensions"
+
+    /// The embedding identity recorded for this index, or `nil` for an index that predates it.
+    func embeddingIdentity() throws -> EmbeddingIndexIdentity? {
+        try ensureOpen()
+        guard let identifier = try metadataValue(Self.providerKey),
+              let dimensions = try metadataValue(Self.dimensionsKey).flatMap({ Int($0) })
+        else { return nil }
+        return EmbeddingIndexIdentity(identifier: identifier, dimensions: dimensions)
+    }
+
+    func setEmbeddingIdentity(_ identity: EmbeddingIndexIdentity) throws {
+        try ensureOpen()
+        try exec("BEGIN TRANSACTION;")
+        do {
+            try setMetadata(Self.providerKey, identity.identifier)
+            try setMetadata(Self.dimensionsKey, String(identity.dimensions))
+            try exec("COMMIT;")
+        } catch {
+            try? exec("ROLLBACK;")
+            throw error
+        }
+    }
+
+    /// Distinct stored vector lengths, in floats (a missing vector counts as 0).
+    func storedVectorLengths() throws -> Set<Int> {
+        try ensureOpen()
+        let byteLengths = try query("SELECT DISTINCT IFNULL(length(embedding), 0) FROM chunks;") { stmt -> Int? in
+            Int(sqlite3_column_int64(stmt, 0))
+        }
+        return Set(byteLengths.map { $0 / MemoryLayout<Float>.size })
+    }
+
+    func chunkCount() throws -> Int {
+        try ensureOpen()
+        return try query("SELECT COUNT(*) FROM chunks;") { stmt -> Int? in
+            Int(sqlite3_column_int64(stmt, 0))
+        }.first ?? 0
+    }
+
+    /// One page of chunk texts in rowid order, for re-embedding without loading every chunk.
+    func chunkTexts(afterRowID rowID: Int64, limit: Int) throws -> [(rowID: Int64, id: UUID, text: String)] {
+        try ensureOpen()
+        return try query(
+            "SELECT rowid, id, text FROM chunks WHERE rowid > ? ORDER BY rowid LIMIT ?;",
+            bindings: [rowID, limit]
+        ) { stmt -> (Int64, UUID, String)? in
+            guard
+                let idText = sqlite3_column_text(stmt, 1).map({ String(cString: $0) }),
+                let id     = UUID(uuidString: idText),
+                let text   = sqlite3_column_text(stmt, 2).map({ String(cString: $0) })
+            else { return nil }
+            return (sqlite3_column_int64(stmt, 0), id, text)
+        }
+    }
+
+    /// Replaces stored vectors in place. An UPDATE of `embedding` fires none of the FTS triggers
+    /// (they run on INSERT and DELETE only), so the full-text index is untouched.
+    func updateEmbeddings(_ vectors: [(id: UUID, vector: [Float])]) throws {
+        try ensureOpen()
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, "UPDATE chunks SET embedding = ?1 WHERE id = ?2;", -1, &stmt, nil) == SQLITE_OK
+        else { throw dbError() }
+        try exec("BEGIN TRANSACTION;")
+        do {
+            for entry in vectors {
+                try runUpdate(stmt, id: entry.id, vector: entry.vector)
+                embeddingCache[entry.id] = entry.vector
+            }
+            try exec("COMMIT;")
+        } catch {
+            try? exec("ROLLBACK;")
+            throw error
+        }
+    }
+
+    func clearEmbeddingCache() {
+        embeddingCache = [:]
+    }
+
+    private func runUpdate(_ stmt: OpaquePointer?, id: UUID, vector: [Float]) throws {
+        sqlite3_reset(stmt)
+        sqlite3_clear_bindings(stmt)
+        bind(stmt, values: [floatsToData(vector), id.uuidString])
+        guard sqlite3_step(stmt) == SQLITE_DONE else { throw dbError() }
+    }
+
+    private func metadataValue(_ key: String) throws -> String? {
+        try query("SELECT value FROM metadata WHERE key = ?;", bindings: [key]) { stmt -> String? in
+            sqlite3_column_text(stmt, 0).map { String(cString: $0) }
+        }.first
+    }
+
+    private func setMetadata(_ key: String, _ value: String) throws {
+        try exec("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?);", bindings: [key, value])
     }
 
     // MARK: - Chunk insertion
@@ -359,6 +461,13 @@ actor VectorStore {
             CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
                 INSERT INTO chunks_fts(chunks_fts, id, text) VALUES('delete', old.id, old.text);
             END;
+            """)
+        // Added after the first release; CREATE IF NOT EXISTS upgrades older databases in place.
+        try exec("""
+            CREATE TABLE IF NOT EXISTS metadata (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """)
     }
 

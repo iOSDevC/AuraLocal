@@ -23,13 +23,13 @@ description: "Index PDFs, Word docs, and images locally with AuraDocs and ask qu
 
 ```
 query
-  → TF-IDF sparse embedding (local, no download)
+  → embedding: TF-IDF (default, no download) or multilingual-e5-small (opt-in, Core ML)
     → FTS5 keyword pre-filter (top 20 candidates)
       → Accelerate cosine re-rank (top 5)
         → LLM with retrieved context
 ```
 
-Two-stage hybrid search: FTS5 for fast keyword recall, cosine similarity for semantic precision. All vectors stored as BLOBs in a single SQLite database.
+Two-stage hybrid search: FTS5 for fast keyword recall, cosine similarity for semantic precision. All vectors stored as BLOBs in a single SQLite database. When FTS5 finds no keyword match, every chunk is scored by cosine alone. See [Embedding providers](#embedding-providers) for choosing the vectors.
 
 ---
 
@@ -63,6 +63,172 @@ for source in answer.sources {
     print("[\(source.documentTitle) p.\(source.pageNumber)] \(source.excerpt)")
 }
 ```
+
+---
+
+## Embedding providers
+
+| Provider | Vectors | Needs | Good at |
+|---|---|---|---|
+| `AutoEmbeddingProvider()` — **default** | TF-IDF, 4096-dim hashed sparse | nothing | exact words; works everywhere with no download |
+| `AutoEmbeddingProvider(embeddingModelAt:)` — **opt-in** | multilingual-e5-small, 384-dim dense | a ~225 MB model bundle | meaning across wording and languages (≈100 languages, Spanish and English included) |
+| `CoreMLEmbeddingProvider(bundleAt:)` | same model, no fallback | the bundle | when you want an error instead of TF-IDF |
+| your own `EmbeddingProvider` | anything | — | remote APIs, other models |
+
+### multilingual-e5-small (opt-in)
+
+```swift
+import Foundation
+import AuraCore
+import AuraDocs
+
+let bundleURL = AutoEmbeddingProvider.defaultModelBundleURL   // or wherever you installed it
+let embedder = AutoEmbeddingProvider(embeddingModelAt: bundleURL)
+if let problem = embedder.denseModelProblem {
+    print("Using TF-IDF: \(problem)")   // bundle missing or invalid
+}
+try await embedder.warmUp()            // compile + load before you report "ready"
+print(await embedder.backendName())     // "multilingual-e5-small (Core ML, on-device)"
+
+let library = DocumentLibrary.shared
+await library.configure(embeddingProvider: embedder, llm: llm)
+try await library.open()
+```
+
+`AutoEmbeddingProvider(embeddingModelAt:)` checks the bundle on disk (manifest, model file, tokenizer
+files) without loading anything, and falls back to TF-IDF when it is unusable; `denseModelProblem`
+says why. `AutoEmbeddingProvider()` is unchanged and never uses a model.
+
+e5 is asymmetric: `DocumentLibrary` embeds chunks with `embedDocuments` (prefix `passage: `) and
+questions with `embedQuery` (prefix `query: `), which is what the model was trained on.
+
+Call `warmUp()` before telling the user the library is ready. It compiles the model, loads it and
+runs every sequence length once. **The first load compiles the model for the Neural Engine, which
+took ~35 s on an M1 Pro**; loading it again from the compiled cache and running every length took
+~0.17 s. A `warmUp()` that throws means the model cannot run here: fall back to
+`AutoEmbeddingProvider()`, which is what `DocsTab` does.
+
+### Limits and costs
+
+- **512 tokens per chunk**, counting `<s>` and `</s>`. Longer text keeps its first 510 tokens and its
+  closing `</s>`; the rest is not embedded. `DocumentLibrary`'s default chunks (~2,000 characters)
+  measured ~380 tokens for Spanish prose, but 2,000 characters of Chinese came to 1,181 tokens,
+  of numbers and dates 937, of Swift code 891: such chunks lose about half their text. `add`
+  reports cuts: `"'Contract' indexed ✓ (87 chunks, 3 cut at the model's token limit)"`. For dense
+  text, lower `DocumentLibrary(chunkTargetTokens:)` (e.g. to 200).
+- **Speed** (M1 Pro, Neural Engine, release build, one text per call, tokenization included):
+  ~2.4 ms at 26 tokens, ~4 ms at 114, ~8 ms at 246, ~20 ms at 512; tokenization is 20–45% of
+  that. A 380-token chunk costs under 20 ms, so 1,000 chunks index in about 20 s.
+- **Memory**: loading the tokenizer (a 250,000-entry vocabulary, 0.6 s) grew the process footprint
+  by ~95 MB; the fp16 weights are file-backed and added only ~5 MB, not the 225 MB on disk. The
+  compiled model is cached under `Caches/AuraLocal/CompiledModels` (another 225 MB); if the system
+  purges it, the next load compiles again.
+- It runs on `.cpuAndNeuralEngine` by default. `.all` measured slower: Core ML moves the embedding
+  lookup to the GPU, where it also competes with the LLM.
+- Measured on macOS only. It has not been run on an iPhone, iPad or Vision Pro yet.
+- Retrieval is still hybrid: e5 re-ranks the FTS5 keyword candidates and scores every chunk only
+  when no keyword matches at all. So cross-language matches are fragile: asking
+  "¿Cuántas proteínas debe comer una mujer al día?" over a Spanish and an English document, a common
+  word matched a Spanish chunk, and the English passage about protein was never scored, although a
+  cosine-only search ranked it first (0.865).
+- Tokenization runs in Swift (swift-transformers) and matched the Python tokenizer on Spanish and
+  English text. It approximates the Python normalizer for some rare characters (orphan combining
+  marks, fullwidth forms, ligatures), so those can tokenize slightly differently.
+
+### The model bundle
+
+A bundle is a folder; its name does not matter:
+
+```
+multilingual-e5-small/
+  embedding-model.json            manifest
+  MultilingualE5Small.mlpackage   the encoder (or a compiled .mlmodelc)
+  tokenizer.json                  Hugging Face tokenizer
+  tokenizer_config.json
+  special_tokens_map.json
+```
+
+`embedding-model.json` (schema `aura.text-embedding/1`; unknown keys are ignored):
+
+| Key | e5 value | Meaning |
+|---|---|---|
+| `schema` | `"aura.text-embedding/1"` | format version |
+| `model_id`, `revision` | `"intfloat/multilingual-e5-small"`, `"614241f6…"` | together they are the provider `identifier` |
+| `model_file` | `"MultilingualE5Small.mlpackage"` | file name inside the bundle |
+| `input_name`, `output_name` | `"input_ids"`, `"last_hidden_state"` | Core ML feature names |
+| `buckets` | `[64, 128, 256, 512]` | sequence lengths the model accepts, ascending |
+| `pad_token_id` | `1` | right-padding id; padded positions are left out of the mean |
+| `pooling`, `normalize` | `"mean"`, `true` | mean over non-padding tokens, then L2 |
+| `dimensions` | `384` | vector length |
+| `query_prefix`, `passage_prefix` | `"query: "`, `"passage: "` | prepended per role |
+| `max_tokens` | `512` | longest input, `<s>`/`</s>` included |
+| `license` | `"MIT"` | the model's license |
+
+A missing or invalid manifest, model file or tokenizer file makes the provider unusable with a
+reason naming it, e.g. `Invalid embedding-model.json: missing “pad_token_id”.`
+
+**Build the bundle** with the conversion script (macOS, [uv](https://docs.astral.sh/uv/)):
+
+```sh
+uv run scripts/embeddings/convert_e5_coreml.py --out ~/models/multilingual-e5-small
+```
+
+It downloads the pinned model revision, converts it for the Neural Engine, refuses to write the
+bundle unless Core ML matches sentence-transformers (cosine ≥ 0.999 on `CPU_ONLY` and
+`CPU_AND_NE`), and cleans up its downloads. Details: [`scripts/embeddings/README.md`](https://github.com/iOSDevC/AuraLocal/blob/main/scripts/embeddings/README.md).
+
+**Install it** by copying the folder to `AutoEmbeddingProvider.defaultModelBundleURL`
+(`Application Support/AuraLocal/embeddings/multilingual-e5-small`), or with **Import embedding
+model…** in `DocsTab`.
+
+### Using the model without AuraDocs
+
+`CoreMLTextEmbeddingTool` (in `AuraCore`) is the tool underneath, usable for semantic search,
+deduplication or clustering:
+
+```swift
+import Foundation
+import AuraCore
+
+let e5 = CoreMLTextEmbeddingTool(bundleAt: bundleURL)   // id "coreml.text-embedding.multilingual-e5-small"
+guard await e5.availability().isAvailable else { return }
+try await e5.warmUp()
+
+let question = try await e5.embed("¿Cuánta proteína necesita una mujer al día?", role: .query)
+let passages = try await e5.embed(["Las mujeres adultas necesitan unos 46 g de proteína al día.",
+                                    "El contrato vence el 3 de marzo."], role: .passage)
+let scores = passages.map { passage in zip(question.vector, passage.vector).reduce(0) { $0 + $1.0 * $1.1 } }
+print(scores, passages.map(\.isTruncated))   // vectors are unit length: dot product = cosine
+```
+
+### Switching providers re-embeds the index
+
+The vector store records which provider produced its vectors (`identifier` + `dimensions`, in a
+`metadata` table added to existing databases on open). Before `add` or `ask`, `DocumentLibrary`
+compares it with the configured provider:
+
+- same provider → nothing to do;
+- different provider → every stored chunk is re-embedded from its stored text, in batches of 50;
+  documents are not parsed again;
+- a database from before this tracking → adopted as is when its vectors already have the
+  provider's length (TF-IDF indexes keep working with `AutoEmbeddingProvider()`), re-embedded
+  otherwise. Length is all it can check: if an old index came from a *different* model with the
+  same length, call `reembedAll()` yourself once.
+
+An interrupted re-embed is redone on next use. `ask` re-embeds silently, so to show progress, do it
+up front:
+
+```swift
+if try await library.indexNeedsReembedding() {
+    try await library.reembedAll { message in
+        print(message)   // "Re-embedding 50/400 chunks: 12%"
+    }
+}
+```
+
+Custom providers get `embedQuery` / `embedDocuments` (defaulting to `embed` / `embedBatch`) and an
+`identifier` (defaulting to the type name plus `dimensions`). Give yours an explicit `identifier`
+and change it whenever its vectors change (another model, another version).
 
 ---
 
@@ -136,6 +302,10 @@ TabView {
 - Per-document indexing progress with percentage
 - Swipe-to-delete
 - Full chat sheet with expandable source citations
+- multilingual-e5-small when its bundle is installed at `Application Support/AuraLocal/embeddings/multilingual-e5-small`
+  (warmed up before the tab reports ready), TF-IDF otherwise; the backend in use is shown under the list
+- **Import embedding model…** (toolbar): pick a bundle folder, it is copied into place and the index
+  is re-embedded with progress
 
 ---
 
@@ -145,5 +315,6 @@ TabView {
 |-------|----------------|---------|
 | Parsing | `"Parsing Contract.pdf…"` | 5% |
 | Chunking | `"Chunking Contract…"` | 15% |
+| Re-embedding (only after a provider change) | `"Re-embedding 50/400 chunks: 12%"` | before parsing |
 | Embedding | `"Embedding Contract: 67%"` | 15–100% |
-| Complete | `"'Contract' indexed ✓ (87 chunks)"` | 100% |
+| Complete | `"'Contract' indexed ✓ (87 chunks)"`, plus `", 3 cut at the model's token limit"` when e5 truncated chunks | 100% |

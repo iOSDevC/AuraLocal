@@ -307,7 +307,7 @@ OS embedding assets for the text's script.
 | Vision | `VisionOCRTool` (text, or lines with boxes), `VisionImageClassificationTool`, `VisionBarcodeTool` (QR + 23 other symbologies), `VisionFaceDetectionTool` (detection only) |
 | Language | `NLLanguageIdentificationTool`, `NLEntityRecognitionTool`, `NLSentimentTool`, `NLEmbeddingTool` |
 | Audio | `SoundClassificationTool` (303 everyday sounds in an audio file) |
-| Custom models | `CoreMLModelTool` (describe and run your own Core ML models), `TextClassifierTool` (Create ML text classifiers) |
+| Custom models | `CoreMLModelTool` (describe and run your own Core ML models), `TextClassifierTool` (Create ML text classifiers), `CoreMLTextEmbeddingTool` (sentence embeddings from a Core ML bundle such as multilingual-e5-small) |
 | Training | `TextClassifierTrainer` (train a text classifier on-device with Create ML) |
 
 ```swift
@@ -776,10 +776,19 @@ Add to your `Info.plist`:
 ### Retrieval pipeline
 
 ```
-query → TF-IDF embed → FTS5 top-20 candidates → cosine re-rank top-5 → LLM
+query → embed (TF-IDF, or multilingual-e5-small) → FTS5 top-20 candidates → cosine re-rank top-5 → LLM
 ```
 
 Two-stage hybrid search: FTS5 for fast keyword recall, cosine similarity for semantic precision. All vectors stored as BLOBs in SQLite — no external vector database required.
+
+**Dense multilingual embeddings (opt-in).** `AutoEmbeddingProvider()` stays TF-IDF: no download.
+`AutoEmbeddingProvider(embeddingModelAt: bundleURL)` uses **multilingual-e5-small** on the Neural
+Engine (384-dim, Spanish/English and ~100 other languages; 2–20 ms per chunk on an M1 Pro) when its
+~225 MB bundle is installed, and TF-IDF otherwise. Build the bundle with
+`uv run scripts/embeddings/convert_e5_coreml.py --out <dir>`, call `warmUp()` before use (the first
+load compiles the model for the Neural Engine, ~35 s), and mind the 512-token limit per chunk and
+the ~95 MB its tokenizer takes in memory. Switching providers re-embeds the stored chunks
+automatically. See [Embedding providers](docs/guide/rag.md#embedding-providers).
 
 ### Quick start
 
@@ -1044,7 +1053,7 @@ AuraDocs (optional)
 ├── DocumentLibrary          →  add() · ask() · allDocuments() · refreshCorpus()
 ├── DocumentParserDispatcher →  PDF (PDFKit) · DOCX (ZIP+XML) · TXT · Image (VLM OCR)
 ├── DocumentChunker          →  sliding window · sentence boundaries · overlap
-├── AutoEmbeddingProvider    →  TF-IDF sparse (local, no download)
+├── AutoEmbeddingProvider    →  TF-IDF sparse (default) · multilingual-e5-small via Core ML (opt-in)
 ├── VectorStore              →  SQLite BLOB vectors · FTS5 pre-filter · cosine re-rank
 ├── DocumentChat             →  stateful Q&A · source citations · ConversationStore
 └── DocsTab                  →  SwiftUI tab · file picker · progress bar · chat sheet

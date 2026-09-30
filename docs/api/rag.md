@@ -12,7 +12,7 @@ description: "AuraDocs API reference — DocumentLibrary, DocumentChat, DocsTab 
 Fully local Retrieval-Augmented Generation pipeline. Index documents once, ask questions in natural language. Zero external dependencies.
 
 ```
-query → TF-IDF embed → FTS5 top-20 → cosine re-rank top-5 → LLM
+query → embed (TF-IDF, or multilingual-e5-small) → FTS5 top-20 → cosine re-rank top-5 → LLM
 ```
 
 ## Table of contents
@@ -123,13 +123,57 @@ public struct ChatMessage {
 
 ---
 
-## AutoEmbeddingProvider
-
-TF-IDF sparse embeddings — fully local, no model download required.
+## Embedding providers
 
 ```swift
-let embedder = AutoEmbeddingProvider()
-await library.configure(embeddingProvider: embedder, llm: llm)
+public protocol EmbeddingProvider: Sendable {
+    func embed(_ text: String) async throws -> [Float]
+    func embedBatch(_ texts: [String]) async throws -> [[Float]]        // default: embed() in a loop
+    var dimensions: Int { get }
+    func embedQuery(_ text: String) async throws -> [Float]             // default: embed()
+    func embedDocuments(_ texts: [String]) async throws -> [[Float]]    // default: embedBatch()
+    var identifier: String { get }                                      // default: type name + "/" + dimensions
+}
+```
+
+### AutoEmbeddingProvider
+
+```swift
+public actor AutoEmbeddingProvider: EmbeddingProvider
+init()                                                            // TF-IDF, 4096-dim, no download
+init(embeddingModelAt bundleURL: URL?, compiledModelsDirectory: URL? = nil)   // e5 if the bundle is valid, else TF-IDF
+static let defaultModelBundleURL: URL                             // Application Support/AuraLocal/embeddings/multilingual-e5-small
+nonisolated var usesDenseModel: Bool
+nonisolated let denseModelProblem: String?                        // why the bundle is not used
+func warmUp() async throws -> Duration                            // @discardableResult; .zero for TF-IDF
+func truncatedInputCount() async -> Int
+func backendName() -> String
+func updateCorpus(texts: [String]) async                          // TF-IDF weights
+```
+
+### CoreMLEmbeddingProvider
+
+A Core ML embedding bundle (multilingual-e5-small) with no fallback; `embedQuery` uses the
+`query: ` prefix, `embed` / `embedBatch` / `embedDocuments` the `passage: ` prefix.
+
+```swift
+public struct CoreMLEmbeddingProvider: EmbeddingProvider
+init(bundleAt url: URL, computeUnits: MLComputeUnits = .cpuAndNeuralEngine, compiledModelsDirectory: URL? = nil) throws
+let tool: CoreMLTextEmbeddingTool       // AuraCore
+let identifier: String                  // "model_id@revision"
+var modelName: String
+func warmUp() async throws -> Duration
+func truncatedInputCount() async -> Int
+```
+
+### Index identity
+
+The store records the provider's `identifier` and `dimensions`; `add` and `ask` re-embed stored
+chunks when they change. See [Embedding providers](../guide/rag.md#embedding-providers).
+
+```swift
+func indexNeedsReembedding() async throws -> Bool
+func reembedAll(onProgress: @escaping @MainActor (String) -> Void = { _ in }) async throws
 ```
 
 ---

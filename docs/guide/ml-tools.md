@@ -40,6 +40,7 @@ the language), or you can use them on their own.
 | `SoundClassificationTool` | `system.audio.sounds` | SoundAnalysis | 303 everyday sounds (speech, music, dog bark, siren…) in an audio file |
 | `CoreMLModelTool` | `coreml.<file name>` | Core ML | Describe and run a Core ML model you ship or download |
 | `TextClassifierTool` | `coreml.text-classifier.<file name>` | NaturalLanguage + Core ML | Label plus probabilities from a Create ML text classifier |
+| `CoreMLTextEmbeddingTool` | `coreml.text-embedding.<bundle name>` | Core ML | Sentence vectors from an embedding bundle such as multilingual-e5-small ([Document RAG](rag.md#embedding-providers)) |
 | `TextClassifierTrainer` | `training.text-classifier` | Create ML | Train a text classifier on-device from labelled examples |
 
 Every tool follows the same contract:
@@ -60,8 +61,8 @@ Every tool follows the same contract:
 ## Discover what runs on this device
 
 `SystemToolRegistry.all` lists every tool that needs no configuration, grouped by category.
-`CoreMLModelTool` and `TextClassifierTool` are not in it: each wraps one model file, so you
-create them with that file's URL.
+`CoreMLModelTool`, `TextClassifierTool` and `CoreMLTextEmbeddingTool` are not in it: each wraps one model file or bundle, so you
+create them with its URL.
 
 ```swift
 import Foundation
@@ -94,6 +95,7 @@ What changes is whether it can **run**:
 | Image classification, barcodes, faces | ✓ | ✓ | reports unavailable |
 | Sound classification | ✓ | ✓ | ✓ |
 | `CoreMLModelTool`, `TextClassifierTool` | ✓ | ✓ | depends on the model (see below) |
+| `CoreMLTextEmbeddingTool` (e5 bundle) | ✓ | not run yet | not run yet |
 | `TextClassifierTrainer` | ✓ | ✓ | reports unavailable (no Create ML in the Simulator SDKs) |
 
 {: .note }
