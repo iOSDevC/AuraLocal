@@ -40,18 +40,38 @@ public struct LocalProviderModel: Sendable, Codable, Identifiable, Hashable {
     public var id: String { name }
     /// Ollama tag (e.g. `llama3:latest`) or llama-server model id.
     public let name: String
-    /// On-disk size in bytes (Ollama only; `nil` for llama-server).
+    /// Size in bytes: Ollama's on-disk size, or llama-server's `meta.size` when it reports one.
     public let sizeBytes: Int64?
     /// Quantization level (Ollama only; `nil` otherwise).
     public let quantization: String?
     /// Trained context length (llama-server only; `nil` for Ollama).
     public let contextLength: Int?
+    /// The host the server forwards this model to (Ollama cloud models report
+    /// `https://ollama.com:443`); `nil` for a model that runs on the server itself.
+    public let remoteHost: String?
 
-    public init(name: String, sizeBytes: Int64? = nil, quantization: String? = nil, contextLength: Int? = nil) {
+    public init(
+        name: String,
+        sizeBytes: Int64? = nil,
+        quantization: String? = nil,
+        contextLength: Int? = nil,
+        remoteHost: String? = nil
+    ) {
         self.name = name
         self.sizeBytes = sizeBytes
         self.quantization = quantization
         self.contextLength = contextLength
+        self.remoteHost = remoteHost
+    }
+
+    /// `false` when prompts to this model leave the provider's machine: a
+    /// ``remoteHost`` is set, or the tag is Ollama's cloud naming (`:cloud`, `:<size>-cloud`),
+    /// which older servers report without a host.
+    public var runsLocally: Bool {
+        guard remoteHost == nil else { return false }
+        guard let colon = name.lastIndex(of: ":") else { return true }
+        let tag = name[name.index(after: colon)...]
+        return !(tag == "cloud" || tag.hasSuffix("-cloud"))
     }
 }
 
@@ -148,7 +168,8 @@ public enum LocalProviderDetector {
             models = tags.models.map {
                 LocalProviderModel(
                     name: $0.name, sizeBytes: $0.size,
-                    quantization: $0.details?.quantizationLevel, contextLength: nil)
+                    quantization: $0.details?.quantizationLevel, contextLength: nil,
+                    remoteHost: $0.remoteHost)
             }
         } else {
             models = []
@@ -208,6 +229,11 @@ private struct OllamaModelDTO: Decodable {
     let name: String
     let size: Int64?
     let details: OllamaDetailsDTO?
+    let remoteHost: String?
+    enum CodingKeys: String, CodingKey {
+        case name, size, details
+        case remoteHost = "remote_host"
+    }
 }
 
 private struct OllamaDetailsDTO: Decodable {

@@ -42,7 +42,10 @@ struct AuraCLI {
             let url = status.baseURL.absoluteString
             if status.isAvailable {
                 print("● \(name) — \(url) (\(status.models.count) models)")
-                for model in status.models { print("    - \(model.name)") }
+                for model in status.models {
+                    let note = model.runsLocally ? "" : " (forwarded to \(model.remoteHost ?? "a remote host"); skipped by ask)"
+                    print("    - \(model.name)\(note)")
+                }
             } else if status.reachable {
                 print("◐ \(name) — reachable, no models — \(url)")
             } else {
@@ -69,48 +72,98 @@ struct AuraCLI {
         }
     }
 
-    // MARK: - ask (hybrid remote → GitHub Models)
+    // MARK: - ask (local-first remote)
 
-    /// Ask a bigger model via GitHub Models. Token from AURA_GITHUB_TOKEN /
-    /// GITHUB_TOKEN, or the Keychain (cloud.github-models). Answer → stdout,
+    static let askValueFlags: Set<String> = ["--provider", "--model", "--base-url", "--max-tokens"]
+
+    static let askUsage = """
+        usage: aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>]
+                                   [--base-url <url>] [--max-tokens N]
+
+        """
+
+    /// Ask a bigger model. The default (`auto`) uses a running llama-server, else
+    /// Ollama, and never a cloud API; see `AskTargetResolver`. Answer → stdout,
     /// receipt → stderr (so stdout stays clean for piping).
     static func runAsk(_ args: [String]) async throws {
         var prompt: String?
-        var model = "openai/gpt-4o"
+        var choice = AskTargetResolver.Choice.auto
+        var model: String?
+        var baseURL: String?
+        var maxTokens = 512
         var i = 0
         while i < args.count {
-            switch args[i] {
-            case "--model": i += 1; if i < args.count { model = args[i] }
-            case "--remote": break   // remote is the only mode in v1
-            default: if prompt == nil { prompt = args[i] }
+            let arg = args[i]
+            if arg == "--help" || arg == "-h" {
+                print(askUsage, terminator: "")
+                exit(0)
+            }
+            if arg.hasPrefix("--") {
+                guard askValueFlags.contains(arg) else { askUsageError("unknown flag \(arg)") }
+                i += 1
+                guard i < args.count else { askUsageError("\(arg) needs a value") }
+                let value = args[i]
+                switch arg {
+                case "--provider":
+                    choice = parseChoice(value)
+                case "--model":
+                    model = value
+                case "--base-url":
+                    baseURL = value
+                case "--max-tokens":
+                    maxTokens = parseMaxTokens(value)
+                default:
+                    askUsageError("unknown flag \(arg)")
+                }
+            } else if prompt == nil {
+                prompt = arg
+            } else {
+                askUsageError("unexpected argument \"\(arg)\" (quote the prompt)")
             }
             i += 1
         }
-        guard let prompt, !prompt.isEmpty else {
-            err("usage: aura ask \"<prompt>\" [--model <id>]\n"); exit(2)
+        guard let prompt, !prompt.isEmpty else { askUsageError("missing prompt") }
+
+        let probeLocal = baseURL == nil && (choice == .auto || choice == .local)
+        let localProviders = probeLocal ? await LocalProviderDetector.detectAll() : []
+        let target: RemoteTarget
+        do {
+            target = try AskTargetResolver.resolve(
+                choice, model: model, baseURL: baseURL,
+                environment: ProcessInfo.processInfo.environment,
+                readKey: KeychainStore.read(for:),
+                localProviders: localProviders)
+        } catch {
+            err((error.errorDescription ?? "\(error)") + "\n")
+            exit(error.isUsageError ? 2 : 1)
         }
 
-        let env = ProcessInfo.processInfo.environment
-        let token = env["AURA_GITHUB_TOKEN"]
-            ?? env["GITHUB_TOKEN"]
-            ?? KeychainStore.read(for: "cloud.github-models")
-        guard let token, !token.isEmpty else {
-            err("No GitHub token. Set AURA_GITHUB_TOKEN (models:read PAT) or save one to the Keychain (cloud.github-models).\n")
-            exit(1)
-        }
-
-        let target = RemoteTarget(
-            provider: OpenAICompatibleProvider.gitHubModels(apiKey: token),
-            modelID: model, contextLength: 128_000, origin: .cloud)
         let result = try await HybridEscalator().escalate(
             to: target, systemPrompt: nil, context: "", question: prompt,
-            maxTokens: 512, redactPII: true)
+            maxTokens: maxTokens, redactPII: !target.isLocalNetwork)
 
         print(result.answer)
-        var receipt = "— via \(result.providerName) · \(model)"
+        var receipt = "— via \(result.providerName) · \(target.modelID)"
         if let usage = result.usage { receipt += " · \(usage.inputTokens) in / \(usage.outputTokens) out" }
         if result.fromCache { receipt += " · cached" }
         err(receipt + "\n")
+    }
+
+    static func parseChoice(_ value: String) -> AskTargetResolver.Choice {
+        guard let choice = AskTargetResolver.Choice(rawValue: value.lowercased()) else {
+            askUsageError("unknown provider \"\(value)\"")
+        }
+        return choice
+    }
+
+    static func parseMaxTokens(_ value: String) -> Int {
+        guard let tokens = Int(value), tokens > 0 else { askUsageError("--max-tokens needs a positive integer") }
+        return tokens
+    }
+
+    static func askUsageError(_ message: String) -> Never {
+        err("aura ask: \(message)\n" + askUsage)
+        exit(2)
     }
 
     // MARK: - ocr (native Vision)
@@ -191,7 +244,12 @@ struct AuraCLI {
         USAGE:
           aura providers                      Detect local providers (Ollama / llama-server)
           aura tools                          List on-device ML tools by category, with availability
-          aura ask "<prompt>" [--model <id>]  Ask GitHub Models (hybrid remote); default openai/gpt-4o
+          aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>]
+                   [--base-url <url>] [--max-tokens N]
+                                              Ask a bigger model: a running llama-server, else Ollama
+                                                (auto, the default); a cloud API only when named
+                                                (default models \(RemoteTarget.defaultOpenAIModel),
+                                                \(RemoteTarget.defaultAnthropicModel))
           aura ocr <image>                    Extract text from an image via native Vision OCR
           aura ml <subcommand> …              Run an on-device ML tool (`aura ml help` lists them):
                                                 classify-image, barcodes, faces, ocr-lines, language,
@@ -204,8 +262,11 @@ struct AuraCLI {
                                               Why a repo does or doesn't run; its models.json entry
           aura models devices                 Device presets (this device, iPhone classes, Macs)
 
-        ENV:
-          AURA_GITHUB_TOKEN   GitHub fine-grained PAT with models:read (used by `ask`)
+        ENV (used by `ask`):
+          OPENAI_API_KEY      --provider openai; else Keychain account cloud.openai
+          ANTHROPIC_API_KEY   --provider anthropic; else Keychain account cloud.anthropic
+                              (Keychain service dev.auralocal.remote)
+          AURA_API_KEY        --base-url, optional, env only (sent as a Bearer token)
         """)
     }
 

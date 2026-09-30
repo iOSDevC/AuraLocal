@@ -27,21 +27,30 @@ public final class HybridEscalator {
     // MARK: - Target discovery
 
     /// Discover the best local-network escalation target: prefers `llama-server`,
-    /// then Ollama, choosing the model with the largest context window. Returns
+    /// then Ollama, choosing the model with the largest context window. Models the
+    /// server forwards off the machine (Ollama cloud models) are skipped. Returns
     /// `nil` if no local provider is running.
     public static func bestLocalTarget() async -> RemoteTarget? {
-        let available = await LocalProviderDetector.detectAll().filter(\.isAvailable)
-        let ordered = available.sorted { a, _ in a.kind == .llamaServer }
-        guard let status = ordered.first, let model = bestModel(status) else { return nil }
-        return RemoteTarget(
-            provider: OpenAICompatibleProvider.from(status),
-            modelID: model.name,
-            contextLength: model.contextLength,
-            origin: .localNetwork(status.kind))
+        bestLocalTarget(from: await LocalProviderDetector.detectAll())
     }
 
-    private static func bestModel(_ status: LocalProviderStatus) -> LocalProviderModel? {
-        status.models.max { ($0.contextLength ?? 0) < ($1.contextLength ?? 0) }
+    /// The pure half of ``bestLocalTarget()``: picks from already-probed statuses.
+    nonisolated static func bestLocalTarget(from statuses: [LocalProviderStatus]) -> RemoteTarget? {
+        let candidates = statuses.filter(\.isAvailable).compactMap { status in
+            bestModel(status).map { (status: status, model: $0) }
+        }
+        guard let pick = candidates.first(where: { $0.status.kind == .llamaServer }) ?? candidates.first else {
+            return nil
+        }
+        return RemoteTarget(
+            provider: OpenAICompatibleProvider.from(pick.status),
+            modelID: pick.model.name,
+            contextLength: pick.model.contextLength,
+            origin: .localNetwork(pick.status.kind))
+    }
+
+    private nonisolated static func bestModel(_ status: LocalProviderStatus) -> LocalProviderModel? {
+        status.models.filter(\.runsLocally).max { ($0.contextLength ?? 0) < ($1.contextLength ?? 0) }
     }
 
     // MARK: - Escalation
@@ -64,16 +73,20 @@ public final class HybridEscalator {
 
         // Optional privacy backstop: strip obvious secrets/PII before sending.
         var contextText = compressed.keptText
+        var questionText = question
         var redactedCount = 0
         if redactPII {
-            let redaction = PIIRedactor().redact(compressed.keptText)
-            contextText = redaction.redacted
-            redactedCount = redaction.count
+            let redactor = PIIRedactor()
+            let contextRedaction = redactor.redact(compressed.keptText)
+            let questionRedaction = redactor.redact(question)
+            contextText = contextRedaction.redacted
+            questionText = questionRedaction.redacted
+            redactedCount = contextRedaction.count + questionRedaction.count
         }
 
         let userContent = contextText.isEmpty
-            ? question
-            : "Context:\n\(contextText)\n\nQuestion: \(question)"
+            ? questionText
+            : "Context:\n\(contextText)\n\nQuestion: \(questionText)"
 
         // Response cache: don't pay twice for an identical request.
         if let cached = ResponseCache.shared.lookup(

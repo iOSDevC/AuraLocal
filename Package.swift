@@ -126,7 +126,7 @@ let package = Package(
 
         // MARK: - CLI
         // `aura` — a headless integration harness that drives the hybrid + tools
-        // features (provider detection, GitHub Models escalation, native OCR).
+        // features (provider detection, local-first `aura ask` escalation, native OCR).
         // Cxx interop is required because it links AuraCore (llama.cpp).
         .executableTarget(
             name: "aura",

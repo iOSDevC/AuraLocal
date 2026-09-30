@@ -97,3 +97,35 @@ public struct RemoteTarget: Sendable {
         return false
     }
 }
+
+// MARK: - Cloud presets
+
+extension RemoteTarget {
+    /// Default model of the hosted OpenAI target.
+    public static let defaultOpenAIModel = "gpt-4o"
+    /// Default model of the Anthropic target.
+    public static let defaultAnthropicModel = "claude-sonnet-4-5"
+
+    /// Hosted OpenAI (`https://api.openai.com/v1`). Shared by
+    /// `HybridEscalator.cloudTargets` and ``AskTargetResolver`` so they cannot drift.
+    static func openAI(apiKey: String, model: String) -> RemoteTarget {
+        let provider = OpenAICompatibleProvider(
+            id: CloudAccount.openAI, displayName: "OpenAI",
+            baseURL: URL(string: "https://api.openai.com/v1")!, apiKey: apiKey,
+            retentionNote: "Sent to OpenAI's API. See their data-retention policy.")
+        return RemoteTarget(provider: provider, modelID: model, contextLength: 128_000, origin: .cloud)
+    }
+
+    /// Anthropic's Messages API. Shared like ``openAI(apiKey:model:)``.
+    static func anthropic(apiKey: String, model: String) -> RemoteTarget {
+        RemoteTarget(
+            provider: AnthropicProvider(apiKey: apiKey),
+            modelID: model, contextLength: 200_000, origin: .cloud)
+    }
+}
+
+/// Keychain accounts (service `dev.auralocal.remote`) holding the cloud API keys.
+enum CloudAccount {
+    static let openAI = "cloud.openai"
+    static let anthropic = "cloud.anthropic"
+}
