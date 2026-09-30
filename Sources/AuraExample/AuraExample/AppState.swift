@@ -66,7 +66,8 @@ final class AppState: ObservableObject {
 
             // 4. Configure DocumentLibrary — synchronous
             setupProgress = "Initializing document index…"
-            await library.configure(embeddingProvider: AutoEmbeddingProvider(), llm: llm, visionLLM: vlm)
+            // The Library tab may have chosen e5 already; replacing it with TF-IDF would re-embed its index.
+            await library.configureIfNeeded(embeddingProvider: AutoEmbeddingProvider(), llm: llm, visionLLM: vlm)
             try await library.open()
             await library.refreshCorpus()
 

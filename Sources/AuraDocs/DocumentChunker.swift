@@ -160,9 +160,9 @@ public protocol EmbeddingProvider: Sendable {
     func embedQuery(_ text: String) async throws -> [Float]
     /// Embed document chunks for indexing. Defaults to ``embedBatch(_:)``.
     func embedDocuments(_ texts: [String]) async throws -> [[Float]]
-    /// Stable name of the vector space: vectors from providers with different identifiers are not
-    /// comparable, and ``DocumentLibrary`` re-embeds its index when this changes. Defaults to the
-    /// type name plus ``dimensions``.
+    /// Name of the vector space: vectors from providers with different identifiers are not comparable,
+    /// and ``DocumentLibrary`` re-embeds its index when this changes, so it must stay the same across
+    /// launches — e.g. `model@revision`. Defaults to the module-qualified type name plus ``dimensions``.
     var identifier: String { get }
 }
 
@@ -184,8 +184,14 @@ public extension EmbeddingProvider {
     }
 
     var identifier: String {
-        "\(String(reflecting: type(of: self)))/\(dimensions)"
+        "\(stableTypeName(of: type(of: self)))/\(dimensions)"
     }
+}
+
+/// `String(reflecting:)` of a private or local type embeds `(unknown context at $<address>)`, which moves with
+/// ASLR on every launch; without it the default identifier stays stable.
+func stableTypeName(of type: Any.Type) -> String {
+    String(reflecting: type).replacing(/\(unknown context at \$[0-9a-fA-F]+\)\./, with: "")
 }
 
 /// Providers that can say how many inputs they truncated, so indexing can report it.
@@ -378,11 +384,6 @@ public actor AutoEmbeddingProvider: EmbeddingProvider, TruncationReporting {
     public func embedQuery(_ text: String) async throws -> [Float] {
         if let dense { return try await dense.embedQuery(text) }
         return try await tfidf.embed(text)
-    }
-
-    public func embedDocuments(_ texts: [String]) async throws -> [[Float]] {
-        if let dense { return try await dense.embedDocuments(texts) }
-        return try await tfidf.embedBatch(texts)
     }
 
     /// Compiles and loads the Core ML model and runs it once per sequence bucket; a no-op for

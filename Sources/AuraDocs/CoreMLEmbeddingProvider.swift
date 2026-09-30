@@ -42,10 +42,6 @@ public struct CoreMLEmbeddingProvider: EmbeddingProvider, TruncationReporting {
         try await tool.embed(text, role: .query).vector
     }
 
-    public func embedDocuments(_ texts: [String]) async throws -> [[Float]] {
-        try await tool.embed(texts, role: .passage).map(\.vector)
-    }
-
     /// See ``CoreMLTextEmbeddingTool/warmUp()``.
     @discardableResult
     public func warmUp() async throws -> Duration {

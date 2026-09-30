@@ -210,13 +210,14 @@ compares it with the configured provider:
 - same provider → nothing to do;
 - different provider → every stored chunk is re-embedded from its stored text, in batches of 50;
   documents are not parsed again;
-- a database from before this tracking → adopted as is when its vectors already have the
-  provider's length (TF-IDF indexes keep working with `AutoEmbeddingProvider()`), re-embedded
-  otherwise. Length is all it can check: if an old index came from a *different* model with the
-  same length, call `reembedAll()` yourself once.
+- a database from before this tracking → adopted as is only when the configured provider is TF-IDF
+  (the only built-in provider then) and the vector lengths match, so TF-IDF indexes keep working with
+  `AutoEmbeddingProvider()`; with any other provider it is re-embedded once, since a different model
+  of the same width cannot be told apart.
 
-An interrupted re-embed is redone on next use. `ask` re-embeds silently, so to show progress, do it
-up front:
+An interrupted re-embed is redone on next use. If `configure` switches providers while an `add` or
+`ask` is embedding, that call embeds again with the new provider instead of mixing vector spaces.
+`ask` re-embeds silently, so to show progress, do it up front:
 
 ```swift
 if try await library.indexNeedsReembedding() {
@@ -227,8 +228,13 @@ if try await library.indexNeedsReembedding() {
 ```
 
 Custom providers get `embedQuery` / `embedDocuments` (defaulting to `embed` / `embedBatch`) and an
-`identifier` (defaulting to the type name plus `dimensions`). Give yours an explicit `identifier`
-and change it whenever its vectors change (another model, another version).
+`identifier` (defaulting to the module-qualified type name plus `dimensions`, stable across launches
+even for a `private` type). Give yours an explicit `identifier` such as `model@revision` and change it
+whenever its vectors change (another model, another version).
+
+Two screens sharing one library should not both call `configure`: the second call switches the
+vector space under the first. `configureIfNeeded(embeddingProvider:llm:visionLLM:)` keeps a provider
+that is already set.
 
 ---
 

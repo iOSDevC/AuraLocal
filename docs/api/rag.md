@@ -132,7 +132,7 @@ public protocol EmbeddingProvider: Sendable {
     var dimensions: Int { get }
     func embedQuery(_ text: String) async throws -> [Float]             // default: embed()
     func embedDocuments(_ texts: [String]) async throws -> [[Float]]    // default: embedBatch()
-    var identifier: String { get }                                      // default: type name + "/" + dimensions
+    var identifier: String { get }                                      // default: module.Type + "/" + dimensions; must be stable across launches
 }
 ```
 
@@ -174,6 +174,9 @@ chunks when they change. See [Embedding providers](../guide/rag.md#embedding-pro
 ```swift
 func indexNeedsReembedding() async throws -> Bool
 func reembedAll(onProgress: @escaping @MainActor (String) -> Void = { _ in }) async throws
+@discardableResult
+func configureIfNeeded(embeddingProvider: any EmbeddingProvider, llm: AuraLocal,
+                       visionLLM: AuraLocal? = nil) -> Bool   // keeps a provider set earlier
 ```
 
 ---

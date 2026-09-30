@@ -302,14 +302,6 @@ final class TextEmbeddingTests: XCTestCase {
 
     // MARK: - Index identity
 
-    private struct ReconciliationCase {
-        let stored: EmbeddingIndexIdentity?
-        let configured: EmbeddingIndexIdentity
-        let lengths: Set<Int>
-        let count: Int
-        let expected: EmbeddingIndexIdentity.Reconciliation
-    }
-
     func testIndexReconciliationAdoptsOnlyEmptyOrPreTrackingTFIDFIndexes() {
         let e5 = EmbeddingIndexIdentity(identifier: "intfloat/multilingual-e5-small@614241f", dimensions: 384)
         let miniLM = EmbeddingIndexIdentity(identifier: "someone/MiniLM-L12", dimensions: 384)
@@ -334,7 +326,18 @@ final class TextEmbeddingTests: XCTestCase {
         }
     }
 
-    // MARK: - Live model (needs the bundle; see scripts/embeddings)
+    override static func tearDown() {
+        if bundleURL != nil, ProcessInfo.processInfo.environment["AURA_E5_KEEP_COMPILED"] == nil {
+            try? FileManager.default.removeItem(at: compiledModels)
+        }
+        super.tearDown()
+    }
+
+}
+
+// MARK: - Live model (opt-in: needs the bundle; see scripts/embeddings)
+
+extension TextEmbeddingTests {
 
     private struct ReferenceFixtures: Decodable {
         let sentences: [String]
@@ -355,13 +358,6 @@ final class TextEmbeddingTests: XCTestCase {
 
     private static let liveTool = bundleURL.map {
         CoreMLTextEmbeddingTool(bundleAt: $0, compiledModelsDirectory: compiledModels)
-    }
-
-    override static func tearDown() {
-        if bundleURL != nil, ProcessInfo.processInfo.environment["AURA_E5_KEEP_COMPILED"] == nil {
-            try? FileManager.default.removeItem(at: compiledModels)
-        }
-        super.tearDown()
     }
 
     private func requireLiveTool() async throws -> CoreMLTextEmbeddingTool {
@@ -474,6 +470,14 @@ final class TextEmbeddingTests: XCTestCase {
         let availability = await tool.availability()
         XCTAssertTrue(availability.isAvailable)
     }
+}
+
+private struct ReconciliationCase {
+    let stored: EmbeddingIndexIdentity?
+    let configured: EmbeddingIndexIdentity
+    let lengths: Set<Int>
+    let count: Int
+    let expected: EmbeddingIndexIdentity.Reconciliation
 }
 
 private func assertVectorsEqual(

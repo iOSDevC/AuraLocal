@@ -462,7 +462,7 @@ actor VectorStore {
                 INSERT INTO chunks_fts(chunks_fts, id, text) VALUES('delete', old.id, old.text);
             END;
             """)
-        // Added after the first release; CREATE IF NOT EXISTS upgrades older databases in place.
+        // IF NOT EXISTS also upgrades databases created before this table existed.
         try exec("""
             CREATE TABLE IF NOT EXISTS metadata (
                 key   TEXT PRIMARY KEY,

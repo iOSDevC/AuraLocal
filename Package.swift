@@ -148,6 +148,12 @@ let package = Package(
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         .testTarget(
+            name: "AuraDocsTests",
+            dependencies: ["AuraDocs", "AuraCore"],
+            path: "Tests/AuraDocsTests",
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
+        .testTarget(
             name: "AuraImageGenTests",
             dependencies: ["AuraImageGen"],
             path: "Tests/AuraImageGenTests",
