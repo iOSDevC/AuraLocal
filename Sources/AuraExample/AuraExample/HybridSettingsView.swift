@@ -15,8 +15,11 @@ struct HybridSettingsView: View {
 
     @State private var anthropicKey = ""
     @State private var openAIKey = ""
-    @State private var gitHubModelsKey = ""
     @State private var hfDownloadKey = ""
+    @State private var hasRetiredGitHubToken = false
+
+    /// GitHub Models was retired on 2026-07-30; AuraLocal no longer reads this account.
+    private static let retiredGitHubModelsAccount = "cloud.github-models"
 
     private var costCap: Binding<Double> {
         Binding(
@@ -47,11 +50,13 @@ struct HybridSettingsView: View {
                 Section {
                     keyRow(title: "Anthropic (Claude)", account: "cloud.anthropic", field: $anthropicKey)
                     keyRow(title: "OpenAI", account: "cloud.openai", field: $openAIKey)
-                    keyRow(title: "GitHub Models (Copilot)", account: "cloud.github-models", field: $gitHubModelsKey)
+                    if hasRetiredGitHubToken {
+                        retiredGitHubModelsRow
+                    }
                 } header: {
                     Text("Cloud API keys (BYOK)")
                 } footer: {
-                    Text("Keys are stored in the Keychain (this device only) — never in code, files, or logs. GitHub Models rides your GitHub/Copilot account: use a fine-grained token with the models:read permission.")
+                    Text("Keys are stored in the Keychain (this device only) — never in code, files, or logs.")
                 }
 
                 Section {
@@ -79,6 +84,21 @@ struct HybridSettingsView: View {
             }
         }
         .frame(minWidth: 460, minHeight: 520)
+        .onAppear { hasRetiredGitHubToken = KeychainStore.hasKey(for: Self.retiredGitHubModelsAccount) }
+    }
+
+    private var retiredGitHubModelsRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("GitHub Models")
+            Text("GitHub retired GitHub Models on 2026-07-30. A token for it is still stored in the Keychain and is no longer used.")
+                .font(.caption).foregroundStyle(.secondary)
+            Button("Delete stored GitHub token", role: .destructive) {
+                KeychainStore.delete(for: Self.retiredGitHubModelsAccount)
+                hasRetiredGitHubToken = KeychainStore.hasKey(for: Self.retiredGitHubModelsAccount)
+            }
+            .font(.caption)
+            .buttonStyle(.borderless)   // only the button deletes, not a tap anywhere on the row
+        }
     }
 
     @ViewBuilder

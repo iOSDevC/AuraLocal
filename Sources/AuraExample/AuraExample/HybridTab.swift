@@ -94,7 +94,7 @@ struct HybridTab: View {
         let policy = HybridSettings.shared.policy
         let candidates = await HybridEscalator.candidateTargets(policy: policy)
         guard let target = candidates.first else {
-            errorText = "No provider available. Start Ollama/llama-server, or add a cloud key (Anthropic / OpenAI / GitHub Models) in Settings (⚙) and allow cloud."
+            errorText = "No provider available. Start Ollama/llama-server, or add an Anthropic or OpenAI key in Settings (⚙) and allow cloud."
             return
         }
 
@@ -222,12 +222,12 @@ struct HybridTab: View {
         Section {
             integrateRow("Swift Package", ".package(url: \"…/AuraLocal.git\", branch: \"main\")")
             integrateRow("CLI · detect providers", "aura providers")
-            integrateRow("CLI · ask GitHub Models", "aura ask \"…\" --model openai/gpt-4o")
+            integrateRow("CLI · ask a bigger model", "aura ask \"…\" [--provider openai|anthropic]")
             integrateRow("CLI · native OCR", "aura ocr image.png")
         } header: {
             Text("Integrate")
         } footer: {
-            Text("The same features run headlessly via the `aura` CLI (build: scripts/build-cli.sh) and this app ships as a .dmg (scripts/build-app.sh). GitHub Models needs a fine-grained PAT with models:read — set it above, or export AURA_GITHUB_TOKEN for the CLI.")
+            Text("The same features run headlessly via the `aura` CLI (build: scripts/build-cli.sh) and this app ships as a .dmg (scripts/build-app.sh). `aura ask` uses your llama-server / Ollama by default and a cloud API only when you name one; export OPENAI_API_KEY or ANTHROPIC_API_KEY for the CLI.")
         }
     }
 

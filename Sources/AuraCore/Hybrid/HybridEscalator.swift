@@ -124,37 +124,46 @@ public final class HybridEscalator {
 
     // MARK: - Cloud targets (Phase 2)
 
-    /// Build cloud escalation targets from Keychain-stored API keys (BYOK).
+    /// Build cloud escalation targets from Keychain-stored API keys (BYOK):
+    /// `cloud.anthropic`, then `cloud.openai`.
     public static func cloudTargets(
         allowCloud: Bool,
-        anthropicModel: String = "claude-sonnet-4-5",
-        openAIModel: String = "gpt-4o",
-        gitHubModelsModel: String = "openai/gpt-4o"
+        anthropicModel: String = RemoteTarget.defaultAnthropicModel,
+        openAIModel: String = RemoteTarget.defaultOpenAIModel
+    ) -> [RemoteTarget] {
+        cloudTargets(
+            allowCloud: allowCloud, anthropicModel: anthropicModel, openAIModel: openAIModel,
+            readKey: KeychainStore.read(for:))
+    }
+
+    /// ``cloudTargets(allowCloud:anthropicModel:openAIModel:)`` with an injected key reader.
+    nonisolated static func cloudTargets(
+        allowCloud: Bool,
+        anthropicModel: String = RemoteTarget.defaultAnthropicModel,
+        openAIModel: String = RemoteTarget.defaultOpenAIModel,
+        readKey: (String) -> String?
     ) -> [RemoteTarget] {
         guard allowCloud else { return [] }
         var targets: [RemoteTarget] = []
-        if let key = KeychainStore.read(for: "cloud.anthropic") {
-            targets.append(RemoteTarget(
-                provider: AnthropicProvider(apiKey: key),
-                modelID: anthropicModel, contextLength: 200_000, origin: .cloud))
+        if let key = readKey(CloudAccount.anthropic) {
+            targets.append(.anthropic(apiKey: key, model: anthropicModel))
         }
-        if let key = KeychainStore.read(for: "cloud.openai") {
-            let provider = OpenAICompatibleProvider(
-                id: "cloud.openai", displayName: "OpenAI",
-                baseURL: URL(string: "https://api.openai.com/v1")!, apiKey: key,
-                retentionNote: "Sent to OpenAI's API. See their data-retention policy.")
-            targets.append(RemoteTarget(
-                provider: provider, modelID: openAIModel, contextLength: 128_000, origin: .cloud))
-        }
-        // GitHub Models: official OpenAI-compatible endpoint, powered by the user's
-        // GitHub/Copilot account (PAT with models:read). Free-tier rate-capped, so a
-        // 429 falls through to the next target as an ordinary provider error.
-        if let key = KeychainStore.read(for: "cloud.github-models") {
-            targets.append(RemoteTarget(
-                provider: OpenAICompatibleProvider.gitHubModels(apiKey: key),
-                modelID: gitHubModelsModel, contextLength: 128_000, origin: .cloud))
+        if let key = readKey(CloudAccount.openAI) {
+            targets.append(.openAI(apiKey: key, model: openAIModel))
         }
         return targets
+    }
+
+    /// Retired: GitHub shut down GitHub Models on 2026-07-30. A key still stored
+    /// under `cloud.github-models` is no longer read.
+    @available(*, unavailable, message: "GitHub retired GitHub Models on 2026-07-30. Drop gitHubModelsModel and call cloudTargets(allowCloud:anthropicModel:openAIModel:), or use a local llama-server/Ollama or OpenAICompatibleProvider(id:displayName:baseURL:apiKey:).")
+    public static func cloudTargets(
+        allowCloud: Bool,
+        anthropicModel: String = RemoteTarget.defaultAnthropicModel,
+        openAIModel: String = RemoteTarget.defaultOpenAIModel,
+        gitHubModelsModel: String
+    ) -> [RemoteTarget] {
+        fatalError("GitHub retired GitHub Models on 2026-07-30.")
     }
 
     /// Candidate targets in preference order: the user's own LAN box first, then

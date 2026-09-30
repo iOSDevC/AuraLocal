@@ -1,7 +1,7 @@
 import XCTest
 @testable import AuraCore
 
-/// `AskTargetResolver` with an injected key reader: no test
+/// `AskTargetResolver` and `cloudTargets` with an injected key reader: no test
 /// here touches the real Keychain or the network.
 final class AskTargetResolverTests: XCTestCase {
 
@@ -209,6 +209,20 @@ final class AskTargetResolverTests: XCTestCase {
             provider: .anthropic, environmentVariable: "ANTHROPIC_API_KEY", keychainAccount: "cloud.anthropic"))
     }
 
+    func testCloudDefaultsMatchCloudTargets() throws {
+        let keychain = everyAccountKeychain()
+        let cloud = HybridEscalator.cloudTargets(allowCloud: true, readKey: keychain.read)
+        for choice in [AskTargetResolver.Choice.openAI, .anthropic] {
+            let target = try resolve(choice, keychain: keychain)
+            let twin = try XCTUnwrap(cloud.first { $0.provider.id == target.provider.id })
+            XCTAssertEqual(target.modelID, twin.modelID)
+            XCTAssertEqual(target.contextLength, twin.contextLength)
+            XCTAssertEqual(target.origin, twin.origin)
+            XCTAssertEqual(target.provider.displayName, twin.provider.displayName)
+            XCTAssertEqual(target.provider.retentionNote, twin.provider.retentionNote)
+        }
+    }
+
     func testExplicitModelOverridesTheCloudDefault() throws {
         let target = try resolve(.openAI, model: "gpt-4.1", environment: allCloudKeys)
         XCTAssertEqual(target.modelID, "gpt-4.1")
@@ -289,5 +303,19 @@ final class AskTargetResolverTests: XCTestCase {
         for host in publicHosts {
             XCTAssertFalse(AskTargetResolver.isLocalNetworkHost(host), host)
         }
+    }
+
+    // MARK: - cloudTargets
+
+    func testCloudTargetsNeverIncludeGitHubModels() {
+        let keychain = everyAccountKeychain()
+        let targets = HybridEscalator.cloudTargets(allowCloud: true, readKey: keychain.read)
+        XCTAssertEqual(targets.map(\.provider.id), ["cloud.anthropic", "cloud.openai"])
+        XCTAssertFalse(keychain.requested.contains("cloud.github-models"))
+    }
+
+    @MainActor
+    func testCloudTargetsEmptyWhenCloudDisallowed() {
+        XCTAssertTrue(HybridEscalator.cloudTargets(allowCloud: false).isEmpty)
     }
 }

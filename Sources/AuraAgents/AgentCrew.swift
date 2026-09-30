@@ -248,8 +248,8 @@ public final class AgentCrew: ObservableObject {
             )
             let architectLocal = try await architect.run("Propose structured recommendations for '\(topic)'.")
             // Hybrid: if the local draft looks weak, transparently escalate THIS step
-            // to a bigger model (LAN or GitHub Models), reusing the router's
-            // compression + consent + cost machinery. Fail-closed to the local draft.
+            // to a bigger model (the LAN box, or a cloud key the policy allows), reusing
+            // the router's compression + consent + cost machinery. Fail-closed to the local draft.
             let architecture = await escalateIfWeak(
                 topic: topic, localAnswer: architectLocal, policy: policy, consent: consent, domain: domain)
             try await memory.write(role: "Architect", content: architecture)

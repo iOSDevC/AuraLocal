@@ -3,12 +3,13 @@ import Foundation
 /// A ``RemoteLLMProvider`` speaking the OpenAI `/chat/completions` dialect.
 ///
 /// One conformer covers hosted OpenAI, the user's own `llama-server`
-/// (`http://127.0.0.1:8080/v1`), Ollama's `/v1` compat endpoint, and GitHub
-/// Models (`https://models.github.ai/inference`). `baseURL` is the segment the
-/// `chat/completions` path is appended to; the API key is optional (local
-/// servers ignore it). `streaming` picks SSE deltas (default) or a single
-/// non-streamed JSON response — the robust path for endpoints whose SSE/usage
-/// support is unverified.
+/// (`http://127.0.0.1:8080/v1`), Ollama's `/v1` compat endpoint, and any other
+/// OpenAI-compatible server. `baseURL` is the segment the `chat/completions`
+/// path is appended to; the API key is optional (local servers ignore it).
+/// `streaming` picks SSE deltas (default) or a single non-streamed JSON
+/// response — the robust path for endpoints whose SSE/usage support is
+/// unverified. The GitHub Models preset is unavailable: GitHub retired that
+/// service on 2026-07-30.
 public struct OpenAICompatibleProvider: RemoteLLMProvider {
     public let id: String
     public let displayName: String
@@ -44,19 +45,11 @@ public struct OpenAICompatibleProvider: RemoteLLMProvider {
             retentionNote: "Runs on your own machine — nothing leaves your device.")
     }
 
-    /// Build a provider for **GitHub Models** — GitHub's official, OpenAI-compatible
-    /// inference API, powered by the user's GitHub/Copilot account. Auth is a
-    /// fine-grained PAT with the `models:read` permission. Uses the non-streaming
-    /// path so token `usage` is always returned for the cost ledger, regardless of
-    /// the endpoint's SSE behavior.
+    /// Retired: GitHub shut down GitHub Models on 2026-07-30, and its endpoint no
+    /// longer serves completions.
+    @available(*, unavailable, message: "GitHub retired GitHub Models on 2026-07-30. Use a local llama-server/Ollama (OpenAICompatibleProvider.from(_:)), OpenAI, Anthropic, or OpenAICompatibleProvider(id:displayName:baseURL:apiKey:).")
     public static func gitHubModels(apiKey: String) -> OpenAICompatibleProvider {
-        OpenAICompatibleProvider(
-            id: "cloud.github-models",
-            displayName: "GitHub Models",
-            baseURL: URL(string: "https://models.github.ai/inference")!,
-            apiKey: apiKey,
-            streaming: false,
-            retentionNote: "Sent to GitHub Models (models.github.ai) with your GitHub token. See GitHub's data-retention terms.")
+        fatalError("GitHub retired GitHub Models on 2026-07-30. Use a local llama-server/Ollama (OpenAICompatibleProvider.from(_:)), OpenAI, Anthropic, or OpenAICompatibleProvider(id:displayName:baseURL:apiKey:).")
     }
 
     public func stream(_ request: RemoteRequest) -> AsyncThrowingStream<RemoteEvent, Error> {
@@ -88,7 +81,7 @@ public struct OpenAICompatibleProvider: RemoteLLMProvider {
 
     /// Non-streaming path: one POST, decode the full completion, yield the whole
     /// message plus exact usage. Robust for endpoints whose SSE/usage support is
-    /// unverified (e.g. GitHub Models).
+    /// unverified.
     private func sendOnce(_ request: RemoteRequest) -> AsyncThrowingStream<RemoteEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
