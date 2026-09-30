@@ -1,0 +1,47 @@
+name: ModelFinder
+options:
+  bundleIdPrefix: dev.auralocal.examples
+  deploymentTarget:
+    iOS: "18.0"
+    macOS: "15.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+packages:
+  AuraLocal:
+    path: ../..
+targets:
+  ModelFinder:
+    type: application
+    supportedDestinations: [iOS, macOS]
+    sources:
+      - path: ModelFinder
+    dependencies:
+      - package: AuraLocal
+        product: AuraCore
+    scheme: {}
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.auralocal.examples.ModelFinder
+        PRODUCT_NAME: ModelFinder
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        # AuraCore is built with C++ interop (llama.cpp), so every importer needs it too.
+        SWIFT_OBJC_INTEROP_MODE: objcxx
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Model Finder
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        # Runs locally on a Mac without a team; set DEVELOPMENT_TEAM to sign for devices.
+        "CODE_SIGN_IDENTITY[sdk=macosx*]": "-"
+        # Sandboxed Mac app that only talks to huggingface.co.
+        "ENABLE_APP_SANDBOX[sdk=macosx*]": YES
+        "ENABLE_OUTGOING_NETWORK_CONNECTIONS[sdk=macosx*]": YES
+        # llama.framework (LocalLLMClient's binary target) is embedded in Contents/Frameworks on macOS.
+        "LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]": "$(inherited) @executable_path/../Frameworks"
+        ENABLE_PREVIEWS: YES
