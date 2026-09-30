@@ -233,8 +233,11 @@ final class ModelCompatibilityTests: XCTestCase {
         XCTAssertEqual(Set(report.blockers.map(\.rule)), ["format", "mlx.model-type"])
         XCTAssertTrue(report.findings.contains { $0.title == "Custom license `qwen-community-1.0`" })
     }
+}
 
-    // MARK: - GGUF
+// MARK: - GGUF, fit, licenses, entries
+
+extension ModelCompatibilityTests {
 
     func testQwen35WithNextNNeedsANewerLlamaCpp() throws {
         let header = try GGUFHeaderParser.parse(GGUFBytes.qwen35(nextn: 1).encoded)
