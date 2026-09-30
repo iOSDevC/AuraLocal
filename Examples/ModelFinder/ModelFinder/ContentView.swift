@@ -15,7 +15,7 @@ struct ContentView: View {
         } detail: {
             detail
         }
-        .task { await finder.search() }
+        .task { finder.search() }
     }
 
     @ViewBuilder private var detail: some View {
@@ -60,9 +60,9 @@ struct ResultsList: View {
             }
         }
         .searchable(text: $finder.query, prompt: "Search Hugging Face models")
-        .onSubmit(of: .search) { Task { await finder.search() } }
-        .onChange(of: finder.formatChoice) { Task { await finder.search() } }
-        .onChange(of: finder.ordering) { Task { await finder.search() } }
+        .onSubmit(of: .search) { finder.search() }
+        .onChange(of: finder.formatChoice) { finder.search() }
+        .onChange(of: finder.ordering) { finder.search() }
         .overlay {
             if finder.isSearching && finder.matches.isEmpty {
                 ProgressView("Searching…")

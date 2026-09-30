@@ -6,8 +6,9 @@ run it on a given device — and if not, why. It is a UI over `ModelCompatibilit
 
 - Search field, format filter (MLX / GGUF), sort, and a device picker (this device, iPhone classes, Macs — each
   budget labelled measured or estimate, with its source).
-- Results show a verdict badge per row. Checks run lazily when a row appears, are cached per repo, and are
-  cancelled when the row scrolls away. Changing the device re-evaluates the cache without refetching.
+- Results show a verdict badge per row. Checks run lazily when a row appears and are cached per repo; a row and
+  the detail pane share one fetch, which is cancelled only when no view waits on it any more. A new search cancels
+  the one in flight. Changing the device re-evaluates the cache without refetching.
 - The detail view lists the findings (blockers first), the per-quant fit table for GGUF repos, a config summary,
   license and gating, **Copy catalog entry** (the exact `models.json` entry) and **Open on Hugging Face**.
 
@@ -36,7 +37,12 @@ xcodebuild -project ModelFinder.xcodeproj -scheme ModelFinder -destination 'gene
 ```
 
 To run on a device, set your team in Signing & Capabilities. The Mac build is sandboxed with outgoing network
-access only. Gated repositories need a Hugging Face token saved in the Keychain under
-`download.huggingface` (the same account AuraLocal's downloaders read).
+access only.
+
+Model Finder has no token field, so gated repositories are judged from their listing alone: `config.json` and
+file headers come back as HTTP 401 caveats and the verdict is often *Unknown*. It sends a token only if one is
+saved under the Keychain account `download.huggingface` where this app can read it — on iOS every app has its own
+Keychain items, so another app's token is not visible; on macOS it depends on the item's access control (not
+tested). For gated repos, use `aura models check` with the token in your login Keychain.
 
 The same checks are available headless: `aura models search "<query>"` and `aura models check <repo>`.

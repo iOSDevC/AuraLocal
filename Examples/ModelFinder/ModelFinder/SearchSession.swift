@@ -33,14 +33,16 @@ final class SearchSession {
     }
 
     private(set) var matches: [HFModelHit] = []
-    private(set) var isSearching = false
     private(set) var searchError: String?
     private(set) var reports: [String: CompatibilityReport] = [:]
 
     let devices = DevicePreset.all()
     private var snapshots: [String: RepoSnapshot] = [:]
-    private var loading: Set<String> = []
+    private var fetches: [String: SnapshotFetch] = [:]
+    private var searchTask: Task<Void, Never>?
     private let inspector = ModelCompatibilityChecker()
+
+    var isSearching: Bool { searchTask != nil }
 
     var currentTarget: DevicePreset {
         devices.first { $0.id == deviceID } ?? devices[0]
@@ -52,34 +54,81 @@ final class SearchSession {
         return matches.filter { reports[$0.id].map { $0.status != .notRunnable } ?? true }
     }
 
-    func search() async {
+    /// Starts a search and cancels the one in flight, so an older query can never overwrite a newer one.
+    func search() {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        isSearching = true
+        searchTask?.cancel()
         searchError = nil
-        defer { isSearching = false }
-        do {
-            matches = try await HuggingFaceSearch.search(text, limit: 40, sort: ordering, tag: formatChoice.tag)
-        } catch {
-            matches = []
-            searchError = error.localizedDescription
+        let sort = ordering
+        let tag = formatChoice.tag
+        searchTask = Task {
+            let found: [HFModelHit]
+            let failure: String?
+            do {
+                found = try await HuggingFaceSearch.search(text, limit: 40, sort: sort, tag: tag)
+                failure = nil
+            } catch {
+                found = []
+                failure = error.localizedDescription
+            }
+            // Runs on the main actor, so a newer search() either cancelled this one already or has not started.
+            guard !Task.isCancelled else { return }
+            matches = found
+            searchError = failure
+            searchTask = nil
         }
     }
 
-    /// Fetch one repo's snapshot the first time its row appears. The row's `.task` cancels this when it
-    /// scrolls away; a cancelled fetch is dropped so it runs again next time.
+    /// Fetches one repo's snapshot the first time a row or the detail pane asks. Every caller waits on the same
+    /// fetch; it is cancelled only when all of them have gone away, and a finished fetch is always cached.
     func loadReport(for repoID: String) async {
-        guard snapshots[repoID] == nil, !loading.contains(repoID) else { return }
-        loading.insert(repoID)
-        defer { loading.remove(repoID) }
-        let snapshot = await inspector.snapshot(of: repoID)
-        guard !Task.isCancelled else { return }
+        guard snapshots[repoID] == nil else { return }
+        let fetch = join(repoID)
+        let token = fetch.token
+        let snapshot = await withTaskCancellationHandler {
+            await fetch.work.value
+        } onCancel: {
+            Task { @MainActor in self.leave(repoID, token: token) }
+        }
+        if fetches[repoID]?.token == token { fetches[repoID] = nil }
+        guard !fetch.work.isCancelled, snapshots[repoID] == nil else { return }
         snapshots[repoID] = snapshot
         reports[repoID] = CompatibilityEvaluator.evaluate(snapshot, on: currentTarget)
+    }
+
+    private func join(_ repoID: String) -> SnapshotFetch {
+        if var running = fetches[repoID] {
+            running.waiters += 1
+            fetches[repoID] = running
+            return running
+        }
+        let inspector = inspector
+        let started = SnapshotFetch(work: Task { await inspector.snapshot(of: repoID) }, token: UUID(), waiters: 1)
+        fetches[repoID] = started
+        return started
+    }
+
+    private func leave(_ repoID: String, token: UUID) {
+        guard var running = fetches[repoID], running.token == token else { return }
+        running.waiters -= 1
+        if running.waiters > 0 {
+            fetches[repoID] = running
+        } else {
+            running.work.cancel()
+            fetches[repoID] = nil
+        }
     }
 
     private func reevaluate() {
         let target = currentTarget
         reports = snapshots.mapValues { CompatibilityEvaluator.evaluate($0, on: target) }
     }
+}
+
+/// One in-flight snapshot fetch and how many views wait on it.
+private struct SnapshotFetch {
+    let work: Task<RepoSnapshot, Never>
+    let token: UUID
+    var waiters: Int
 }
