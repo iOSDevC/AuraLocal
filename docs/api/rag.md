@@ -52,7 +52,7 @@ static let shared: DocumentLibrary
 ```swift
 // Actor-isolated, so call with await. visionLLM is needed to index image files.
 func configure(embeddingProvider: any EmbeddingProvider, llm: AuraLocal, visionLLM: AuraLocal? = nil)
-func open() async throws
+func open() async throws   // also removes duplicate entries earlier versions stored for one file, keeping the newest with chunks
 func close() async
 ```
 
@@ -63,7 +63,7 @@ func close() async
 func add(
     url: URL,
     onProgress: @escaping @MainActor (String) -> Void = { _ in }
-) async throws -> IndexedDocument   // returns the existing entry only for a file already added in this app launch
+) async throws -> IndexedDocument   // returns the existing entry, without parsing, for a file already indexed in any launch
 
 // Rebuilds TF-IDF weights from the stored chunks after batch indexing. Only acts when the
 // configured provider is an AutoEmbeddingProvider; a TFIDFEmbeddingProvider passed directly is skipped.
@@ -274,7 +274,7 @@ TabView {
 
 | Stage | Example | % in DocsTab |
 |-------|---------|---|
-| Already indexed in this launch (`add` returns the existing entry) | `"'MyDoc.pdf' already indexed."` | 100% |
+| Already indexed, in any launch (`add` returns the existing entry) | `"'MyDoc.pdf' already indexed."` | 100% |
 | Parsing | `"Parsing MyDoc.pdf…"` | 5% |
 | Chunking | `"Chunking MyDoc…"` | 15% |
 | Re-embedding (only when the stored vectors came from another provider) | `"Re-embedding 400 chunks…"`, then `"Re-embedding 50/400 chunks: 12%"` per batch of 50 | 15–100% |
