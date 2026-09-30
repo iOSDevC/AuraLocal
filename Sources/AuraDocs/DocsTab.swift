@@ -545,10 +545,13 @@ final class DocsViewModel: ObservableObject {
     private let store   = ConversationStore.shared
     private var llm: AuraLocal?
     private var vlm: AuraLocal?
+    private var isSetUp = false
     
     // MARK: - Setup
     
     func setup() async {
+        // `.task` runs again on every appearance; reloading would repeat the embedding warm-up.
+        guard !isSetUp else { return }
         progress = "Loading model..."
         do {
             // Reuse already-loaded models from other tabs via ModelManager
@@ -568,6 +571,7 @@ final class DocsViewModel: ObservableObject {
             
             progress = "Ready - \(embeddingBackend)"
             isReady  = true
+            isSetUp  = true
         } catch {
             progress = "Error: \(error.localizedDescription)"
         }
