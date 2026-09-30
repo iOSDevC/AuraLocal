@@ -260,4 +260,74 @@ final class OutputSchemaValidatorTests: XCTestCase {
             XCTAssertEqual(found.map(\.description), [#"(root): missing required property "name""#])
         }
     }
+
+    func testConformingJSONSkipsEarlierValuesThatDoNotConform() throws {
+        let aged = try compile(#"{"type":"object","required":["age"]}"#)
+        XCTAssertEqual(try aged.conformingJSON(in: #"As shown in [1], the answer is {"age":1}"#), #"{"age":1}"#)
+        XCTAssertEqual(try aged.conformingJSON(in: "Draft:\n```json\n{\"x\":0}\n```\nFinal: {\"age\":2}"), #"{"age":2}"#)
+
+        XCTAssertThrowsError(try aged.conformingJSON(in: #"See [1] and {"x":0}"#)) { error in
+            guard case .violations(_, let found) = error as? OutputSchemaError else {
+                return XCTFail("expected violations, got \(error)")
+            }
+            XCTAssertEqual(found.map(\.description), ["(root): expected object, got array"], "the first value's violations")
+        }
+    }
+
+    func testValuesNestedInAParsedValueAreNotCandidates() throws {
+        let named = try compile(#"{"type":"object","required":["name"]}"#)
+        XCTAssertThrowsError(try named.conformingJSON(in: #"Here: {"people":[{"name":"a"}]}"#))
+        XCTAssertEqual(try named.conformingJSON(in: #"Set {x {"name":"a"}} done"#), #"{"name":"a"}"#)
+    }
+
+    func testReasoningBlocksAreDroppedBeforeExtraction() throws {
+        let aged = try compile(#"{"type":"object","required":["age"]}"#)
+        XCTAssertEqual(try aged.conformingJSON(in: "<think>try {\"x\":0}</think>\n{\"age\":1}"), #"{"age":1}"#)
+        XCTAssertEqual(try aged.conformingJSON(in: "draft {\"x\":0}</think>{\"age\":1}"), #"{"age":1}"#)
+        XCTAssertNil(OutputSchemaValidator.extractJSON(from: "<think>maybe {\"age\":1}"))
+        XCTAssertEqual(OutputSchemaValidator.withoutReasoning("a<think>b</think>c<think>d</think>e"), "ace")
+        XCTAssertEqual(OutputSchemaValidator.withoutReasoning("no reasoning"), "no reasoning")
+    }
+
+    func testParsingIsStrictJSON() throws {
+        let anything = try compile("true")
+        let notJSON = [OutputSchemaViolation(path: "", message: "not valid JSON")]
+        let rejected = ["[1,]", #"{"a":1,}"#, #"{"a":1,"a":2}"#, "01", "1.", ".5", "+1", "NaN", "Infinity", "'a'",
+                        #"{a:1}"#, #""\u+fff""#, #""\ud800""#, "\"tab\there\"", "[1] [2]", "// c\n1"]
+        for text in rejected {
+            XCTAssertEqual(anything.validate(text), notJSON, text)
+        }
+        let accepted = [#""\ud83d\ude42""#, "-0", "1E+2", "0.5e-3", #" {"a" : [ null , true ] } "#, #""\/\b\f""#]
+        for text in accepted {
+            XCTAssertEqual(anything.validate(text), [], text)
+        }
+        XCTAssertEqual(try compile(#"{"const":"🙂"}"#).validate(#""\ud83d\ude42""#), [])
+        XCTAssertThrowsError(try compile(#"{"type":"object"}"#).conformingJSON(in: #"{"age":1,}"#))
+        let deep = String(repeating: "[", count: 600) + String(repeating: "]", count: 600)
+        XCTAssertEqual(anything.validate(deep), notJSON, "nesting is capped")
+    }
+
+    func testNumbersCompareExactly() throws {
+        let big = try compile(#"{"const":9007199254740993}"#)
+        XCTAssertEqual(big.validate("9007199254740993"), [])
+        XCTAssertEqual(big.validate("9007199254740992").first?.message, "must equal 9007199254740993")
+
+        let capped = try compile(#"{"maximum":9007199254740992}"#)
+        XCTAssertEqual(capped.validate("9007199254740993").first?.message,
+                       "must be <= 9007199254740992, got 9007199254740993")
+
+        let huge = try compile(#"{"type":"integer","exclusiveMaximum":1e400}"#)
+        XCTAssertEqual(huge.validate("1e399"), [])
+        XCTAssertEqual(huge.validate("1e400").first?.message, "must be < 1e400, got 1e400")
+        XCTAssertEqual(try compile(#"{"type":"number"}"#).validate("-1.5e-400"), [])
+        XCTAssertEqual(try compile(#"{"type":"integer"}"#).validate("1.5e-400").first?.message, "expected integer, got number")
+
+        let listed = try compile(#"{"enum":[1, 0.25]}"#)
+        for spelling in ["1", "1.0", "10e-1", "0.25", "25e-2", "2.50E-1"] {
+            XCTAssertEqual(listed.validate(spelling), [], spelling)
+        }
+        XCTAssertEqual(try compile(#"{"minimum":-2.5}"#).validate("-3").first?.message, "must be >= -2.5, got -3")
+        XCTAssertEqual(try compile(#"{"minimum":0.000001}"#).validate("0").first?.message, "must be >= 0.000001, got 0")
+        XCTAssertEqual(try compile(#"{"maximum":1e-7}"#).validate("1").first?.message, "must be <= 1e-7, got 1")
+    }
 }

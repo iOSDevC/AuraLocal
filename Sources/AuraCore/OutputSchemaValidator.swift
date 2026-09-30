@@ -74,39 +74,68 @@ public struct OutputSchemaValidator: Sendable {
         return Self.violations(of: value, against: root, at: "")
     }
 
-    /// Extracts the JSON value from raw model output (see ``extractJSON(from:)``) and returns its text when it
-    /// conforms; otherwise throws ``OutputSchemaError/violations(output:violations:)``.
+    /// Returns the text of the first JSON value in raw model output that conforms (candidates in
+    /// ``extractJSON(from:)`` order); otherwise throws ``OutputSchemaError/violations(output:violations:)`` with the
+    /// violations of the first value found.
     public func conformingJSON(in output: String) throws(OutputSchemaError) -> String {
         try check(output).get()
     }
 
     func check(_ output: String) -> Result<String, OutputSchemaError> {
-        guard let json = Self.extractJSON(from: output) else {
-            let missing = OutputSchemaViolation(path: "", message: "no JSON value found in the reply")
-            return .failure(.violations(output: output, violations: [missing]))
+        var firstFound: [OutputSchemaViolation]?
+        for candidate in Self.candidates(in: output) {
+            let found = Self.violations(of: candidate.value, against: root, at: "")
+            if found.isEmpty { return .success(candidate.text) }
+            if firstFound == nil { firstFound = found }
         }
-        let found = validate(json)
-        return found.isEmpty ? .success(json) : .failure(.violations(output: output, violations: found))
+        let found = firstFound ?? [OutputSchemaViolation(path: "", message: "no JSON value found in the reply")]
+        return .failure(.violations(output: output, violations: found))
     }
 
-    /// The JSON value in raw model output: the whole trimmed text when it is JSON, else the first ```` ```json ````
-    /// (or bare ```` ``` ````) fenced block that parses, else the first balanced `{…}` or `[…]` that parses.
-    /// Brace matching skips string literals. `nil` when none is found.
+    /// The first JSON value in raw model output. Candidates, in order: the whole trimmed text; then, with
+    /// `<think>…</think>` reasoning dropped, the whole text again, each ```` ```json ```` (or bare ```` ``` ````)
+    /// fenced block, and each top-level balanced `{…}` or `[…]`. A candidate counts only when it parses as strict
+    /// JSON; brace matching skips string literals. `nil` when none is found.
     public static func extractJSON(from output: String) -> String? {
-        if let whole = parsedText(output[...]) { return whole }
-        for block in fencedBlocks(in: output) {
-            if let json = parsedText(block) { return json }
-        }
-        return firstBalancedValue(in: output)
+        candidates(in: output).first?.text
     }
 }
 
 // MARK: - Extraction
 
 extension OutputSchemaValidator {
-    private static func parsedText(_ candidate: Substring) -> String? {
-        let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-        return JSONValue.parse(trimmed) == nil ? nil : trimmed
+    private struct Candidate {
+        let text: String
+        let value: JSONValue
+    }
+
+    private static func candidates(in output: String) -> [Candidate] {
+        if let whole = candidate(output[...]) { return [whole] }
+        let answer = withoutReasoning(output)
+        if let whole = candidate(answer[...]) { return [whole] }
+        return fencedBlocks(in: answer).compactMap(candidate) + balancedValues(in: answer)
+    }
+
+    private static func candidate(_ text: Substring) -> Candidate? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return JSONValue.parse(trimmed).map { Candidate(text: trimmed, value: $0) }
+    }
+
+    /// Drops `<think>…</think>` spans, a reasoning prefix closed by a lone `</think>` (chat templates that open
+    /// the block in the prompt), and an unterminated `<think>` with everything after it.
+    static func withoutReasoning(_ text: String) -> String {
+        var rest = text[...]
+        if let close = rest.range(of: "</think>"),
+           rest.range(of: "<think>").map({ $0.lowerBound > close.lowerBound }) ?? true {
+            rest = rest[close.upperBound...]
+        }
+        var answer = ""
+        while let open = rest.range(of: "<think>") {
+            answer += rest[..<open.lowerBound]
+            guard let close = rest[open.upperBound...].range(of: "</think>") else { return answer }
+            rest = rest[close.upperBound...]
+        }
+        return answer + rest
     }
 
     private static func fencedBlocks(in text: String) -> [Substring] {
@@ -123,17 +152,18 @@ extension OutputSchemaValidator {
     }
 
     // Byte-level scan is safe: every delimiter is ASCII and UTF-8 continuation bytes never are.
-    private static func firstBalancedValue(in text: String) -> String? {
+    private static func balancedValues(in text: String) -> [Candidate] {
         let bytes = Array(text.utf8)
+        var found: [Candidate] = []
         var start = 0
         while let open = bytes[start...].firstIndex(where: { $0 == ASCII.openBrace || $0 == ASCII.openBracket }) {
-            if let end = balancedEnd(in: bytes, from: open),
-               let json = parsedText(decodedSlice(bytes[open...end])) {
-                return json
-            }
             start = open + 1
+            guard let end = balancedEnd(in: bytes, from: open),
+                  let value = candidate(decodedSlice(bytes[open...end])) else { continue }
+            found.append(value)
+            start = end + 1                            // values nested in an accepted one are not candidates
         }
-        return nil
+        return found
     }
 
     private static func decodedSlice(_ slice: ArraySlice<UInt8>) -> Substring {
@@ -231,20 +261,19 @@ extension OutputSchemaValidator {
         return found
     }
 
-    private static func rangeViolations(_ number: Double, rules: SchemaRules, at pointer: String) -> [OutputSchemaViolation] {
+    private static func rangeViolations(_ number: JSONNumber, rules: SchemaRules, at pointer: String) -> [OutputSchemaViolation] {
         var found: [OutputSchemaViolation] = []
-        let shown = JSONValue.format(number)
         if let bound = rules.minimum, number < bound {
-            found.append(violation(pointer, "must be >= \(JSONValue.format(bound)), got \(shown)"))
+            found.append(violation(pointer, "must be >= \(bound), got \(number)"))
         }
         if let bound = rules.maximum, number > bound {
-            found.append(violation(pointer, "must be <= \(JSONValue.format(bound)), got \(shown)"))
+            found.append(violation(pointer, "must be <= \(bound), got \(number)"))
         }
         if let bound = rules.exclusiveMinimum, number <= bound {
-            found.append(violation(pointer, "must be > \(JSONValue.format(bound)), got \(shown)"))
+            found.append(violation(pointer, "must be > \(bound), got \(number)"))
         }
         if let bound = rules.exclusiveMaximum, number >= bound {
-            found.append(violation(pointer, "must be < \(JSONValue.format(bound)), got \(shown)"))
+            found.append(violation(pointer, "must be < \(bound), got \(number)"))
         }
         return found
     }
@@ -336,10 +365,10 @@ private struct SchemaRules: Sendable {
     var maxItems: Int?
     var minLength: Int?
     var maxLength: Int?
-    var minimum: Double?
-    var maximum: Double?
-    var exclusiveMinimum: Double?
-    var exclusiveMaximum: Double?
+    var minimum: JSONNumber?
+    var maximum: JSONNumber?
+    var exclusiveMinimum: JSONNumber?
+    var exclusiveMaximum: JSONNumber?
     var allOf: [SchemaNode]?
     var anyOf: [SchemaNode]?
     var oneOf: [SchemaNode]?
@@ -354,7 +383,7 @@ private enum SchemaType: String, Sendable {
                  (.number, .number), (.string, .string):
                 return true
             case (.integer, .number(let number)):
-                return number.isFinite && number.rounded(.towardZero) == number
+                return number.isInteger
             default:
                 return false
         }
@@ -421,17 +450,28 @@ private struct SchemaCompiler {
             case "properties": compiled.properties = try subschemaMap(value, at: pointer)
             case "required": compiled.required = try Self.names(value, at: pointer)
             case "additionalProperties": compiled.additionalProperties = try node(value, at: pointer)
-            case "items":
-                if case .array = value {
-                    throw .invalidSchema("\(pointer) must be a single schema; the tuple form is not supported")
-                }
-                compiled.items = try node(value, at: pointer)
-            case "enum":
-                guard case .array(let allowed) = value, !allowed.isEmpty else {
-                    throw .invalidSchema("\(pointer) must be a non-empty array")
-                }
-                compiled.allowedValues = allowed
+            case "items": compiled.items = try itemsNode(value, at: pointer)
+            case "enum": compiled.allowedValues = try Self.allowedValues(value, at: pointer)
             case "const": compiled.constValue = value
+            case "allOf", "anyOf", "oneOf": try applyCombinator(key, value, to: &compiled, at: pointer)
+            default: try applyBound(key, value, to: &compiled, at: pointer)
+        }
+    }
+
+    private mutating func applyCombinator(_ key: String, _ value: JSONValue, to compiled: inout SchemaRules,
+                                          at pointer: String) throws(OutputSchemaError) {
+        let branches = try subschemaList(value, at: pointer)
+        switch key {
+            case "allOf": compiled.allOf = branches
+            case "anyOf": compiled.anyOf = branches
+            default: compiled.oneOf = branches
+        }
+    }
+
+    /// The count and numeric bound keywords, split from ``apply(_:_:to:at:)`` to keep each switch small.
+    private mutating func applyBound(_ key: String, _ value: JSONValue, to compiled: inout SchemaRules,
+                                     at pointer: String) throws(OutputSchemaError) {
+        switch key {
             case "minItems": compiled.minItems = try Self.count(value, at: pointer)
             case "maxItems": compiled.maxItems = try Self.count(value, at: pointer)
             case "minLength": compiled.minLength = try Self.count(value, at: pointer)
@@ -440,11 +480,22 @@ private struct SchemaCompiler {
             case "maximum": compiled.maximum = try Self.number(value, at: pointer)
             case "exclusiveMinimum": compiled.exclusiveMinimum = try Self.number(value, at: pointer)
             case "exclusiveMaximum": compiled.exclusiveMaximum = try Self.number(value, at: pointer)
-            case "allOf": compiled.allOf = try subschemaList(value, at: pointer)
-            case "anyOf": compiled.anyOf = try subschemaList(value, at: pointer)
-            case "oneOf": compiled.oneOf = try subschemaList(value, at: pointer)
             default: unsupported.append(pointer)
         }
+    }
+
+    private mutating func itemsNode(_ value: JSONValue, at pointer: String) throws(OutputSchemaError) -> SchemaNode {
+        if case .array = value {
+            throw .invalidSchema("\(pointer) must be a single schema; the tuple form is not supported")
+        }
+        return try node(value, at: pointer)
+    }
+
+    private static func allowedValues(_ value: JSONValue, at pointer: String) throws(OutputSchemaError) -> [JSONValue] {
+        guard case .array(let allowed) = value, !allowed.isEmpty else {
+            throw .invalidSchema("\(pointer) must be a non-empty array")
+        }
+        return allowed
     }
 
     private mutating func subschemaMap(_ value: JSONValue, at pointer: String) throws(OutputSchemaError) -> [String: SchemaNode] {
@@ -500,14 +551,13 @@ private struct SchemaCompiler {
     }
 
     private static func count(_ value: JSONValue, at pointer: String) throws(OutputSchemaError) -> Int {
-        guard case .number(let number) = value, number >= 0, number <= Double(Int32.max),
-              number.rounded(.towardZero) == number else {
+        guard case .number(let number) = value, let count = number.intValue, (0...Int(Int32.max)).contains(count) else {
             throw .invalidSchema("\(pointer) must be a non-negative integer")
         }
-        return Int(number)
+        return count
     }
 
-    private static func number(_ value: JSONValue, at pointer: String) throws(OutputSchemaError) -> Double {
+    private static func number(_ value: JSONValue, at pointer: String) throws(OutputSchemaError) -> JSONNumber {
         guard case .number(let number) = value else { throw .invalidSchema("\(pointer) must be a number") }
         return number
     }

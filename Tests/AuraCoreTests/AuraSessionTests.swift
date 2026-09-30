@@ -28,6 +28,7 @@ private struct TapTool: LLMTool {
                   onDelta: @escaping @MainActor (String) -> Void) async throws {
         lastSystemPrompt = systemPrompt
         generateCount += 1
+        log.events.append("\(id).generate")
         onDelta("hi from \(id)")
         if hangUntilCancelled {
             while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(2)) }
@@ -43,6 +44,15 @@ private struct TapTool: LLMTool {
 /// File-scope (no `self`) to avoid sending the non-Sendable test instance across the isolation boundary.
 private func drainOne(_ stream: AsyncThrowingStream<String, Error>) async throws {
     for try await _ in stream { break }
+}
+
+private func failure(of stream: AsyncThrowingStream<String, Error>) async -> (any Error)? {
+    do {
+        for try await _ in stream {}
+        return nil
+    } catch {
+        return error
+    }
 }
 
 /// Hands out engines in order so a makeEngine factory returns spyA, then spyB, …
@@ -166,5 +176,130 @@ final class AuraSessionTests: XCTestCase {
         XCTAssertFalse(spyA.didTeardown)   // no rebuild, no teardown
         XCTAssertEqual(spyB.generateCount, 0)
         session.cancel()
+    }
+
+    @MainActor
+    func testStreamRequestedDuringASwitchRunsOnTheNewEngine() async throws {
+        let log = Log()
+        let spyA = SpyEngine(id: "A", log: log); spyA.hangUntilCancelled = true
+        let spyB = SpyEngine(id: "B", log: log)
+        var builds = 0
+        let make: @MainActor (AuraProfile) async throws -> any AuraProfileEngine = { _ in
+            builds += 1
+            if builds == 1 { return spyA }
+            try await Task.sleep(for: .milliseconds(20))   // a slow load keeps the switch in progress
+            return spyB
+        }
+        let model = ggufModel()
+        let agent = AuraProfileCatalog.agent(model: model, tools: [TapTool()])
+        let session = try await AuraSession(profile: AuraProfileCatalog.chat(model: model), makeEngine: make)
+        let hold = session.stream("long")
+        try await Task.sleep(for: .milliseconds(10))
+
+        let switching = Task { try await session.switchProfile(to: agent) }
+        try await Task.sleep(for: .milliseconds(1))
+        var raced: [String] = []
+        for try await delta in session.stream("raced") { raced.append(delta) }
+        try await switching.value
+
+        XCTAssertEqual(raced, ["hi from B"])
+        XCTAssertEqual(spyA.generateCount, 1)
+        let teardown = try XCTUnwrap(log.events.firstIndex(of: "A.teardown"))
+        XCTAssertFalse(log.events[teardown...].contains("A.generate"))
+        withExtendedLifetime(hold) {}
+    }
+
+    @MainActor
+    func testSwitchAfterCancelStillWaitsForTheDecode() async throws {
+        let log = Log()
+        let spyA = SpyEngine(id: "A", log: log); spyA.hangUntilCancelled = true
+        let queue = EngineQueue([spyA, SpyEngine(id: "B", log: log)])
+        let model = ggufModel()
+        let session = try await AuraSession(profile: AuraProfileCatalog.chat(model: model)) { _ in queue.next() }
+        let hold = session.stream("long")
+        try await Task.sleep(for: .milliseconds(10))
+
+        session.cancel()
+        try await session.switchProfile(to: AuraProfileCatalog.agent(model: model, tools: [TapTool()]))
+
+        let cancelled = try XCTUnwrap(log.events.firstIndex(of: "A.cancelled"))
+        let torndown = try XCTUnwrap(log.events.firstIndex(of: "A.teardown"))
+        XCTAssertLessThan(cancelled, torndown)
+        withExtendedLifetime(hold) {}
+    }
+
+    @MainActor
+    func testSwitchBehindQueuedStreamsCompletes() async throws {
+        let log = Log()
+        let spyA = SpyEngine(id: "A", log: log); spyA.hangUntilCancelled = true
+        let queue = EngineQueue([spyA, SpyEngine(id: "B", log: log)])
+        let model = ggufModel()
+        let session = try await AuraSession(profile: AuraProfileCatalog.chat(model: model)) { _ in queue.next() }
+        let first = session.stream("one")
+        try await Task.sleep(for: .milliseconds(10))
+        let second = session.stream("two")             // waits for the first, which it cancelled
+
+        let switching = Task { try await session.switchProfile(to: AuraProfileCatalog.agent(model: model, tools: [TapTool()])) }
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(5)
+        while session.profile.id != "agent", clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+
+        XCTAssertEqual(session.profile.id, "agent", "the switch must not wait on a stream that waits on it")
+        guard session.profile.id == "agent" else { return }
+        try await switching.value
+        let firstFailure = await failure(of: first)
+        let secondFailure = await failure(of: second)
+        XCTAssertTrue(firstFailure is CancellationError)
+        XCTAssertTrue(secondFailure is CancellationError)
+    }
+
+    @MainActor
+    func testSwitchBackWhileASwitchIsPendingEndsOnTheLastProfile() async throws {
+        let log = Log()
+        var built: [String] = []
+        let make: @MainActor (AuraProfile) async throws -> any AuraProfileEngine = { profile in
+            if !built.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+            built.append(profile.id)
+            return SpyEngine(id: profile.id, log: log)
+        }
+        let model = ggufModel()
+        let chat = AuraProfileCatalog.chat(model: model)
+        let session = try await AuraSession(profile: chat, makeEngine: make)
+
+        let away = Task { try await session.switchProfile(to: AuraProfileCatalog.agent(model: model, tools: [TapTool()])) }
+        try await Task.sleep(for: .milliseconds(1))
+        try await session.switchProfile(to: chat)
+        try await away.value
+
+        XCTAssertEqual(session.profile.id, "chat")
+        XCTAssertEqual(built, ["chat", "agent", "chat"])
+    }
+
+    @MainActor
+    func testStreamAfterAFailedSwitchThrowsModelNotLoaded() async throws {
+        struct BuildError: Error {}
+        let log = Log()
+        let good = SpyEngine(id: "good", log: log)
+        var calls = 0
+        let make: @MainActor (AuraProfile) async throws -> any AuraProfileEngine = { _ in
+            calls += 1
+            if calls == 1 { return good }
+            throw BuildError()
+        }
+        let model = ggufModel()
+        let session = try await AuraSession(profile: AuraProfileCatalog.chat(model: model), makeEngine: make)
+        do {
+            try await session.switchProfile(to: AuraProfileCatalog.agent(model: model, tools: [TapTool()]))
+            XCTFail("expected the rebuild to throw")
+        } catch is BuildError {}
+
+        let streamFailure = await failure(of: session.stream("go"))
+
+        guard case .modelNotLoaded = streamFailure as? AuraError else {
+            return XCTFail("expected modelNotLoaded, got \(String(describing: streamFailure))")
+        }
+        XCTAssertEqual(good.generateCount, 0, "the torn-down engine must not decode")
     }
 }
