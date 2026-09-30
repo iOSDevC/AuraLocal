@@ -358,6 +358,7 @@ aura ocr <image>                    # extract text via native Vision OCR
 aura ml <subcommand> …              # on-device ML: classify-image, barcodes, faces, ocr-lines,
                                     # language, entities, sentiment, similarity, sounds,
                                     # coreml-describe, coreml-predict, train-text, classify-text
+aura models search|check|devices …  # which Hugging Face models run here, and why not
 ```
 
 `ask` reads a GitHub fine-grained PAT (`models:read`) from `AURA_GITHUB_TOKEN` /
@@ -370,6 +371,13 @@ aura ml <subcommand> …              # on-device ML: classify-image, barcodes, 
 development-signed (runs on this Mac); to distribute it, re-sign with a Developer ID
 identity and notarize (`xcrun notarytool submit … && xcrun stapler staple …`).
 Requires macOS 26 (AgentCrew).
+
+### Model Finder (`Examples/ModelFinder`)
+
+A small iOS 18 / macOS 15 app that searches Hugging Face and shows, per repo, whether AuraLocal's pinned
+runtimes can run it on a chosen device (this one, iPhone classes, Macs) and why not — with the exact
+`models.json` entry for the ones that run. See its README and
+[Finding compatible models](docs/guide/models.md#finding-compatible-models).
 
 ---
 

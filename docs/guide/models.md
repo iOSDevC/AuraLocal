@@ -166,6 +166,127 @@ let results = HardwareAnalyzer.compatibleModels(profile: profile)
 
 ---
 
+## Finding compatible models
+
+A download that *fits* is not a download that *runs*. `ModelCompatibilityChecker` answers the second question
+for any Hugging Face repo: will AuraLocal, with the runtimes it pins — **mlx-swift-lm 3.31.3** (MLX) and
+**llama.cpp b8851** (GGUF, via LocalLLMClient 0.5.0) — load and run it on a given device, and if not, exactly why.
+
+It reads the repo listing (`/api/models/{id}?blobs=true`), `config.json`, `model.safetensors.index.json` and, with
+HTTP Range requests, the first 4 MiB of one GGUF file or the header of a single safetensors file. Weights are
+never downloaded. Network errors, 401/403 and 404 come back as findings — the verdict is `unknown` when they hide
+the repo listing, an MLX `config.json` or a GGUF architecture — and the checker never throws. Gated repos use the
+Hugging Face token saved in the Keychain (`download.huggingface`).
+
+```swift
+import AuraCore
+
+let checker = ModelCompatibilityChecker()
+let report = await checker.check("mlx-community/Qwen3.5-27B-4bit", on: .mac32GB)
+print(report.status.label, "—", report.headline)   // Runs — Vision · Good · 16.0 of 20.0 GB
+for finding in report.blockers {
+    print(finding.title, "—", finding.detail)
+}
+if let entry = report.suggestedEntry {
+    print(entry.jsonText())                        // the models.json entry, catalog key order
+}
+
+// Fetch once, judge every device preset without refetching.
+let snapshot = await checker.snapshot(of: "mlx-community/MiniCPM5-1B-4bit")
+let verdicts = DevicePreset.all().map { device in
+    (device.displayName, CompatibilityEvaluator.evaluate(snapshot, on: device).status.label)
+}
+```
+
+### What it checks
+
+Each rule yields a typed finding (`blocker`, `caveat` or `info`) that names the file, key or pinned source that
+decides it. Any blocker means **Won't run**.
+
+| Rule | Blocks when | Why (pinned source) |
+|------|-------------|--------------------|
+| `format` | no MLX weights (MLX quantization in `config.json` or the `mlx` tag) and no GGUF | the catalog loads MLX conversions and GGUF only |
+| `generative` | pipeline `fill-mask`, `feature-extraction`, `zero-shot-image-classification`…, a `*ForMaskedLM`-style head, or an encoder `model_type` | the runtimes chat with text generators only |
+| `mlx.model-type` | top-level `model_type` is in neither `LLMTypeRegistry` (54 types) nor `VLMTypeRegistry` (17) | the factories dispatch on the top-level key; `text_config.model_type` does not count |
+| `mlx.weight-prefixes` | a `qwen3_5` / `qwen3_5_moe` tensor outside `language_model`, `model`, `lm_head`, `vision_tower`, `mtp` | the pinned `sanitize` maps only those; anything else fails `update(parameters:verify: [.all])` |
+| `mlx.extra-safetensors` | a top-level `*.safetensors` missing from the weight map | AuraLocal's downloader fetches every top-level file and `loadWeights` merges every `*.safetensors` |
+| `mlx.rope` | a rope type `RoPEUtils.initializeRope` does not implement, or a `longrope` without its three fields | `initializeRope` calls `fatalError` — the app crashes |
+| `mlx.category` | a VLM-only type without vision tensors | vision needs a registered VLM type **and** vision weights; otherwise the model loads as text |
+| `gguf.architecture` | `general.architecture` not in b8851's `LLM_ARCH_NAMES`, added later (`qwen4exp` → b10660), or an encoder / diffusion architecture | llama.cpp rejects unknown architectures |
+| `gguf.qwen35-nextn` | `qwen35` / `qwen35moe` with `nextn_predict_layers` > 0 | b8851 marks recurrent layers arithmetically and demands `ssm_*` tensors the MTP block lacks; fixed in b9495 |
+| `gguf.shards` | every quant is split (`-0000N-of-0000M`); a caveat when only some are | the GGUF path loads one file |
+| `fit` | the weights (MLX) or every single-file quant (GGUF) are too large for the device | `HardwareAnalyzer.assess` against the device budget |
+| `imagegen` | a text-to-image pipeline on an iPhone preset (a caveat on a Mac: mflux support is not verified) | AuraImageGen drives mflux on macOS only |
+| `license` | never blocks: flags gated repos, a missing license, non-commercial (`cc-by-nc*`) and custom (`other`) licenses by name | |
+
+`mlx.config`, `mlx.tokenizer`, `gguf.header`, `gguf.projector` and `context` add caveats and context (quantization,
+unreadable files, an ignored mmproj, trained contexts below 32768 tokens) but never block.
+
+Fit uses the existing `HardwareAnalyzer` math: weights + runtime overhead + a GQA-aware KV cache at 2048 tokens,
+with `kvHeads` / `headDim` from `config.json` or the GGUF header. Every GGUF quant gets its own fit. Sizes are
+binary: catalog `approximateSizeMB` is MiB, because `HardwareAnalyzer` divides it by 1024 to get GiB.
+
+The pinned tables live in `Sources/AuraCore/ModelCompatibility/PinnedRuntimes.swift`, with the commands that
+regenerate them; `ModelCompatibilityTests` fails when the MLX sets drift from the `mlx-swift-lm` checkout.
+
+### Known incompatibilities
+
+Verified on 2026-09-29 with `aura models check <repo> --device mac-32gb` (M1 Pro, 20.0 GB measured budget):
+
+| Repository | Verdict | Deciding finding |
+|------------|---------|------------------|
+| `ukisai/Swift-1.5-4bit-MLX` | Won't run | `visual.*` (501 tensors) is not mapped by the qwen3_5 sanitize |
+| `ukisai/Swift-1.5-3bit-MLX-TextOnly` | Runs, with caveats | text: only `language_model.*`; 10.96 GB of weights, Excellent · 12.0 of 20.0 GB; custom license |
+| `mlx-community/Qwen3.5-27B-4bit` | Runs | vision: `language_model` + `vision_tower`; Good · 16.0 of 20.0 GB |
+| `ukisai/Swift-1.5-Qwen3.8-27B-GGUF` | Won't run | `qwen35`, `block_count` 65 with 1 NextN layer: needs llama.cpp b9495 (17 of 22 quants would otherwise load fully) |
+| `ukisai/Swift-1.5-Qwen3.8-Flash-Next-GGUF` | Won't run | `qwen4exp` needs b10660; every quant is split; the smallest (IQ1_S) is 65.3 GB |
+| `Edge0/Edge0-35B-A3B-preview` | Won't run | `lora_edge0_35b.safetensors` (620 tensors) and `prerouter_edge0_35b.safetensors` (99) are outside the weight map |
+| `medicalai/ClinicalBERT` | Won't run | `fill-mask`, `DistilBertForMaskedLM`; only `pytorch_model.bin` |
+| `google/medsiglip-448` | Won't run | SigLIP, `zero-shot-image-classification`; not an MLX conversion; gated, custom license |
+| `stanford-crfm/BioMedLM` | Won't run | `gpt2` is not registered; only `.bin` weights; trained context 1024 |
+| `mlx-community/MiniCPM5-1B-4bit` | Runs | `model_type` `llama`; 0.57 GB — fits the iPhone 4 GB class |
+| `mlx-community/MiniCPM4.1-8B-4bit` | Runs | `minicpm`; its `longrope` carries the fields RoPEUtils needs |
+| `mlx-community/MiniCPM3-4B-4bit` | Won't run | `minicpm3` is not registered ("v3 uses a different architecture", MLXLLM README) |
+| `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | Runs, with caveats | `qwen3_5_moe`, Marginal · 18.8 of 20.0 GB; no license declared |
+| `Qwen/Qwen2.5-7B-Instruct-GGUF` | Runs, with caveats | Q4_K_M and 6 other quants are split; Q2_K and Q3_K_M are single files |
+| `Qwen/Qwen3.8-Flash-Next` | Won't run | unconverted safetensors (335 GB); `qwen4_exp` is not registered |
+
+### Device presets
+
+Only this device and the 32 GB Mac are measured; every other budget is an estimate, and `DevicePreset.source`
+says where it comes from (the CLI and the app show it).
+
+| Preset (`--device`) | Budget | Source |
+|---------------------|--------|--------|
+| `this-device` | measured now | `HardwareProfile.current()` — memory the process can still allocate |
+| `iphone-4gb` | ≈2.0 GB | estimate: third-party jetsam measurement, ActiveHard 2098 MB on an iPhone 12 |
+| `iphone-6gb` | ≈3.0 GB | estimate: this guide's [memory budgets]({{ '/guide/memory' | relative_url }}), increased-memory-limit entitlement |
+| `iphone-8gb` | ≈4.5 GB | estimate: same source |
+| `iphone-17-pro` | ≈6.4 GB | estimate: third-party report, only with both memory entitlements |
+| `mac-16gb` | ≈10.7 GB | estimate: default Metal working set ≈ 2/3 of RAM up to 36 GB |
+| `mac-32gb` | 20.0 GB | measured on an M1 Pro: `iogpu.wired_limit_mb` 20480, `recommendedMaxWorkingSetSize` 20480 MiB |
+| `mac-64gb` | ≈48 GB | estimate: default Metal working set ≈ 3/4 of RAM above 36 GB |
+
+### From the command line
+
+```
+aura models search "<query>" [--format mlx|gguf] [--device <preset>] [--limit N]
+aura models check <owner/repo | URL> [--device <preset>] [--json] [--entry]
+aura models devices
+```
+
+`search` checks every hit (four at a time) and prints a verdict table; `check` prints every finding, the
+per-quant fit table and the `models.json` entry; `--entry` prints only the entry, `--json` the whole report.
+
+### The example app
+
+`Examples/ModelFinder` is a SwiftUI app for iOS 18 and macOS 15 built on the same checker: search with format,
+sort and device filters, a verdict badge per result (checked lazily as rows appear), and a detail view with the
+findings, the per-quant fit table, **Copy catalog entry** and **Open on Hugging Face**. Its README explains how to
+generate and open the project.
+
+---
+
 ## Model Collections
 
 ```swift

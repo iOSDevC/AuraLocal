@@ -4,9 +4,9 @@ import AuraCore
 // MARK: - ModelSearchSheet
 //
 // A HuggingFace model search with a device-compatibility filter, in the spirit of LM Studio / Bionic.
-// The honest part: fit is judged by KIND, not raw size — a 6.8 GB FLUX peaks ~2× its weights, so it is
-// NOT waved through as "fits" on a machine where it would thrash (HardwareAnalyzer.fitLevel(forWeightsBytes:kind:)).
-// Sizes come from the repo tree lazily, so the list stays responsive.
+// Each row shows ModelCompatibilityChecker's verdict: whether AuraLocal can load the repo at all (format, pinned
+// runtimes, image pipelines through AuraImageGen) and whether it fits this device — a 6.8 GB FLUX peaks ~2× its
+// weights. Reports are fetched lazily per visible row, so the list stays responsive.
 
 struct ModelSearchSheet: View {
     /// Called when the user picks a model: (repo id, base-model guess for diffusion).
@@ -50,7 +50,7 @@ struct ModelSearchSheet: View {
                 .pickerStyle(.menu).fixedSize()
                 Spacer()
                 Toggle(isOn: $vm.onlyCompatible) {
-                    Text("Only what fits · \(Int(profile.availableMemoryGB.rounded())) GB free")
+                    Text("Only what runs · \(Int(profile.availableMemoryGB.rounded())) GB free")
                         .font(.caption)
                 }
                 .toggleStyle(.switch).controlSize(.mini)
@@ -68,11 +68,11 @@ struct ModelSearchSheet: View {
                                    description: Text("Try a different query."))
         } else {
             List(vm.visibleHits) { hit in
-                ModelSearchRow(hit: hit, fit: vm.fit[hit.id], profile: profile) {
+                ModelSearchRow(hit: hit, verdict: vm.reports[hit.id]) {
                     onSelect(hit.id, baseModelGuess(hit))
                     dismiss()
                 }
-                .task { await vm.loadFit(for: hit, profile: profile) }
+                .task { await vm.loadReport(for: hit, profile: profile) }
             }
             .listStyle(.plain)
         }
@@ -92,8 +92,7 @@ struct ModelSearchSheet: View {
 
 private struct ModelSearchRow: View {
     let hit: HFModelHit
-    let fit: ModelFitLevel?
-    let profile: HardwareProfile
+    let verdict: CompatibilityReport?
     let use: () -> Void
 
     var body: some View {
@@ -102,7 +101,7 @@ private struct ModelSearchRow: View {
                 Text(hit.id).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
                 Spacer()
                 Button("Use", action: use).buttonStyle(.borderedProminent).controlSize(.small)
-                    .disabled(fit == .tooLarge)
+                    .disabled(verdict?.status == .notRunnable)
             }
             HStack(spacing: 10) {
                 badge(hit.isDiffusion ? "photo" : "text.bubble", hit.isDiffusion ? "image" : "text")
@@ -110,31 +109,35 @@ private struct ModelSearchRow: View {
                 Label("\(hit.likes)", systemImage: "heart").labelStyle(.titleAndIcon)
                 Label(compact(hit.downloads), systemImage: "arrow.down.circle")
                 Spacer()
-                fitLabel
+                verdictLabel
             }
             .font(.caption).foregroundStyle(.secondary)
+            if let verdict {
+                Text(verdict.headline).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+            }
         }
         .padding(.vertical, 2)
     }
 
-    @ViewBuilder private var fitLabel: some View {
-        if let fit {
-            Label(fit.label, systemImage: fit.systemImage)
+    @ViewBuilder private var verdictLabel: some View {
+        if let verdict {
+            Label(verdict.status.label, systemImage: verdict.status.systemImage)
                 .font(.caption.weight(.medium))
-                .foregroundStyle(color(for: fit))
+                .foregroundStyle(color(for: verdict.status))
         } else {
-            HStack(spacing: 3) { ProgressView().controlSize(.mini); Text("sizing…") }
+            HStack(spacing: 3) { ProgressView().controlSize(.mini); Text("checking…") }
         }
     }
 
     private func badge(_ icon: String, _ text: String, tint: Color = .secondary) -> some View {
         Label(text, systemImage: icon).foregroundStyle(tint)
     }
-    private func color(for fit: ModelFitLevel) -> Color {
-        switch fit {
-        case .excellent, .good: .green
-        case .marginal, .streamingRequired: .orange
-        case .tooLarge: .red
+    private func color(for status: CompatibilityVerdict) -> Color {
+        switch status {
+        case .runnable: .green
+        case .runnableWithCaveats: .orange
+        case .notRunnable: .red
+        case .unknown: .secondary
         }
     }
     private func compact(_ n: Int) -> String {
@@ -154,12 +157,13 @@ final class SearchVM {
     var error: String?
 
     private(set) var hits: [HFModelHit] = []
-    /// repo id → computed fit (once its size is fetched).
-    private(set) var fit: [String: ModelFitLevel] = [:]
+    /// repo id → the checker's report (once fetched).
+    private(set) var reports: [String: CompatibilityReport] = [:]
+    private let inspector = ModelCompatibilityChecker()
 
     var visibleHits: [HFModelHit] {
         guard onlyCompatible else { return hits }
-        return hits.filter { fit[$0.id].map { $0 != .tooLarge } ?? true }   // keep unknown until sized
+        return hits.filter { reports[$0.id].map { $0.status != .notRunnable } ?? true }   // keep unknown until checked
     }
 
     @MainActor
@@ -167,7 +171,7 @@ final class SearchVM {
         error = nil; isSearching = true; defer { isSearching = false }
         do {
             hits = try await HuggingFaceSearch.search(query, limit: 30, sort: sort)
-            fit = [:]
+            reports = [:]
         } catch {
             self.error = error.localizedDescription
             hits = []
@@ -175,17 +179,10 @@ final class SearchVM {
     }
 
     @MainActor
-    func loadFit(for hit: HFModelHit, profile: HardwareProfile) async {
-        guard fit[hit.id] == nil else { return }
-        do {
-            let repoURL = "https://huggingface.co/\(hit.id)"
-            if let bytes = try await HuggingFaceRepo.weightBytes(repoURL: repoURL, kind: hit.kind) {
-                fit[hit.id] = HardwareAnalyzer.fitLevel(forWeightsBytes: bytes, kind: hit.kind, profile: profile)
-            } else {
-                fit[hit.id] = .marginal   // no sizable weights found → don't claim "excellent"
-            }
-        } catch {
-            // gated/unreachable tree — leave unknown; the row shows the gated badge already.
-        }
+    func loadReport(for hit: HFModelHit, profile: HardwareProfile) async {
+        guard reports[hit.id] == nil else { return }
+        let report = await inspector.check(hit.id, on: .thisDevice(profile: profile))
+        guard !Task.isCancelled else { return }
+        reports[hit.id] = report
     }
 }

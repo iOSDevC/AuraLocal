@@ -38,12 +38,13 @@ aura tools                          # list on-device ML tools by category, with 
 aura ask "<prompt>" [--model <id>]  # ask GitHub Models (default openai/gpt-4o)
 aura ocr <image>                    # extract text from an image via native Vision OCR
 aura ml <subcommand> …              # run an on-device ML tool (see below)
+aura models search|check|devices …  # which Hugging Face models AuraLocal can run (see below)
 ```
 
 - **`ask`** reads a GitHub fine-grained PAT (`models:read`) from `AURA_GITHUB_TOKEN` /
   `GITHUB_TOKEN`, or the Keychain (`cloud.github-models`) — never from source or CI logs.
   The answer goes to stdout; a receipt (provider · tokens · compression) goes to stderr.
-- **`providers`** / **`tools`** / **`ocr`** / **`ml`** need no key and no model download.
+- **`providers`** / **`tools`** / **`ocr`** / **`ml`** / **`models`** need no key and no model download.
 
 ```sh
 export AURA_GITHUB_TOKEN=ghp_…
@@ -86,6 +87,26 @@ label  transport
 ```
 
 Training is reproducible: the same CSV and `--seed` give the same split, accuracies and model.
+
+## Model compatibility (`aura models`)
+
+Checks Hugging Face repos against the runtimes AuraLocal pins (mlx-swift-lm 3.31.3, llama.cpp b8851) and a
+device budget — see [Finding compatible models]({{ '/guide/models' | relative_url }}#finding-compatible-models).
+
+```
+aura models search "<query>" [--format mlx|gguf] [--device <preset>] [--limit N]
+aura models check <owner/repo | URL> [--device <preset>] [--json] [--entry]
+aura models devices                     # presets and where each memory budget comes from
+```
+
+```sh
+$ aura models check ukisai/Swift-1.5-Qwen3.8-27B-GGUF --device mac-32gb 2>/dev/null | head -3
+ukisai/Swift-1.5-Qwen3.8-27B-GGUF — GGUF · WON'T RUN
+Device: Mac, 32 GB (M1 Pro) · budget 20.0 GB (measured)
+Model: qwen35 · 65 layers · context 262144 · 22 quants
+```
+
+`--entry` prints only the `models.json` entry of a runnable model; `--json` prints the whole report.
 
 ## Homebrew
 

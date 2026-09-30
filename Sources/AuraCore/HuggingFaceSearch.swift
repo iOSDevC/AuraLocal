@@ -54,13 +54,15 @@ public enum HuggingFaceSearch {
     }
 
     /// Search HuggingFace models by keyword. Network wrapper around ``models(fromSearchJSON:)``.
+    /// `tag` narrows the results server-side (`mlx`, `gguf`, …).
     public static func search(
         _ query: String,
         limit: Int = 30,
         sort: Sort = .downloads,
+        tag: String? = nil,
         session: URLSession = .shared
     ) async throws -> [HFModelHit] {
-        guard let url = searchURL(query: query, limit: limit, sort: sort) else { return [] }
+        guard let url = searchURL(query: query, limit: limit, sort: sort, tag: tag) else { return [] }
         let (data, response) = try await session.data(from: url)
         guard let http = response as? HTTPURLResponse else {
             throw HuggingFaceRepo.RepoError.noResponse
@@ -71,8 +73,9 @@ public enum HuggingFaceSearch {
         return models(fromSearchJSON: data)
     }
 
-    /// Build the `/api/models` search URL. `?search=` + `full=true` (so `tags`/`gated` come back).
-    public static func searchURL(query: String, limit: Int, sort: Sort) -> URL? {
+    /// Build the `/api/models` search URL. `?search=` + `full=true` (so `tags`/`gated` come back), plus
+    /// `filter=<tag>` when a tag is given.
+    public static func searchURL(query: String, limit: Int, sort: Sort, tag: String? = nil) -> URL? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         var comps = URLComponents()
@@ -85,6 +88,7 @@ public enum HuggingFaceSearch {
             URLQueryItem(name: "sort", value: sort.rawValue),
             URLQueryItem(name: "full", value: "true"),
         ]
+        if let tag, !tag.isEmpty { comps.queryItems?.append(URLQueryItem(name: "filter", value: tag)) }
         return comps.url
     }
 

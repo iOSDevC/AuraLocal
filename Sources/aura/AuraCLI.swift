@@ -19,6 +19,7 @@ struct AuraCLI {
             case "ocr":              try runOCR(rest)
             case "ml":               try await runML(rest)
             case "imagegen":         try await runImageGen(rest)
+            case "models":           try await runModels(rest)
             case "help", "-h", "--help": printUsage()
             default:
                 err("Unknown command: \(command)\n")
@@ -197,6 +198,11 @@ struct AuraCLI {
                                                 entities, sentiment, similarity, sounds, coreml-describe,
                                                 coreml-predict, train-text, classify-text
           aura imagegen "<prompt>" [--lora <p>]  Generate an image via mflux/FLUX (macOS; needs mflux)
+          aura models search "<query>" [--format mlx|gguf] [--device <preset>] [--limit N]
+                                              Search Hugging Face with a runs-here verdict per repo
+          aura models check <repo> [--device <preset>] [--json] [--entry]
+                                              Why a repo does or doesn't run; its models.json entry
+          aura models devices                 Device presets (this device, iPhone classes, Macs)
 
         ENV:
           AURA_GITHUB_TOKEN   GitHub fine-grained PAT with models:read (used by `ask`)
