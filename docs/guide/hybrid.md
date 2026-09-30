@@ -97,7 +97,7 @@ let result = try await escalator.routeAndEscalate(
 if let result {
     print(result.answer)
     print(result.usage as Any, result.compression.factor, result.fromCache)
-} // nil → the router kept it local; a declined offer throws AuraError.escalationDeclined
+} // nil → the router kept it local; a declined offer (by default, any over the cap) throws AuraError.escalationDeclined
 ```
 
 The router (`EscalationRouter`) is a pure decision function (rules R1–R7): it stays local
@@ -114,10 +114,15 @@ raises the bar for the latter).
   target under `.autoWithConsentMemory` escalates without asking.
 - `costCapUSDPerSession` is compared with what the session has already spent
   (`CostLedger.sessionCostUSD`) plus the projected cost of the current request (estimated prompt
-  tokens + `maxTokens` at the ledger's price). Over the cap, the router still offers, with the
-  reason `.costCapped`. A projection of $0, such as any LAN target, never trips the cap.
+  tokens + `maxTokens` at the ledger's price). Over the cap, the router offers with the reason
+  `.costCapped`, the default `ConsentGate.requestConsent(target:preview:offer:)` declines it, and
+  `routeAndEscalate` throws `AuraError.escalationDeclined` without sending anything. Implement that
+  method to show the budget and let the user go over. A projection of $0, such as any LAN target,
+  never trips the cap.
 - When the cloud target has no price in the ledger, the router offers with the reason
-  `.costUnknown` and your `ConsentGate` receives `projectedCostUSD == nil`.
+  `.costUnknown` and the offer's `projectedCostUSD` is `nil`. A priced request under the cap gets the
+  same reason while the session holds unpriced calls (`unpricedRecordCount > 0`), because the
+  session's spend is then unknown.
 - Only the first candidate is tried: the LAN box if one is running, otherwise the first cloud
   key found (Anthropic, then OpenAI), or the first of the `targets:` you pass. An error from it, such as HTTP 429, is thrown to the caller;
   there is no fall-through to the next target.
@@ -186,9 +191,14 @@ await crew.run(topic: "Q3 security posture", policy: policy, consent: myConsentG
 
 - **BYOK keys** live only in the Keychain (`WhenUnlockedThisDeviceOnly`), never synced to iCloud.
 - Your **`ConsentGate`** is called before an offered escalation with the `target` (including
-  `target.provider.retentionNote`), the compressed preview (`CompressionResult`) and the projected
-  cost, which is `nil` when the model is unpriced. AuraLocal ships no consent UI; the Example
-  app's `UIConsentGate` (Hybrid settings) shows one, with "Cost unknown" for `nil`. The preview
+  `target.provider.retentionNote`), the compressed preview (`CompressionResult`) and an
+  `EscalationOffer`: the router's `reason`, `projectedCostUSD` (`nil` when the model is unpriced),
+  `sessionSpentUSD`, `unpricedRecordCount` and `costCapUSD`. A gate must implement
+  `requestConsent(target:preview:projectedCostUSD:)`. `routeAndEscalate` calls
+  `requestConsent(target:preview:offer:)`, whose default declines `.costCapped` and passes any other
+  offer to the first. AuraLocal ships no consent UI; the Example app's `UIConsentGate` (Hybrid
+  settings) implements both and shows "Cost unknown" for `nil`, the session spend against the cap,
+  and a warning when sending goes over it. The preview
   is compressed with `policy.keepRatio` while the request sent uses 0.5, so the previewed context
   equals the sent context only at the default `keepRatio` of 0.5; the request also carries the
   question and system prompt.
@@ -199,9 +209,13 @@ await crew.run(topic: "Q3 security posture", policy: policy, consent: myConsentG
   ($3 in / $15 out per 1M tokens) and `gpt-4o` on `cloud.openai` ($2.50 / $10), as approximate list
   prices. Every other cloud model (another Anthropic or OpenAI model, any custom
   `OpenAICompatibleProvider`, a public `AskTargetResolver` base URL, whose provider id is
-  `custom.<host>` or `custom.<host>:<port>`) is unpriced: its record has `costUSD == nil`, as does any call whose provider
-  reports no usage. `sessionCostUSD` sums the priced records since the session started and
-  `unpricedRecordCount` counts the others; `startNewSession()` restarts both and keeps `records`.
+  `custom.<host>` or `custom.<host>:<port>`) is unpriced: its record has `costUSD == nil`, as does
+  any cloud call whose provider reports no usage, or only one of the two token counts. A call that
+  throws after it streamed text (a cancel, a dropped stream) is still recorded, with the usage the
+  provider reported before failing or else `nil`; a call that fails before any output is not.
+  `sessionCostUSD` sums the priced records since the session started, `unpricedRecordCount` counts
+  the others and `sessionRecordCount` counts both; `startNewSession()` restarts them and keeps
+  `records`. The Example app's Hybrid settings show these totals and a **Start new session** button.
 - **`ResponseCache`** avoids paying twice for a repeated request. It is keyed on provider id,
   model id and the user payload (context + question), not on the system prompt or `maxTokens`,
   and is held in memory (64 entries, FIFO, cleared on relaunch).

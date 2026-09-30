@@ -239,7 +239,10 @@ model, reusing the same compression, consent, and cost machinery. Fail-closed: a
 **Privacy & cost:** cloud API keys live only in the Keychain (never in source, files,
 or logs). `ConsentGate` receives the target, the projected cost (`nil` when the model is unpriced)
 and a compressed preview of the context, and your app presents it: the Example app ships a sheet,
-and the library's only built-in gate, `DenyingConsentGate`, declines everything. `PIIRedactor`
+and the library's only built-in gate, `DenyingConsentGate`, declines everything. `routeAndEscalate`
+calls `requestConsent(target:preview:offer:)`, whose `EscalationOffer` adds the router's reason, the
+session's spend and the cap; its default implementation declines an offer over the cap and passes any
+other to `requestConsent(target:preview:projectedCostUSD:)`. `PIIRedactor`
 strips obvious secrets when you pass `redactPII: true`; `CostLedger` records per-escalation token
 usage and cost; `ResponseCache` avoids paying twice for identical requests within one app session.
 
@@ -266,10 +269,15 @@ ledger.startNewSession()   // the cap and sessionCostUSD restart; records keeps 
 >   prices. Any other cloud model, including a custom `OpenAICompatibleProvider`, is unpriced until
 >   you call `setPrice(_:provider:model:)`: its calls record `costUSD == nil`, not $0, and the router
 >   offers such an escalation with the reason `.costUnknown` instead of checking it against the cap.
->   A response without usage data is also recorded as `nil`. Local-network targets are always $0.
-> - The cost cap compares the session's priced spend (`sessionCostUSD`) plus the request's projected
->   cost with `costCapUSDPerSession`. Unpriced calls add nothing to that spend, so it is a lower bound
->   while `unpricedRecordCount` is above zero.
+>   A cloud response without both token counts is also recorded as `nil`, and so is a cloud call that
+>   fails after streaming text without reporting usage. Local-network targets are always $0.
+> - The cost cap applies when the request's projected cost is above $0 (a LAN target never trips it):
+>   if the session's priced spend (`sessionCostUSD`) plus that projection exceeds
+>   `costCapUSDPerSession`, the router offers with `.costCapped`, the default
+>   `requestConsent(target:preview:offer:)` declines, and `routeAndEscalate` throws
+>   `AuraError.escalationDeclined`. Only a gate that implements that method can let the user go over.
+>   Unpriced calls add nothing to `sessionCostUSD`, so while `unpricedRecordCount` is above zero a
+>   priced request under the cap is offered as `.costUnknown`. `escalate(to:)` checks no cap.
 
 > **Deferred — true self-information compression.** The current scorer is heuristic
 > (relevance + recency). A real Selective-Context scorer needs per-token logprobs from
