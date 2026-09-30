@@ -200,14 +200,10 @@ public struct TextEmbeddingManifest: Codable, Sendable, Equatable {
 
 /// The pure steps around the Core ML call, kept separate so they are testable without a model.
 enum TextEmbeddingPipeline {
-    /// Zero-width code points that swift-transformers' approximate normalizer keeps but Python's drops.
-    static let ignoredScalars: Set<Unicode.Scalar> = ["\u{200B}", "\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}"]
-
-    /// NFC plus zero-width removal, which keeps Swift token ids in line with the Python tokenizer.
+    /// NFC. Zero-width characters stay: the tokenizer's Precompiled normalizer turns ZWSP, ZWNJ, ZWJ and BOM
+    /// into spaces (in Python and in swift-transformers alike), and deleting them would glue words together.
     static func preprocess(_ text: String) -> String {
-        let composed = text.precomposedStringWithCanonicalMapping
-        guard composed.unicodeScalars.contains(where: { ignoredScalars.contains($0) }) else { return composed }
-        return String(String.UnicodeScalarView(composed.unicodeScalars.filter { !ignoredScalars.contains($0) }))
+        text.precomposedStringWithCanonicalMapping
     }
 
     /// The smallest bucket that holds `tokenCount` tokens, or `nil` if none does.

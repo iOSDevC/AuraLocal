@@ -12,12 +12,15 @@ public struct EmbeddingIndexIdentity: Sendable, Equatable {
         self.dimensions = dimensions
     }
 
+    /// The only provider indexes were built with before identity tracking: AuraDocs' TF-IDF.
+    public static let preTrackingIdentifier = "aura.tfidf-hash/4096"
+
     /// What an index should do before it is searched or extended with `configured`.
     public enum Reconciliation: Sendable, Equatable {
         /// The stored vectors came from the configured model.
         case upToDate
         /// Record the configured identity without touching vectors: the index is empty, or it
-        /// predates identity tracking and its vectors already have the configured length.
+        /// predates identity tracking, the configured model is TF-IDF and the vector lengths match.
         case adopt
         /// Recompute every stored vector with the configured model.
         case reembed
@@ -35,7 +38,9 @@ public struct EmbeddingIndexIdentity: Sendable, Equatable {
     ) -> Reconciliation {
         if stored == configured { return .upToDate }
         if storedVectorCount == 0 { return .adopt }
-        if stored == nil, storedVectorLengths == [configured.dimensions] { return .adopt }
+        // Another model of the same width would otherwise take over vectors it did not produce.
+        if stored == nil, configured.identifier == preTrackingIdentifier,
+           storedVectorLengths == [configured.dimensions] { return .adopt }
         return .reembed
     }
 }

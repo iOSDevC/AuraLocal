@@ -290,36 +290,47 @@ final class TextEmbeddingTests: XCTestCase {
                                                                  normalize: true))
     }
 
-    func testPreprocessingComposesToNFCAndDropsZeroWidthCharacters() {
+    func testPreprocessingComposesToNFCAndKeepsZeroWidthCharacters() {
         let decomposed = "pingu\u{0308}ino cafe\u{0301}"
         let zeroWidth = "a\u{200B}b\u{200C}c\u{200D}d\u{2060}e\u{FEFF}f"
 
         XCTAssertEqual(Array(TextEmbeddingPipeline.preprocess(decomposed).unicodeScalars),
                        Array("ping\u{00FC}ino caf\u{00E9}".unicodeScalars))
-        XCTAssertEqual(TextEmbeddingPipeline.preprocess(zeroWidth), "abcdef")
+        XCTAssertEqual(Array(TextEmbeddingPipeline.preprocess(zeroWidth).unicodeScalars), Array(zeroWidth.unicodeScalars))
         XCTAssertEqual(TextEmbeddingPipeline.preprocess("query: ¿Qué tal?"), "query: ¿Qué tal?")
     }
 
     // MARK: - Index identity
 
-    func testIndexIdentityReconciliation() {
+    private struct ReconciliationCase {
+        let stored: EmbeddingIndexIdentity?
+        let configured: EmbeddingIndexIdentity
+        let lengths: Set<Int>
+        let count: Int
+        let expected: EmbeddingIndexIdentity.Reconciliation
+    }
+
+    func testIndexReconciliationAdoptsOnlyEmptyOrPreTrackingTFIDFIndexes() {
         let e5 = EmbeddingIndexIdentity(identifier: "intfloat/multilingual-e5-small@614241f", dimensions: 384)
-        let tfidf = EmbeddingIndexIdentity(identifier: "aura.tfidf-hash/4096", dimensions: 4096)
-        let cases: [(EmbeddingIndexIdentity?, EmbeddingIndexIdentity, Set<Int>, Int,
-                     EmbeddingIndexIdentity.Reconciliation)] = [
-            (e5, e5, [384], 10, .upToDate),
-            (tfidf, e5, [4096], 10, .reembed),
-            (e5, tfidf, [384], 10, .reembed),
-            (nil, tfidf, [4096], 10, .adopt),
-            (nil, e5, [4096], 10, .reembed),
-            (nil, e5, [384, 0], 10, .reembed),
-            (nil, e5, [], 0, .adopt),
-            (tfidf, e5, [], 0, .adopt),
+        let miniLM = EmbeddingIndexIdentity(identifier: "someone/MiniLM-L12", dimensions: 384)
+        let tfidf = EmbeddingIndexIdentity(identifier: EmbeddingIndexIdentity.preTrackingIdentifier, dimensions: 4096)
+        let cases = [
+            ReconciliationCase(stored: e5, configured: e5, lengths: [384], count: 10, expected: .upToDate),
+            ReconciliationCase(stored: tfidf, configured: e5, lengths: [4096], count: 10, expected: .reembed),
+            ReconciliationCase(stored: e5, configured: tfidf, lengths: [384], count: 10, expected: .reembed),
+            ReconciliationCase(stored: miniLM, configured: e5, lengths: [384], count: 10, expected: .reembed),
+            ReconciliationCase(stored: nil, configured: tfidf, lengths: [4096], count: 10, expected: .adopt),
+            ReconciliationCase(stored: nil, configured: e5, lengths: [384], count: 10, expected: .reembed),
+            ReconciliationCase(stored: nil, configured: e5, lengths: [4096], count: 10, expected: .reembed),
+            ReconciliationCase(stored: nil, configured: tfidf, lengths: [4096, 0], count: 10, expected: .reembed),
+            ReconciliationCase(stored: nil, configured: e5, lengths: [], count: 0, expected: .adopt),
+            ReconciliationCase(stored: tfidf, configured: e5, lengths: [], count: 0, expected: .adopt),
         ]
-        for (stored, configured, lengths, count, expected) in cases {
-            let action = EmbeddingIndexIdentity.reconciliation(stored: stored, configured: configured,
-                                                               storedVectorLengths: lengths, storedVectorCount: count)
-            XCTAssertEqual(action, expected, "\(stored as Any) → \(configured), \(lengths)")
+        for item in cases {
+            let action = EmbeddingIndexIdentity.reconciliation(stored: item.stored, configured: item.configured,
+                                                               storedVectorLengths: item.lengths,
+                                                               storedVectorCount: item.count)
+            XCTAssertEqual(action, item.expected, "\(item.stored as Any) → \(item.configured), \(item.lengths)")
         }
     }
 
@@ -331,39 +342,42 @@ final class TextEmbeddingTests: XCTestCase {
         let ids: [String: [[Int32]]]
     }
 
-    private static let bundleURL: URL = {
-        if let path = ProcessInfo.processInfo.environment["AURA_E5_BUNDLE"] {
-            return URL(fileURLWithPath: path, isDirectory: true)
-        }
-        return URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("models/auramesh/embeddings/multilingual-e5-small", isDirectory: true)
-    }()
+    // Opt-in: the first run compiles ~225 MB for the Neural Engine and takes about half a minute.
+    private static let bundleURL = ProcessInfo.processInfo.environment["AURA_E5_BUNDLE"]
+        .map { URL(fileURLWithPath: $0, isDirectory: true) }
 
-    private static let fixturesURL: URL = {
-        if let path = ProcessInfo.processInfo.environment["AURA_E5_FIXTURES"] {
-            return URL(fileURLWithPath: path)
-        }
-        return URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent("models/auramesh/embeddings/swiftbench/fixtures.json")
-    }()
+    private static let fixturesURL = ProcessInfo.processInfo.environment["AURA_E5_FIXTURES"]
+        .map { URL(fileURLWithPath: $0) }
 
-    /// A stable path lets the Neural Engine reuse its compiled model across test runs.
+    /// A stable path lets the Neural Engine reuse its compiled model while AURA_E5_KEEP_COMPILED is set.
     private static let compiledModels = FileManager.default.temporaryDirectory
         .appendingPathComponent("AuraLocalTests/CompiledModels", isDirectory: true)
 
-    private static let liveTool = CoreMLTextEmbeddingTool(bundleAt: bundleURL, compiledModelsDirectory: compiledModels)
+    private static let liveTool = bundleURL.map {
+        CoreMLTextEmbeddingTool(bundleAt: $0, compiledModelsDirectory: compiledModels)
+    }
+
+    override static func tearDown() {
+        if bundleURL != nil, ProcessInfo.processInfo.environment["AURA_E5_KEEP_COMPILED"] == nil {
+            try? FileManager.default.removeItem(at: compiledModels)
+        }
+        super.tearDown()
+    }
 
     private func requireLiveTool() async throws -> CoreMLTextEmbeddingTool {
-        let availability = await Self.liveTool.availability()
-        guard availability.isAvailable else {
-            throw XCTSkip("e5 bundle unavailable (\(availability.reason ?? "?")); set AURA_E5_BUNDLE")
+        guard let tool = Self.liveTool else {
+            throw XCTSkip("Live e5 tests are opt-in: set AURA_E5_BUNDLE to the bundle folder")
         }
-        return Self.liveTool
+        let availability = await tool.availability()
+        guard availability.isAvailable else {
+            throw XCTSkip("e5 bundle unavailable (\(availability.reason ?? "?")); check AURA_E5_BUNDLE")
+        }
+        return tool
     }
 
     private func requireFixtures() throws -> ReferenceFixtures {
-        guard let data = FileManager.default.contents(atPath: Self.fixturesURL.path) else {
-            throw XCTSkip("No reference fixtures at \(Self.fixturesURL.path); set AURA_E5_FIXTURES")
+        guard let path = Self.fixturesURL?.path, let data = FileManager.default.contents(atPath: path) else {
+            throw XCTSkip("No reference fixtures; set AURA_E5_FIXTURES")
         }
         return try JSONDecoder().decode(ReferenceFixtures.self, from: data)
     }
@@ -383,6 +397,27 @@ final class TextEmbeddingTests: XCTestCase {
             let tokens = try await tool.tokenize(sentence, role: .raw)
             XCTAssertEqual(tokens.ids, expected, sentence)
         }
+    }
+
+    /// Expected ids come from Python `tokenizers` 0.23.2 on the bundle's tokenizer.json, which maps ZWSP, ZWNJ,
+    /// ZWJ and BOM to a space and keeps U+2060.
+    func testLiveZeroWidthCharactersTokenizeLikePython() async throws {
+        let tool = try await requireLiveTool()
+        let expected: [(String, [Int])] = [
+            ("zero\u{200B}width", [0, 45234, 6, 146984, 2]),
+            ("\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}", [0, 383, 140113, 2]),
+            ("a\u{200D}b", [0, 10, 876, 2]),
+            ("a\u{2060}b", [0, 10, 243465, 275, 2]),
+            ("\u{FEFF}Invoice number", [0, 360, 965, 2980, 14012, 2]),
+        ]
+        for (text, ids) in expected {
+            let tokens = try await tool.tokenize(text, role: .raw)
+            XCTAssertEqual(tokens.ids, ids, Self.scalarDump(text))
+        }
+    }
+
+    private static func scalarDump(_ text: String) -> String {
+        text.unicodeScalars.map { String($0.value, radix: 16) }.joined(separator: " ")
     }
 
     func testLiveEmbeddingsMatchSentenceTransformers() async throws {
@@ -430,7 +465,7 @@ final class TextEmbeddingTests: XCTestCase {
         XCTAssertEqual(after - before, 1)
     }
 
-    func testLiveWarmUpRunsEveryBucket() async throws {
+    func testLiveWarmUpLoadsTheModel() async throws {
         let tool = try await requireLiveTool()
 
         let elapsed = try await tool.warmUp()
