@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS)
+import Metal
+#endif
 
 /// The operating system a device preset stands for.
 public enum TargetOS: String, Sendable, Codable, CaseIterable {
@@ -49,19 +52,38 @@ public struct DevicePreset: Sendable, Hashable, Identifiable {
 
     public static let thisDeviceID = "this-device"
 
-    /// The running device, from ``HardwareProfile/current()`` (memory the process can take right now).
-    public static func thisDevice(profile: HardwareProfile = .current()) -> DevicePreset {
+    /// The running device. Without a `profile`, a Mac is judged by its Metal working-set limit (what the GPU may
+    /// keep resident, the same budget as ``mac32GB``) and an iPhone by the memory the process can still allocate.
+    /// A given `profile` is used as is.
+    public static func thisDevice(profile: HardwareProfile? = nil) -> DevicePreset {
         #if os(macOS)
         let platform = TargetOS.macOS
         #else
         let platform = TargetOS.iOS
         #endif
+        let measured = profile ?? .current()
+        var budget = measured.availableMemoryGB
+        var source = "Measured now by HardwareProfile: memory this process can still allocate."
+        #if os(macOS)
+        // Free + inactive pages swing with other apps and ignore compression; the Metal limit does not.
+        if profile == nil, let limit = metalWorkingSetGB {
+            budget = limit
+            source = "Measured now: Metal recommendedMaxWorkingSetSize, the memory the GPU may keep resident."
+        }
+        #endif
         return DevicePreset(
-            id: thisDeviceID, displayName: "This device (\(profile.deviceName))", platform: platform,
-            totalMemoryGB: profile.totalMemoryGB, budgetGB: profile.availableMemoryGB, isMeasured: true,
-            source: "Measured now by HardwareProfile.current(): memory this process can still allocate.",
-            bandwidthGBs: profile.memoryBandwidthGBs)
+            id: thisDeviceID, displayName: "This device (\(measured.deviceName))", platform: platform,
+            totalMemoryGB: measured.totalMemoryGB, budgetGB: budget, isMeasured: true, source: source,
+            bandwidthGBs: measured.memoryBandwidthGBs)
     }
+
+    #if os(macOS)
+    /// Fixed until the next boot or `iogpu.wired_limit_mb` change, so it is read once.
+    private static let metalWorkingSetGB: Double? = {
+        guard let size = MTLCreateSystemDefaultDevice()?.recommendedMaxWorkingSetSize, size > 0 else { return nil }
+        return Double(size) / 1_073_741_824
+    }()
+    #endif
 
     public static let iPhone4GB = DevicePreset(
         id: "iphone-4gb", displayName: "iPhone, 4 GB class (iPhone 12 / 13)", platform: .iOS,
@@ -93,8 +115,9 @@ public struct DevicePreset: Sendable, Hashable, Identifiable {
     public static let mac32GB = DevicePreset(
         id: "mac-32gb", displayName: "Mac, 32 GB (M1 Pro)", platform: .macOS,
         totalMemoryGB: 32, budgetGB: 20.0, isMeasured: true,
-        source: "Measured on an M1 Pro 32 GB: iogpu.wired_limit_mb = 20480 and Metal "
-            + "recommendedMaxWorkingSetSize = 20480 MiB (2026-09-29).",
+        source: "Measured on one M1 Pro 32 GB whose iogpu.wired_limit_mb is set to 20480 by a local LaunchDaemon; "
+            + "Metal recommendedMaxWorkingSetSize follows it (20480 MiB, 2026-09-29). A stock 32 GB Mac's "
+            + "default was not measured (≈2/3 of RAM by the 16 GB rule).",
         bandwidthGBs: 200)
 
     public static let mac64GB = DevicePreset(
@@ -109,12 +132,12 @@ public struct DevicePreset: Sendable, Hashable, Identifiable {
     ]
 
     /// This device followed by every fixed preset.
-    public static func all(profile: HardwareProfile = .current()) -> [DevicePreset] {
+    public static func all(profile: HardwareProfile? = nil) -> [DevicePreset] {
         [thisDevice(profile: profile)] + classes
     }
 
     /// Look a preset up by ``id`` (`this-device`, `iphone-4gb`, `mac-32gb`, …).
-    public static func named(_ id: String, profile: HardwareProfile = .current()) -> DevicePreset? {
+    public static func named(_ id: String, profile: HardwareProfile? = nil) -> DevicePreset? {
         let key = id.lowercased()
         if key == thisDeviceID || key == "this" || key == "current" { return thisDevice(profile: profile) }
         return classes.first { $0.id == key }

@@ -78,7 +78,7 @@ extension AuraCLI {
         if !described.isEmpty { print("Model: \(described.joined(separator: " · "))") }
         if let bytes = report.weightsBytes {
             let fit = report.weightsFit.map { " · \($0.summary)" } ?? ""
-            print("Weights: \(gigabytes(bytes))\(fit)")
+            print("Weights: \(CompatibilityReport.gigabytesText(bytes))\(fit)")
         }
         print("")
         for finding in report.findings {
@@ -99,7 +99,7 @@ extension AuraCLI {
     static func quantLine(_ quant: QuantFit) -> String {
         let name = (quant.option.label ?? quant.option.firstPath).padding(toLength: 10, withPad: " ", startingAt: 0)
         let parts = quant.option.isSplit ? "  \(quant.option.paths.count) parts, not loadable" : ""
-        return "\(name) \(gigabytes(quant.option.totalBytes).leftPadded(9))  \(quant.memory.summary)\(parts)"
+        return "\(name) \(CompatibilityReport.gigabytesText(quant.option.totalBytes).leftPadded(9))  \(quant.memory.summary)\(parts)"
     }
 
     static func marker(_ level: FindingSeverity) -> String {
@@ -203,10 +203,6 @@ extension AuraCLI {
             throw CLIUsageError("Unknown device \(id). Presets: \(known).")
         }
         return preset
-    }
-
-    static func gigabytes(_ bytes: Int64) -> String {
-        String(format: "%.2f GB", Double(bytes) / 1_073_741_824)
     }
 }
 

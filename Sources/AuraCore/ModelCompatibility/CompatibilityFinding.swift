@@ -57,6 +57,11 @@ public struct CompatibilityFinding: Sendable, Equatable, Identifiable {
     static func info(_ rule: String, _ title: String, _ detail: String) -> CompatibilityFinding {
         CompatibilityFinding(rule: rule, level: .info, title: title, detail: detail)
     }
+
+    // Without a rule id: ``CompatibilityRule/findings(for:)`` stamps it.
+    static func blocker(_ title: String, _ detail: String) -> CompatibilityFinding { blocker("", title, detail) }
+    static func caveat(_ title: String, _ detail: String) -> CompatibilityFinding { caveat("", title, detail) }
+    static func info(_ title: String, _ detail: String) -> CompatibilityFinding { info("", title, detail) }
 }
 
 /// The overall answer for one repository on one device.

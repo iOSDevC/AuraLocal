@@ -67,7 +67,7 @@ struct ReportDetailView: View {
     @ViewBuilder private var memorySection: some View {
         if let fit = result.weightsFit {
             Section("Memory on \(result.target.displayName)") {
-                if let bytes = result.weightsBytes { LabeledContent("Weights", value: Self.gigabytes(bytes)) }
+                if let bytes = result.weightsBytes { LabeledContent("Weights", value: CompatibilityReport.gigabytesText(bytes)) }
                 LabeledContent("Fit", value: fit.summary)
                 if let speed = fit.tokensPerSecond {
                     LabeledContent("Decode estimate", value: String(format: "~%.0f tokens/s", speed))
@@ -106,10 +106,6 @@ struct ReportDetailView: View {
                 }
             }
         }
-    }
-
-    static func gigabytes(_ bytes: Int64) -> String {
-        String(format: "%.2f GB", Double(bytes) / 1_073_741_824)
     }
 
     private static func copy(_ text: String) {
@@ -156,7 +152,7 @@ struct QuantRow: View {
             VStack(alignment: .leading) {
                 Text(line.option.label ?? line.option.firstPath)
                     .font(.body.monospaced())
-                Text(ReportDetailView.gigabytes(line.option.totalBytes)
+                Text(CompatibilityReport.gigabytesText(line.option.totalBytes)
                      + (line.option.isSplit ? " · \(line.option.paths.count) parts, not loadable" : ""))
                     .font(.caption)
                     .foregroundStyle(.secondary)

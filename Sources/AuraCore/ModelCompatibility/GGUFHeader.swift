@@ -64,7 +64,8 @@ public enum GGUFValue: Sendable, Equatable {
 public struct GGUFArray: Sendable, Equatable {
     public let elementType: GGUFValueType
     public let count: UInt64
-    /// The first ``GGUFHeaderParser/keptArrayElements`` elements.
+    /// Up to the first ``GGUFHeaderParser/keptArrayElements`` elements, while the header-wide
+    /// ``GGUFHeaderParser/maxKeptArrayValues`` lasts.
     public let elements: [GGUFValue]
 
     public init(elementType: GGUFValueType, count: UInt64, elements: [GGUFValue]) {
@@ -148,6 +149,8 @@ public enum GGUFHeaderParser {
 
     /// Elements kept per array; the rest are skipped.
     public static let keptArrayElements = 64
+    /// Array elements kept across the whole header, so nested arrays in a crafted file cannot multiply memory.
+    public static let maxKeptArrayValues = 4096
     private static let maxNesting = 3
     private static let magic = Array("GGUF".utf8)
 
@@ -172,10 +175,11 @@ public enum GGUFHeaderParser {
 
         var metadata: [String: GGUFValue] = [:]
         var complete = true
+        var budget = maxKeptArrayValues
         var index: UInt64 = 0
         while index < keyCount {
             do {
-                let entry = try readEntry(from: &reader)
+                let entry = try readEntry(from: &reader, budget: &budget)
                 metadata[entry.key] = entry.value
             } catch is Truncated {
                 complete = false
@@ -187,10 +191,11 @@ public enum GGUFHeaderParser {
                           metadata: metadata, isComplete: complete)
     }
 
-    private static func readEntry(from reader: inout ByteReader) throws -> (key: String, value: GGUFValue) {
+    private static func readEntry(from reader: inout ByteReader,
+                                  budget: inout Int) throws -> (key: String, value: GGUFValue) {
         let key = try reader.string()
         let type = try valueType(reader.integer(UInt32.self))
-        return (key, try readValue(of: type, from: &reader, depth: 0))
+        return (key, try readValue(of: type, from: &reader, depth: 0, budget: &budget))
     }
 
     private static func valueType(_ raw: UInt32) throws -> GGUFValueType {
@@ -198,7 +203,8 @@ public enum GGUFHeaderParser {
         return type
     }
 
-    private static func readValue(of type: GGUFValueType, from reader: inout ByteReader, depth: Int) throws -> GGUFValue {
+    private static func readValue(of type: GGUFValueType, from reader: inout ByteReader, depth: Int,
+                                  budget: inout Int) throws -> GGUFValue {
         switch type {
         case .uint8: return try .uint8(reader.integer(UInt8.self))
         case .int8: return try .int8(reader.integer(Int8.self))
@@ -212,20 +218,21 @@ public enum GGUFHeaderParser {
         case .uint64: return try .uint64(reader.integer(UInt64.self))
         case .int64: return try .int64(reader.integer(Int64.self))
         case .float64: return try .float64(Double(bitPattern: reader.integer(UInt64.self)))
-        case .array: return try .array(readArray(from: &reader, depth: depth + 1))
+        case .array: return try .array(readArray(from: &reader, depth: depth + 1, budget: &budget))
         }
     }
 
-    private static func readArray(from reader: inout ByteReader, depth: Int) throws -> GGUFArray {
+    private static func readArray(from reader: inout ByteReader, depth: Int, budget: inout Int) throws -> GGUFArray {
         guard depth <= maxNesting else { throw ParseError.nestingTooDeep }
         let elementType = try valueType(reader.integer(UInt32.self))
         let count = try reader.integer(UInt64.self)
-        let keep = min(count, UInt64(keptArrayElements))
+        let keep = min(count, UInt64(keptArrayElements), UInt64(max(budget, 0)))
+        budget -= Int(keep)
         var kept: [GGUFValue] = []
         kept.reserveCapacity(Int(keep))
         var index: UInt64 = 0
         while index < keep {
-            kept.append(try readValue(of: elementType, from: &reader, depth: depth))
+            kept.append(try readValue(of: elementType, from: &reader, depth: depth, budget: &budget))
             index += 1
         }
         try skipValues(of: elementType, count: count - keep, in: &reader, depth: depth)
@@ -250,7 +257,9 @@ public enum GGUFHeaderParser {
     private static func skipValue(of type: GGUFValueType, in reader: inout ByteReader, depth: Int) throws {
         switch type {
         case .string: try reader.skip(reader.integer(UInt64.self))
-        case .array: _ = try readArray(from: &reader, depth: depth + 1)
+        case .array:
+            var none = 0
+            _ = try readArray(from: &reader, depth: depth + 1, budget: &none)
         default: try reader.skip(UInt64(type.byteWidth ?? 0))
         }
     }

@@ -4,7 +4,7 @@ import Foundation
 ///
 /// MLX entries carry `kvHeads`/`headDim` 0 (the catalog convention: MLX sizes its KV cache at runtime);
 /// GGUF entries fill them from the file header. `maxContextLength` is set only below 32768 tokens.
-public struct CatalogEntry: Sendable, Equatable, Codable {
+public struct CatalogEntry: Sendable, Equatable {
     public let id: String
     public let repoID: String
     public let displayName: String
@@ -19,15 +19,6 @@ public struct CatalogEntry: Sendable, Equatable, Codable {
     public let kvHeads: Int
     public let headDim: Int
     public let maxContextLength: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case id, repoID, displayName
-        case modelCategory = "category"
-        case docTags
-        case weightFormat = "format"
-        case approximateSizeMB, isUncensored, ggufFilename, defaultDocumentPrompt, numLayers, kvHeads, headDim
-        case maxContextLength
-    }
 
     public init(id: String, repoID: String, displayName: String, modelCategory: Model.Category,
                 weightFormat: ModelFormat, approximateSizeMB: Int, isUncensored: Bool, ggufFilename: String?,

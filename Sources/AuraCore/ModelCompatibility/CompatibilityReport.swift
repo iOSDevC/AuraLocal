@@ -102,6 +102,11 @@ public struct CompatibilityReport: Sendable {
     }
 
     public var huggingFaceURL: URL? { URL(string: "https://huggingface.co/\(repoID)") }
+
+    /// `12.34 GB`, in binary gigabytes like the fit math.
+    public static func gigabytesText(_ bytes: Int64) -> String {
+        String(format: "%.2f GB", Double(bytes) / 1_073_741_824)
+    }
 }
 
 // MARK: - Evaluator
@@ -117,7 +122,7 @@ public enum CompatibilityEvaluator {
         let weightsFit = weightsBytes.flatMap { weightsEstimate(input, bytes: $0) }
         let quantFits = input.weightFormat == .gguf ? input.quantGroups.map { quantFit($0, input: input) } : []
 
-        var findings = CompatibilityRules.all.flatMap { $0.evaluate(input) }
+        var findings = CompatibilityRules.all.flatMap { $0.findings(for: input) }
         findings += fitFindings(input, weightsFit: weightsFit, quantFits: quantFits)
         let hasBlocker = findings.contains { $0.level == .blocker }
         let category = hasBlocker ? nil : input.inferredCategory
@@ -177,19 +182,17 @@ public enum CompatibilityEvaluator {
         let profile = input.target.memoryProfile
         if input.weightFormat == .imageGeneration {
             let rating = HardwareAnalyzer.fitLevel(forWeightsBytes: Int(bytes), kind: .diffusion, profile: profile)
-            let peak = Double(bytes) / 1_073_741_824 * ModelKind.diffusion.peakMultiplier
+            let peak = HardwareAnalyzer.peakMemoryGB(forWeightsBytes: Int(bytes), kind: .diffusion)
             return FitEstimate(rating: rating, requiredGB: peak, budgetGB: profile.availableMemoryGB, tokensPerSecond: nil)
         }
-        let config = input.settings
-        let model = sizingModel(format: .mlx, bytes: bytes, layers: config?.numLayers,
-                                kvHeads: config?.kvHeads, headDim: config?.headDim)
+        let model = sizingModel(format: .mlx, bytes: bytes, layers: input.layerCount,
+                                kvHeads: input.kvHeadCount, headDim: input.headWidth)
         return estimate(model, profile: profile)
     }
 
     private static func quantFit(_ group: GGUFQuantGroup, input: RuleInput) -> QuantFit {
-        let header = input.ggufMetadata
-        let model = sizingModel(format: .gguf, bytes: group.totalBytes, layers: header?.blockCount,
-                                kvHeads: header?.headCountKV, headDim: header?.headDimension)
+        let model = sizingModel(format: .gguf, bytes: group.totalBytes, layers: input.layerCount,
+                                kvHeads: input.kvHeadCount, headDim: input.headWidth)
         return QuantFit(option: group, memory: estimate(model, profile: input.target.memoryProfile))
     }
 
@@ -278,18 +281,17 @@ public enum CompatibilityEvaluator {
                 id: CatalogEntry.identifier(repoID: listing.repoID, quant: nil), repoID: listing.repoID,
                 displayName: CatalogEntry.displayName(repoID: listing.repoID, format: .mlx, quant: nil, bits: bits),
                 modelCategory: category, weightFormat: .mlx, approximateSizeMB: megabytes(weightsBytes),
-                isUncensored: uncensored, ggufFilename: nil, numLayers: input.settings?.numLayers ?? 0,
+                isUncensored: uncensored, ggufFilename: nil, numLayers: input.layerCount ?? 0,
                 kvHeads: 0, headDim: 0, maxContextLength: context)
         case .gguf:
             guard let pick = QuantFit.recommended(in: quantFits) else { return nil }
-            let header = input.ggufMetadata
             return CatalogEntry(
                 id: CatalogEntry.identifier(repoID: listing.repoID, quant: pick.option.label ?? "gguf"),
                 repoID: listing.repoID,
                 displayName: CatalogEntry.displayName(repoID: listing.repoID, format: .gguf, quant: pick.option.label, bits: nil),
                 modelCategory: .text, weightFormat: .gguf, approximateSizeMB: megabytes(pick.option.totalBytes),
-                isUncensored: uncensored, ggufFilename: pick.option.firstPath, numLayers: header?.blockCount ?? 0,
-                kvHeads: header?.headCountKV ?? 0, headDim: header?.headDimension ?? 0, maxContextLength: context)
+                isUncensored: uncensored, ggufFilename: pick.option.firstPath, numLayers: input.layerCount ?? 0,
+                kvHeads: input.kvHeadCount ?? 0, headDim: input.headWidth ?? 0, maxContextLength: context)
         default:
             return nil
         }
@@ -297,18 +299,17 @@ public enum CompatibilityEvaluator {
 
     private static func overview(_ input: RuleInput, category: Model.Category?) -> ArchitectureFacts {
         let config = input.settings
-        let header = input.ggufMetadata
         switch input.weightFormat {
         case .gguf:
             let labels = input.quantGroups.compactMap(\.label)
             return ArchitectureFacts(
-                family: input.ggufArchitecture, layers: header?.blockCount, trainedContext: input.trainedContext,
-                kvHeads: header?.headCountKV, headDim: header?.headDimension, hasVision: false,
+                family: input.ggufArchitecture, layers: input.layerCount, trainedContext: input.trainedContext,
+                kvHeads: input.kvHeadCount, headDim: input.headWidth, hasVision: false,
                 quantization: labels.isEmpty ? nil : "\(labels.count) quants")
         default:
             return ArchitectureFacts(
-                family: config?.modelType, layers: config?.numLayers, trainedContext: input.trainedContext,
-                kvHeads: config?.kvHeads, headDim: config?.headDim,
+                family: config?.modelType, layers: input.layerCount, trainedContext: input.trainedContext,
+                kvHeads: input.kvHeadCount, headDim: input.headWidth,
                 hasVision: category == .vision || (category == nil && input.hasVisionTensors == true),
                 quantization: config?.quantizationBits.map { "\($0)-bit" } ?? config?.foreignQuantMethod)
         }

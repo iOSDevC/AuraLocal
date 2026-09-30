@@ -33,7 +33,6 @@ public struct HFRepoInfo: Sendable, Equatable {
     public let libraryName: String?
     /// `nil` when the repo is not gated; otherwise HF's mode (`auto` / `manual`).
     public let gatedMode: String?
-    public let isPrivate: Bool
     /// `cardData.license` (the first one when the card lists several).
     public let licenseID: String?
     /// `cardData.license_name`, set for `other` licenses.
@@ -44,7 +43,7 @@ public struct HFRepoInfo: Sendable, Equatable {
     public let ggufContextLength: Int?
 
     public init(repoID: String, files: [RepoFile], tags: [String] = [], pipelineTag: String? = nil,
-                libraryName: String? = nil, gatedMode: String? = nil, isPrivate: Bool = false,
+                libraryName: String? = nil, gatedMode: String? = nil,
                 licenseID: String? = nil, licenseName: String? = nil, licenseLink: String? = nil,
                 ggufArchitecture: String? = nil, ggufContextLength: Int? = nil) {
         self.repoID = repoID
@@ -53,15 +52,12 @@ public struct HFRepoInfo: Sendable, Equatable {
         self.pipelineTag = pipelineTag
         self.libraryName = libraryName
         self.gatedMode = gatedMode
-        self.isPrivate = isPrivate
         self.licenseID = licenseID
         self.licenseName = licenseName
         self.licenseLink = licenseLink
         self.ggufArchitecture = ggufArchitecture
         self.ggufContextLength = ggufContextLength
     }
-
-    public var isGated: Bool { gatedMode != nil }
 
     /// Decode the model-info payload. Pure, so fixtures can drive it.
     public static func parse(_ data: Data) -> HFRepoInfo? {
@@ -78,7 +74,6 @@ public struct HFRepoInfo: Sendable, Equatable {
             pipelineTag: object["pipeline_tag"] as? String,
             libraryName: object["library_name"] as? String,
             gatedMode: gatedMode(object["gated"]),
-            isPrivate: object["private"] as? Bool ?? false,
             licenseID: (card["license"] as? String) ?? (card["license"] as? [String])?.first,
             licenseName: card["license_name"] as? String,
             licenseLink: card["license_link"] as? String,
@@ -90,7 +85,7 @@ public struct HFRepoInfo: Sendable, Equatable {
         guard let path = sibling["rfilename"] as? String else { return nil }
         let lfs = sibling["lfs"] as? [String: Any]
         let size = (sibling["size"] as? Int64) ?? (lfs?["size"] as? Int64)
-        return RepoFile(path: path, sizeBytes: size)
+        return RepoFile(path: path, sizeBytes: size.flatMap { $0 >= 0 ? $0 : nil })
     }
 
     /// `gated` is `false`, `"auto"` or `"manual"`.
@@ -226,8 +221,11 @@ public struct RepoSnapshot: Sendable {
     public var configuration: ModelConfigFacts?
     /// `weight_map` of `model.safetensors.index.json`: tensor name → file.
     public var weightMap: [String: String]?
-    /// Tensor names of a single-file repo, read from the safetensors header.
+    /// Tensor names of the shipped top-level safetensors files (merged), read from their headers when there is no
+    /// weight map or it is stale.
     public var singleFileHeader: SafetensorsHeader?
+    /// `__metadata__` of the first weight-map shard, read only when a rule depends on it.
+    public var weightMetadata: [String: String]?
     /// Tensor counts of top-level `*.safetensors` files the weight map does not reference.
     public var extraTensorCounts: [String: Int]
     /// Header of one GGUF file (``ggufSamplePath``) — all quants of a repo share it.
@@ -237,6 +235,7 @@ public struct RepoSnapshot: Sendable {
 
     public init(repoID: String, listing: HFRepoInfo? = nil, configuration: ModelConfigFacts? = nil,
                 weightMap: [String: String]? = nil, singleFileHeader: SafetensorsHeader? = nil,
+                weightMetadata: [String: String]? = nil,
                 extraTensorCounts: [String: Int] = [:], ggufMetadata: GGUFHeader? = nil,
                 ggufSamplePath: String? = nil, problems: [FetchProblem] = []) {
         self.repoID = repoID
@@ -244,6 +243,7 @@ public struct RepoSnapshot: Sendable {
         self.configuration = configuration
         self.weightMap = weightMap
         self.singleFileHeader = singleFileHeader
+        self.weightMetadata = weightMetadata
         self.extraTensorCounts = extraTensorCounts
         self.ggufMetadata = ggufMetadata
         self.ggufSamplePath = ggufSamplePath
@@ -252,6 +252,20 @@ public struct RepoSnapshot: Sendable {
 
     public func problem(for subject: FetchedResource) -> FetchProblem? {
         problems.first { $0.subject == subject }
+    }
+
+    /// True when the weight map references none of the files the repo ships, while it does ship top-level
+    /// safetensors: the index was left over from an earlier upload. mlx-swift-lm never reads the index (it loads
+    /// every `*.safetensors`), so the shipped files' headers stand in for it.
+    public var isWeightMapStale: Bool {
+        guard let weightMap, let files = listing?.files,
+              files.contains(where: { $0.isSafetensors && $0.isTopLevel }) else { return false }
+        return Set(weightMap.values).isDisjoint(with: files.map(\.path))
+    }
+
+    /// The weight map, unless it is absent or stale.
+    public var liveWeightMap: [String: String]? {
+        isWeightMapStale ? nil : weightMap
     }
 
     /// Decode `model.safetensors.index.json` into its weight map.

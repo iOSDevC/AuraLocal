@@ -116,12 +116,36 @@ final class GGUFHeaderTests: XCTestCase {
         XCTAssertNil(header.metadata["tokenizer.ggml.tokens"])
     }
 
-    func testCutInsideAKeyNameIsIncomplete() throws {
+    func testCutInsideAnyFieldIsIncomplete() throws {
         let full = GGUFBytes.qwen35(nextn: 0).encoded
-        for length in [24, 30, 60, full.count - 1] {
+        // 24: before the first key; 30: its length; 40: its name; 60: a value's length; last: an array count.
+        for length in [24, 30, 40, 60, full.count - 1] {
             let header = try GGUFHeaderParser.parse(full.prefix(length))
             XCTAssertFalse(header.isComplete, "cut at \(length)")
         }
+    }
+
+    func testNestedArraysKeepAtMostTheHeaderWideBudget() throws {
+        let inner: GGUFBytes.Value = { $0.array(of: .uint8, (0..<64).map { GGUFBytes.uint8Value($0) }) }
+        let middle: GGUFBytes.Value = { $0.array(of: .array, Array(repeating: inner, count: 64)) }
+        let outer: GGUFBytes.Value = { $0.array(of: .array, Array(repeating: middle, count: 64)) }
+        var file = GGUFBytes()
+        for index in 0..<4 {
+            file.key("nested.\(index)", .array, outer)
+        }
+
+        let header = try GGUFHeaderParser.parse(file.encoded)
+
+        XCTAssertTrue(header.isComplete)
+        let kept = header.metadata.values.reduce(0) { $0 + Self.keptValues($1) }
+        XCTAssertLessThanOrEqual(kept, GGUFHeaderParser.maxKeptArrayValues)
+        guard case .array(let last)? = header.metadata["nested.3"] else { return XCTFail("nested.3 missing") }
+        XCTAssertEqual(last.count, 64, "counts survive after the budget runs out")
+    }
+
+    private static func keptValues(_ value: GGUFValue) -> Int {
+        guard case .array(let list) = value else { return 0 }
+        return list.elements.count + list.elements.reduce(0) { $0 + keptValues($1) }
     }
 
     func testRejectsNonGGUFOldVersionsAndStubs() {

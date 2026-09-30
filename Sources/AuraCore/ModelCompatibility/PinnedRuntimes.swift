@@ -1,24 +1,9 @@
 import Foundation
 
-// What the runtimes AuraLocal pins can load. Generated from their sources; regenerate when a pin moves.
-//
-// MLX — mlx-swift-lm 3.31.3 (Package.resolved). The keys of `LLMTypeRegistry.shared` in
-//   .build/checkouts/mlx-swift-lm/Libraries/MLXLLM/LLMModelFactory.swift and of `VLMTypeRegistry.shared` in
-//   .build/checkouts/mlx-swift-lm/Libraries/MLXVLM/VLMModelFactory.swift (`"<model_type>": create(...)` lines).
-//   ModelCompatibilityTests diffs both sets against the checkout when it exists.
-//   `mlxRopeModelTypes`: registry entries whose model file calls `initializeRope` with the config's rope
-//   scaling (MLXLMCommon/RoPEUtils.swift, which `fatalError`s on unknown rope types).
-// llama.cpp — LocalLLMClient 0.5.0 declares `llamaVersion = "b8851"` in its Package.swift. Names are the
-//   values of `LLM_ARCH_NAMES` in https://raw.githubusercontent.com/ggml-org/llama.cpp/b8851/src/llama-arch.cpp,
-//   minus `clip` (a projector placeholder) and `(unknown)`.
-//
-// Regenerate:
-//   grep -o '"[^"]*": create(' .build/checkouts/mlx-swift-lm/Libraries/MLXLLM/LLMModelFactory.swift
-//     (same for MLXVLM/VLMModelFactory.swift, first `creators:` block only; the second one lists processors)
-//   curl -s https://raw.githubusercontent.com/ggml-org/llama.cpp/<build>/src/llama-arch.cpp \
-//     | awk '/LLM_ARCH_NAMES = \{/,/^\};/' | grep -o '"[^"]*"'
+// Taken from mlx-swift-lm 3.31.3 and llama.cpp b8851 (LocalLLMClient 0.5.0). When a pin moves,
+// scripts/regen_pinned_runtimes.sh prints the new sets; ModelCompatibilityTests diffs the MLX ones.
 
-/// Model types and architectures the pinned runtimes accept. See the header comment for provenance.
+/// Model types and architectures the pinned runtimes accept.
 public enum PinnedRuntimes {
 
     public static let mlxSwiftLMVersion = "3.31.3"

@@ -14,7 +14,7 @@ struct ModelSearchSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var vm = SearchVM()
 
-    private let profile = HardwareProfile.current()
+    private let target = DevicePreset.thisDevice()
 
     var body: some View {
         NavigationStack {
@@ -37,7 +37,7 @@ struct ModelSearchSheet: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search models (e.g. flux schnell, qwen gguf)", text: $vm.query)
                     .textFieldStyle(.plain)
-                    .onSubmit { Task { await vm.search(profile: profile) } }
+                    .onSubmit { Task { await vm.search() } }
                 if vm.isSearching { ProgressView().controlSize(.small) }
             }
             .padding(8)
@@ -50,12 +50,12 @@ struct ModelSearchSheet: View {
                 .pickerStyle(.menu).fixedSize()
                 Spacer()
                 Toggle(isOn: $vm.onlyCompatible) {
-                    Text("Only what runs · \(Int(profile.availableMemoryGB.rounded())) GB free")
+                    Text("Only what runs · \(Int(target.budgetGB.rounded())) GB budget")
                         .font(.caption)
                 }
                 .toggleStyle(.switch).controlSize(.mini)
             }
-            .onChange(of: vm.sort) { Task { await vm.search(profile: profile) } }
+            .onChange(of: vm.sort) { Task { await vm.search() } }
         }
         .padding()
     }
@@ -72,7 +72,7 @@ struct ModelSearchSheet: View {
                     onSelect(hit.id, baseModelGuess(hit))
                     dismiss()
                 }
-                .task { await vm.loadReport(for: hit, profile: profile) }
+                .task { await vm.loadReport(for: hit, on: target) }
             }
             .listStyle(.plain)
         }
@@ -167,7 +167,7 @@ final class SearchVM {
     }
 
     @MainActor
-    func search(profile: HardwareProfile) async {
+    func search() async {
         error = nil; isSearching = true; defer { isSearching = false }
         do {
             hits = try await HuggingFaceSearch.search(query, limit: 30, sort: sort)
@@ -179,9 +179,9 @@ final class SearchVM {
     }
 
     @MainActor
-    func loadReport(for hit: HFModelHit, profile: HardwareProfile) async {
+    func loadReport(for hit: HFModelHit, on target: DevicePreset) async {
         guard reports[hit.id] == nil else { return }
-        let report = await inspector.check(hit.id, on: .thisDevice(profile: profile))
+        let report = await inspector.check(hit.id, on: target)
         guard !Task.isCancelled else { return }
         reports[hit.id] = report
     }

@@ -1,4 +1,7 @@
 import XCTest
+#if os(macOS)
+import Metal
+#endif
 @testable import AuraCore
 
 final class ModelCompatibilityTests: XCTestCase {
@@ -64,6 +67,76 @@ final class ModelCompatibilityTests: XCTestCase {
         XCTAssertTrue(blocker?.detail.contains("prerouter_edge0_35b.safetensors") == true)
     }
 
+    func testStaleWeightIndexFallsBackToTheShippedHeader() {
+        let names = (0..<3).map { "language_model.model.layers.\($0).weight" }
+            + (0..<2).map { "vision_tower.blocks.\($0).weight" } + ["multi_modal_projector.linear.weight"]
+        var snapshot = Fixture.mlx("mlx-community/gemma-3-4b-it-qat-4bit", config: Fixture.config(type: "gemma3"),
+                                   weightMap: nil, sizes: [2_993_000_000])
+        snapshot.weightMap = Fixture.weightMap(["language_model": 4])
+        snapshot.singleFileHeader = SafetensorsHeader(tensorNames: names, metadata: ["format": "mlx"])
+
+        let report = CompatibilityEvaluator.evaluate(snapshot, on: mac)
+
+        XCTAssertTrue(snapshot.isWeightMapStale)
+        XCTAssertEqual(report.status, .runnableWithCaveats)
+        XCTAssertEqual(report.modelCategory, .vision)
+        XCTAssertEqual(report.caveats.first { $0.rule == "mlx.extra-safetensors" }?.title, "Stale weight index")
+        XCTAssertEqual(report.weightsBytes, 2_993_000_000, "sized from the shipped file, not the index")
+    }
+
+    func testWeightMapWithSomeShardsMissingStillBlocks() {
+        var snapshot = Fixture.mlx("o/half-uploaded", config: Fixture.config(type: "llama"),
+                                   weightMap: Fixture.weightMap(["model": 4]))
+        let shipped = snapshot.listing?.files.filter { $0.path != "model-00002-of-00002.safetensors" } ?? []
+        snapshot.listing = HFRepoInfo(repoID: "o/half-uploaded", files: shipped, tags: ["mlx"], licenseID: "mit")
+
+        let report = CompatibilityEvaluator.evaluate(snapshot, on: mac)
+
+        XCTAssertFalse(snapshot.isWeightMapStale)
+        XCTAssertTrue(report.blockers.contains { $0.title == "Weight map points at missing files" })
+    }
+
+    func testTextOnlyTypeWithVisionAndAudioTowersBlocks() {
+        let snapshot = Fixture.mlx(
+            "mlx-community/gemma-3n-E4B-it-bf16", config: Fixture.config(type: "gemma3n", quantized: false),
+            weightMap: Fixture.weightMap(["model.language_model": 4, "model.vision_tower": 2, "model.audio_tower": 2,
+                                          "model.embed_audio": 1]))
+
+        let report = CompatibilityEvaluator.evaluate(snapshot, on: mac)
+
+        XCTAssertEqual(report.status, .notRunnable)
+        let blocker = report.blockers.first { $0.rule == "mlx.towers" }
+        XCTAssertTrue(blocker?.detail.contains("`model.audio_tower.*` (2 tensors)") == true, blocker?.detail ?? "")
+        XCTAssertTrue(blocker?.detail.contains("`model.vision_tower.*`") == true)
+    }
+
+    func testTextOnlyTypeWithOnlyLanguageModelWeightsRuns() {
+        let snapshot = Fixture.mlx("Oscilla/gemma-3n-E4B-it-mlx-4Bit", config: Fixture.config(type: "gemma3n"),
+                                   weightMap: Fixture.weightMap(["model.language_model": 4]))
+
+        let report = CompatibilityEvaluator.evaluate(snapshot, on: mac)
+
+        XCTAssertEqual(report.status, .runnable)
+        XCTAssertEqual(report.modelCategory, .text)
+    }
+
+    func testQwen35VisionWeightsInMLXFormatLoadOnlyUnderTheModuleNames() {
+        func report(_ names: [String]) -> CompatibilityReport {
+            var snapshot = Fixture.mlx("o/qwen35-vl", config: Fixture.qwen35Config, weightMap: nil)
+            snapshot.singleFileHeader = SafetensorsHeader(tensorNames: names, metadata: ["format": "mlx"])
+            return CompatibilityEvaluator.evaluate(snapshot, on: mac)
+        }
+
+        let hfLayout = report(["model.language_model.layers.0.weight", "model.visual.blocks.0.weight", "lm_head.weight"])
+        let mlxLayout = report(["language_model.model.layers.0.weight", "vision_tower.blocks.0.weight"])
+
+        let blocker = hfLayout.blockers.first { $0.rule == "mlx.weight-prefixes" }
+        XCTAssertTrue(blocker?.detail.contains("`lm_head.*`") == true, blocker?.detail ?? "no blocker")
+        XCTAssertTrue(blocker?.detail.contains("`model.*`") == true)
+        XCTAssertEqual(mlxLayout.status, .runnable)
+        XCTAssertEqual(mlxLayout.modelCategory, .vision)
+    }
+
     func testUnregisteredModelTypeBlocks() {
         let snapshot = Fixture.mlx("mlx-community/MiniCPM3-4B-4bit", config: Fixture.config(type: "minicpm3"),
                                    weightMap: nil)
@@ -118,6 +191,28 @@ final class ModelCompatibilityTests: XCTestCase {
         XCTAssertTrue(generative?.detail.contains("fill-mask") == true)
         XCTAssertTrue(generative?.detail.contains("DistilBertForMaskedLM") == true)
         XCTAssertTrue(report.findings.contains { $0.rule == "license" && $0.title == "No license declared" })
+    }
+
+    func testEmbeddingModelTaggedAsTextGenerationIsNotGenerative() {
+        var snapshot = Fixture.mlx("mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ", config: Fixture.config(type: "qwen3"),
+                                   weightMap: nil)
+        snapshot.listing = HFRepoInfo(
+            repoID: "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ", files: snapshot.listing?.files ?? [],
+            tags: ["mlx", "qwen3", "text-generation", "sentence-transformers", "sentence-similarity",
+                   "feature-extraction", "base_model:Qwen/Qwen3-Embedding-0.6B"],
+            pipelineTag: "text-generation", libraryName: "mlx", licenseID: "apache-2.0")
+        let byName = Fixture.gguf(architecture: "qwen3", files: [("Qwen3-Embedding-0.6B-Q8_0.gguf", 640_000_000)])
+
+        let tagged = CompatibilityEvaluator.evaluate(snapshot, on: mac)
+        let named = CompatibilityEvaluator.evaluate(
+            RepoSnapshot(repoID: "Qwen/Qwen3-Embedding-0.6B-GGUF", listing: HFRepoInfo(
+                repoID: "Qwen/Qwen3-Embedding-0.6B-GGUF", files: byName.listing?.files ?? [], tags: ["gguf"],
+                licenseID: "apache-2.0", ggufArchitecture: "qwen3")), on: mac)
+
+        XCTAssertEqual(tagged.status, .notRunnable)
+        XCTAssertTrue(tagged.blockers.first { $0.rule == "generative" }?.detail.contains("`sentence-transformers`") == true)
+        XCTAssertNil(tagged.suggestedEntry)
+        XCTAssertEqual(named.blockers.first?.rule, "generative")
     }
 
     func testPlainTransformersSafetensorsAreNotAnMLXConversion() {
@@ -206,12 +301,54 @@ final class ModelCompatibilityTests: XCTestCase {
                                    weightMap: Fixture.weightMap(["language_model": 2]), sizes: [11_771_374_457])
 
         let phone = CompatibilityEvaluator.evaluate(snapshot, on: .iPhone6GB)
+        let desktop = CompatibilityEvaluator.evaluate(snapshot, on: .mac32GB)
 
         XCTAssertEqual(phone.status, .notRunnable)
         XCTAssertEqual(phone.weightsFit?.rating, .tooLarge)
         XCTAssertTrue(phone.blockers.contains { $0.rule == "fit" })
+        XCTAssertEqual(desktop.status, .runnable)
+        XCTAssertEqual(desktop.weightsFit?.budgetGB, 20.0)
+    }
+
+    func testExtremeArchitectureValuesAndSizesDoNotTrap() {
+        let huge: [GGUFValue] = [.uint32(.max), .uint64(.max), .int64(.max), .int64(.min), .int32(-1), .uint32(0)]
+        let headers = huge.map { value in
+            GGUFHeader(version: 3, tensorCount: 1, declaredKeyCount: 5, metadata: [
+                "general.architecture": .string("llama"), "llama.block_count": value,
+                "llama.attention.head_count_kv": value, "llama.attention.key_length": value,
+                "llama.context_length": value,
+            ], isComplete: true)
+        }
+        let parts: [(String, Int64)] = [("m-Q4_K_M-00001-of-00002.gguf", 6_000_000_000_000_000_000),
+                                        ("m-Q4_K_M-00002-of-00002.gguf", 6_000_000_000_000_000_000),
+                                        ("m-Q2_K.gguf", 9_000_000_000_000_000_000)]
+        let configs = ["1e6", "1e30", "-3", "9223372036854775807"].map { number in
+            Fixture.facts(#"{"model_type": "llama", "quantization": {"bits": 4}, "num_hidden_layers": \#(number), "#
+                + #""num_key_value_heads": \#(number), "head_dim": \#(number), "max_position_embeddings": \#(number)}"#)
+        }
+        let snapshots = headers.map { Fixture.gguf(header: $0, files: parts) }
+            + configs.map { Fixture.mlx("o/huge", config: $0, weightMap: nil, sizes: [.max, .max]) }
+
+        for snapshot in snapshots {
+            for device in DevicePreset.classes {
+                let report = CompatibilityEvaluator.evaluate(snapshot, on: device)
+                XCTAssertNil(report.overview.layers, "\(snapshot.repoID) on \(device.id)")
+                XCTAssertNotEqual(report.status, .runnable)
+            }
+        }
+    }
+
+    func testMacPresetsCarryTheirProvenance() {
         XCTAssertFalse(DevicePreset.iPhone6GB.isMeasured)
         XCTAssertTrue(DevicePreset.mac32GB.isMeasured)
+        XCTAssertTrue(DevicePreset.mac32GB.source.contains("LaunchDaemon"))
+        let given = HardwareProfile(totalMemoryGB: 16, availableMemoryGB: 7.5, deviceName: "Test Mac")
+        XCTAssertEqual(DevicePreset.thisDevice(profile: given).budgetGB, 7.5, "a given profile is used as is")
+        #if os(macOS)
+        if MTLCreateSystemDefaultDevice() != nil {
+            XCTAssertTrue(DevicePreset.thisDevice().source.contains("recommendedMaxWorkingSetSize"))
+        }
+        #endif
     }
 
     func testImagePipelinesRunOnlyOnMacThroughAuraImageGen() {
@@ -242,7 +379,7 @@ final class ModelCompatibilityTests: XCTestCase {
 
     // MARK: - Gating and licenses
 
-    func testGatingAndLicenseFindings() {
+    func testGatedRepoAndRestrictiveLicensesAreCaveats() {
         func findings(license: String?, name: String? = nil, gated: String? = nil) -> [CompatibilityFinding] {
             let listing = HFRepoInfo(repoID: "o/r", files: [], gatedMode: gated, licenseID: license, licenseName: name)
             return CompatibilityEvaluator.evaluate(RepoSnapshot(repoID: "o/r", listing: listing), on: mac)
@@ -257,6 +394,34 @@ final class ModelCompatibilityTests: XCTestCase {
         let gated = findings(license: "gemma", gated: "manual")
         XCTAssertEqual(gated.map(\.level), [.caveat, .caveat])
         XCTAssertEqual(gated.first?.title, "Gated repository (manual)")
+    }
+
+    func testRelativeLicenseLinkResolvesAgainstTheRepo() {
+        let listing = HFRepoInfo(repoID: "Qwen/Qwen3.8-Flash-Next", files: [], licenseID: "other",
+                                 licenseName: "qwen-community-1.0", licenseLink: "LICENSE")
+        let report = CompatibilityEvaluator.evaluate(RepoSnapshot(repoID: listing.repoID, listing: listing), on: mac)
+
+        XCTAssertTrue(report.caveats.contains {
+            $0.detail.contains("(https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/main/LICENSE)")
+        })
+        XCTAssertEqual(CompatibilityRules.absoluteLicenseLink("https://example.com/terms", repoID: "o/r"),
+                       "https://example.com/terms")
+        XCTAssertEqual(CompatibilityRules.absoluteLicenseLink("./docs/LICENSE.md", repoID: "o/r"),
+                       "https://huggingface.co/o/r/blob/main/docs/LICENSE.md")
+    }
+
+    func testEveryRuleFindingCarriesItsRuleID() {
+        let ids = Set(CompatibilityRules.all.map(\.id)).union(["fit", "entry", "repository"])
+        let snapshots = [
+            Fixture.mlx("o/a", config: Fixture.qwen35Config, weightMap: Fixture.weightMap(["visual": 1, "language_model": 1])),
+            Fixture.gguf(architecture: "qwen4exp"),
+            RepoSnapshot(repoID: "o/missing"),
+        ]
+        for snapshot in snapshots {
+            for finding in CompatibilityEvaluator.evaluate(snapshot, on: mac).findings {
+                XCTAssertTrue(ids.contains(finding.rule), "\(finding.rule): \(finding.title)")
+            }
+        }
     }
 
     // MARK: - Catalog entry
@@ -293,7 +458,7 @@ final class ModelCompatibilityTests: XCTestCase {
         XCTAssertTrue(entry.jsonText(indent: 4).hasPrefix("    {\n      \"id\""))
     }
 
-    func testEntryNamesAndEscaping() {
+    func testEntryNamesDropFormatSuffixesAndEscapeQuotes() {
         XCTAssertEqual(CatalogEntry.identifier(repoID: "Qwen/Qwen2.5-7B-Instruct-GGUF", quant: "Q4_K_M"),
                        "qwen2_5_7b_instruct_q4_k_m_gguf")
         XCTAssertEqual(CatalogEntry.displayName(repoID: "Qwen/Qwen2.5-7B-Instruct-GGUF", format: .gguf, quant: "Q4_K_M", bits: nil),
@@ -316,7 +481,7 @@ final class ModelCompatibilityTests: XCTestCase {
         XCTAssertEqual(report.headline, "Repository not found")
     }
 
-    func testRepoIDNormalization() {
+    func testRepoIDAcceptsURLsAndRejectsExtraSegmentsOrDotDot() {
         XCTAssertEqual(ModelCompatibilityChecker.repoID(from: "https://huggingface.co/o/r/tree/main"), "o/r")
         XCTAssertEqual(ModelCompatibilityChecker.repoID(from: " o/r.v2 "), "o/r.v2")
         XCTAssertNil(ModelCompatibilityChecker.repoID(from: "o/r/extra"))
@@ -428,6 +593,11 @@ final class ModelCompatibilityCheckerTests: XCTestCase {
 
     private let stubs = StubHub.shared
 
+    override func setUp() {
+        super.setUp()
+        stubs.reset()
+    }
+
     private var stubbedChecker: ModelCompatibilityChecker {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]
@@ -476,6 +646,50 @@ final class ModelCompatibilityCheckerTests: XCTestCase {
         XCTAssertEqual(report.overview.layers, 65)
     }
 
+    func testStaleIndexReadsTheShippedFileHeader() async throws {
+        let repo = "stub/gemma3-qat"
+        stubs.serve("api/models/\(repo)?blobs=true", StubHub.listing(repo, files: [
+            ("config.json", 900), ("tokenizer.json", 9_000_000), ("model.safetensors.index.json", 90_000),
+            ("model.safetensors", 2_993_000_000),
+        ], tags: ["mlx"]))
+        stubs.serve("\(repo)/resolve/main/config.json", Data(#"{"model_type": "gemma3", "quantization": {"bits": 4}}"#.utf8))
+        stubs.serve("\(repo)/resolve/main/model.safetensors.index.json", Data(#"""
+            {"weight_map": {"language_model.model.embed_tokens.weight": "model-00001-of-00002.safetensors"}}
+            """#.utf8))
+        stubs.serve("\(repo)/resolve/main/model.safetensors",
+                    SafetensorsBytes.make(["language_model.model.embed_tokens.weight", "vision_tower.patch.weight"],
+                                          metadata: ["format": "mlx"]) + Data(count: 1000))
+
+        let report = await stubbedChecker.check(repo, on: .mac32GB)
+
+        XCTAssertEqual(report.status, .runnableWithCaveats, report.findings.map(\.title).description)
+        XCTAssertEqual(report.modelCategory, .vision)
+        XCTAssertFalse(stubs.requests(for: "model.safetensors").filter { $0.url?.lastPathComponent == "model.safetensors" }.isEmpty)
+    }
+
+    func testShardedQwen35ReadsOnlyTheFirstShardHeaderForItsMetadata() async throws {
+        let repo = "stub/qwen35-vl-shards"
+        stubs.serve("api/models/\(repo)?blobs=true", StubHub.listing(repo, files: [
+            ("config.json", 900), ("tokenizer.json", 9_000_000), ("model.safetensors.index.json", 4000),
+            ("model-00001-of-00002.safetensors", 4_000_000_000), ("model-00002-of-00002.safetensors", 4_000_000_000),
+        ], tags: ["mlx"]))
+        stubs.serve("\(repo)/resolve/main/config.json", Data(#"""
+            {"model_type": "qwen3_5", "quantization": {"bits": 4}, "vision_config": {}}
+            """#.utf8))
+        stubs.serve("\(repo)/resolve/main/model.safetensors.index.json", Data(#"""
+            {"weight_map": {"model.language_model.embed_tokens.weight": "model-00001-of-00002.safetensors",
+                            "model.visual.patch_embed.weight": "model-00002-of-00002.safetensors"}}
+            """#.utf8))
+        stubs.serve("\(repo)/resolve/main/model-00001-of-00002.safetensors",
+                    SafetensorsBytes.make(["model.language_model.embed_tokens.weight"], metadata: ["format": "mlx"]))
+
+        let report = await stubbedChecker.check(repo, on: .mac32GB)
+
+        XCTAssertEqual(stubs.requests(for: "model-00001-of-00002.safetensors").count, 1)
+        XCTAssertTrue(stubs.requests(for: "model-00002-of-00002.safetensors").isEmpty)
+        XCTAssertTrue(report.blockers.contains { $0.rule == "mlx.weight-prefixes" }, report.findings.map(\.title).description)
+    }
+
     func testHTTPFailuresBecomeFindings() async {
         let missing = await stubbedChecker.check("stub/does-not-exist", on: .mac32GB)
         XCTAssertEqual(missing.status, .unknown)
@@ -512,6 +726,13 @@ final class StubHub: @unchecked Sendable {
         lock.withLock {
             received.append(request)
             return routes[request.url?.absoluteString ?? ""] ?? (404, Data())
+        }
+    }
+
+    func reset() {
+        lock.withLock {
+            routes = [:]
+            received = []
         }
     }
 

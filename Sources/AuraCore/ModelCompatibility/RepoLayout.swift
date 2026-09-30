@@ -83,7 +83,7 @@ public struct GGUFQuantGroup: Sendable, Equatable, Identifiable {
         let label = HuggingFaceRepo.quantLabel(for: name + ".gguf")
             ?? (name.lowercased().contains("fp16") ? "F16" : nil)
         return GGUFQuantGroup(paths: ordered.map(\.path), label: label,
-                              totalBytes: ordered.compactMap(\.sizeBytes).reduce(0, +))
+                              totalBytes: ordered.compactMap(\.sizeBytes).saturatingSum())
     }
 
     /// `dir/model-Q4_K_M-00001-of-00002.gguf` → `dir/model-Q4_K_M`; a single file keeps its path.
@@ -92,5 +92,15 @@ public struct GGUFQuantGroup: Sendable, Equatable, Identifiable {
         guard HuggingFaceRepo.isShard(filename) else { return path }
         let base = (path as NSString).deletingPathExtension
         return base.split(separator: "-").dropLast(3).joined(separator: "-")
+    }
+}
+
+extension Sequence<Int64> {
+    /// Sizes come from a remote listing, so their sum clamps at `Int64.max` instead of trapping.
+    func saturatingSum() -> Int64 {
+        reduce(0) { total, next in
+            let (sum, overflow) = total.addingReportingOverflow(next)
+            return overflow ? .max : sum
+        }
     }
 }

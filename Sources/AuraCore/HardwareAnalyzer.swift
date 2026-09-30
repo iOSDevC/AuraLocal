@@ -326,9 +326,10 @@ public extension Model {
         guard kvHeads > 0, headDim > 0 else {
             return 0.15
         }
-        // 2 (K+V) * layers * kv_heads * head_dim * seq_len * 2 bytes (fp16)
-        let bytes = 2 * numLayers * kvHeads * headDim * contextLength * 2
-        return Double(bytes) / 1_073_741_824  // to GB
+        // 2 (K+V) * layers * kv_heads * head_dim * seq_len * 2 bytes (fp16). Double, because these
+        // values can come from untrusted headers, where Int math would trap on overflow.
+        let bytes = 4 * Double(max(numLayers, 0)) * Double(kvHeads) * Double(headDim) * Double(max(contextLength, 0))
+        return bytes / 1_073_741_824  // to GB
     }
 }
 
@@ -381,8 +382,7 @@ public enum HardwareAnalyzer {
         let weightsGB = Double(bytes) / 1_073_741_824
         let available = profile.availableMemoryGB
         guard weightsGB > 0, available > 0 else { return .tooLarge }
-        let peakGB = weightsGB * kind.peakMultiplier
-        let ratio = peakGB / available
+        let ratio = peakMemoryGB(forWeightsBytes: bytes, kind: kind) / available
         switch ratio {
         case ..<0.6: return .excellent
         case ..<0.8: return .good
@@ -392,6 +392,11 @@ public enum HardwareAnalyzer {
             if kind == .llm, weightsGB <= 3.0 * available { return .streamingRequired }
             return .tooLarge
         }
+    }
+
+    /// Estimated peak resident memory in GB for a download of `bytes`: `weights × kind.peakMultiplier`.
+    public static func peakMemoryGB(forWeightsBytes bytes: Int, kind: ModelKind) -> Double {
+        Double(bytes) / 1_073_741_824 * kind.peakMultiplier
     }
 
     /// Analyze all models against the current device hardware.

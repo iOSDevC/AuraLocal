@@ -178,6 +178,16 @@ public enum HuggingFaceRepo {
             case .noResponse: "No response from Hugging Face."
             }
         }
+
+        /// The error for an HTTP status; `nil` for a success (2xx).
+        init?(status: Int) {
+            switch status {
+            case 200..<300: return nil
+            case 401, 403: self = .authRequired
+            case 404: self = .notFound
+            default: self = .http(status)
+            }
+        }
     }
 
     /// Fetch a repo's `.gguf` files from the Hugging Face tree API. Throws ``RepoError`` on a non-repo URL or a
@@ -196,13 +206,7 @@ public enum HuggingFaceRepo {
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw RepoError.noResponse }
-        guard http.statusCode == 200 else {
-            switch http.statusCode {
-            case 401, 403: throw RepoError.authRequired
-            case 404:      throw RepoError.notFound
-            default:       throw RepoError.http(http.statusCode)
-            }
-        }
+        if let failure = RepoError(status: http.statusCode) { throw failure }
         return ggufFiles(fromTreeJSON: data, owner: ref.owner, repo: ref.repo, revision: ref.revision)
     }
 
@@ -211,6 +215,7 @@ public enum HuggingFaceRepo {
     ///   text encoder + VAE), so a single-file size would understate it.
     /// - llm: the **smallest** `.gguf` (the quant most likely to fit; the user can pick a bigger one).
     /// Returns `nil` when the tree has no relevant weights.
+    @available(*, deprecated, message: "Size only; use ModelCompatibilityChecker, which sizes every quant and checks loading.")
     public static func weightBytes(fromTreeJSON data: Data, kind: ModelKind) -> Int? {
         guard let entries = try? JSONDecoder().decode([TreeEntry].self, from: data) else { return nil }
         let files = entries.filter { $0.type == "file" }
@@ -224,6 +229,7 @@ public enum HuggingFaceRepo {
     }
 
     /// Fetch a repo's tree and return its ``weightBytes(fromTreeJSON:kind:)``. Network wrapper.
+    @available(*, deprecated, message: "Size only; use ModelCompatibilityChecker, which sizes every quant and checks loading.")
     public static func weightBytes(
         repoURL: String,
         kind: ModelKind,
@@ -236,13 +242,7 @@ public enum HuggingFaceRepo {
         auth.authorize(&request)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw RepoError.noResponse }
-        guard http.statusCode == 200 else {
-            switch http.statusCode {
-            case 401, 403: throw RepoError.authRequired
-            case 404:      throw RepoError.notFound
-            default:       throw RepoError.http(http.statusCode)
-            }
-        }
+        if let failure = RepoError(status: http.statusCode) { throw failure }
         return weightBytes(fromTreeJSON: data, kind: kind)
     }
 }

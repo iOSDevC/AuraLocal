@@ -65,21 +65,28 @@ public struct ModelCompatibilityChecker: Sendable {
         let topLevel = Set(listing.files.filter(\.isTopLevel).map(\.path))
         let groups = GGUFQuantGroup.groups(in: listing.files)
         let sample = (groups.first { !$0.isSplit } ?? groups.first)?.firstPath
-        let singleSafetensors = listing.files.first { $0.isSafetensors && $0.isTopLevel }?.path
+        let shippedSafetensors = listing.files.filter { $0.isSafetensors && $0.isTopLevel }.map(\.path)
 
         async let config = fileIfListed("config.json", in: topLevel, repoID: repoID, subject: .config)
         async let index = fileIfListed("model.safetensors.index.json", in: topLevel, repoID: repoID, subject: .weightIndex)
         async let gguf = ggufHeader(repoID: repoID, path: sample)
-        let indexResult = await index
-        async let single = safetensorsHeader(repoID: repoID, path: indexResult == nil ? singleSafetensors : nil)
 
         var problems: [FetchProblem] = []
-        snapshot.configuration = Self.unwrap(await config, into: &problems).flatMap(ModelConfigFacts.parse)
+        let indexResult = await index
         snapshot.weightMap = Self.unwrap(indexResult, into: &problems).flatMap(RepoSnapshot.weightMap(fromIndexJSON:))
+        let readsShippedHeaders = indexResult == nil || snapshot.isWeightMapStale
+        async let shipped = mergedSafetensorsHeader(
+            repoID: repoID, paths: readsShippedHeaders ? Array(shippedSafetensors.prefix(Self.maxExtraHeaders)) : [])
+        snapshot.configuration = Self.unwrap(await config, into: &problems).flatMap(ModelConfigFacts.parse)
+        let firstShard = snapshot.liveWeightMap.flatMap { Set($0.values).min() }
+        let needsShardMetadata = CompatibilityRules.verdictDependsOnWeightMetadata(snapshot)
+        async let shard = safetensorsHeader(repoID: repoID, path: needsShardMetadata ? firstShard : nil)
+
         snapshot.ggufMetadata = Self.unwrap(await gguf, into: &problems)
         snapshot.ggufSamplePath = sample
-        snapshot.singleFileHeader = Self.unwrap(await single, into: &problems)
-        if let weightMap = snapshot.weightMap {
+        snapshot.singleFileHeader = Self.unwrap(await shipped, into: &problems)
+        snapshot.weightMetadata = Self.unwrap(await shard, into: &problems)?.metadata
+        if let weightMap = snapshot.liveWeightMap {
             snapshot.extraTensorCounts = await extraTensorCounts(repoID: repoID, files: listing.files, weightMap: weightMap)
         }
         snapshot.problems = problems
@@ -166,6 +173,27 @@ public struct ModelCompatibilityChecker: Sendable {
         return .success(header)
     }
 
+    /// The headers of `paths` as one: every tensor name, and the first file's `__metadata__`.
+    private func mergedSafetensorsHeader(repoID: String, paths: [String]) async -> Result<SafetensorsHeader, FetchProblem>? {
+        guard !paths.isEmpty else { return nil }
+        let results = await withTaskGroup(of: (Int, Result<SafetensorsHeader, FetchProblem>?).self) { group in
+            for (position, path) in paths.enumerated() {
+                group.addTask { await (position, safetensorsHeader(repoID: repoID, path: path)) }
+            }
+            return await group.reduce(into: [:]) { byPosition, item in byPosition[item.0] = item.1 }
+        }
+        var headers: [SafetensorsHeader] = []
+        for position in paths.indices {
+            switch results[position] ?? nil {
+            case .success(let header)?: headers.append(header)
+            case .failure(let problem)?: return .failure(problem)
+            case nil: continue
+            }
+        }
+        guard let first = headers.first else { return nil }
+        return .success(SafetensorsHeader(tensorNames: headers.flatMap(\.tensorNames).sorted(), metadata: first.metadata))
+    }
+
     private func extraTensorCounts(repoID: String, files: [RepoFile], weightMap: [String: String]) async -> [String: Int] {
         let referenced = Set(weightMap.values)
         let extras = files.filter { $0.isSafetensors && $0.isTopLevel && !referenced.contains($0.path) }
@@ -226,17 +254,14 @@ public struct ModelCompatibilityChecker: Sendable {
             return FetchProblem(subject: subject, statusCode: nil, message: "\(subject.rawValue): no HTTP response")
         }
         let code = http.statusCode
-        switch code {
-        case 200..<300:
-            return nil
-        case 401, 403:
-            return FetchProblem(subject: subject, statusCode: code,
-                                message: "\(subject.rawValue): HTTP \(code) — gated or private, a Hugging Face token is required")
-        case 404:
-            return FetchProblem(subject: subject, statusCode: code, message: "\(subject.rawValue): not found (HTTP 404)")
-        default:
-            return FetchProblem(subject: subject, statusCode: code, message: "\(subject.rawValue): HTTP \(code)")
+        let reason: String
+        switch HuggingFaceRepo.RepoError(status: code) {
+        case nil: return nil
+        case .authRequired?: reason = "HTTP \(code) — gated or private, a Hugging Face token is required"
+        case .notFound?: reason = "not found (HTTP 404)"
+        default: reason = "HTTP \(code)"
         }
+        return FetchProblem(subject: subject, statusCode: code, message: "\(subject.rawValue): \(reason)")
     }
 }
 
