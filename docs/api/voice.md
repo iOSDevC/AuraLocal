@@ -9,13 +9,17 @@ description: "AuraVoice API reference — VoiceSession, VoiceButton, VoiceChatVi
 # AuraVoice
 {: .no_toc }
 
-Full-duplex voice pipeline: on-device STT → LLM → on-device TTS. No external dependencies, no network calls.
+Turn-based (half-duplex) voice pipeline: on-device STT → LLM → on-device TTS. The microphone is off
+while the assistant thinks and speaks; call `startListening()` again for the next turn. Adds no
+packages beyond AuraCore, and speech recognition runs on-device (`requiresOnDeviceRecognition`).
 
 ```
 Microphone → SFSpeechRecognizer → AuraLocal.stream() → AVSpeechSynthesizer
 ```
 
 Sentences stream to TTS **while the LLM is still generating** — the assistant starts speaking after the first complete sentence.
+
+Guide: [Voice Interface]({{ '/guide/voice' | relative_url }}).
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -29,24 +33,24 @@ Sentences stream to TTS **while the LLM is still generating** — the assistant 
 
 ```swift
 @MainActor
-public final class VoiceSession: ObservableObject
+public final class VoiceSession: NSObject, ObservableObject
 ```
 
 ### Initialization
 
 ```swift
-init(llm: AuraLocal, config: Config = .init())
-init(llm: AuraLocal, conversationID: UUID, config: Config = .init())
+// conversationID nil = a new conversation, created in `store` on the first utterance
+init(llm: AuraLocal, conversationID: UUID? = nil, store: ConversationStore = .shared, config: Config = Config())
 ```
 
 ### State
 
 ```swift
-@Published var state: VoiceSession.State
-@Published var transcript: String   // live STT transcript
-@Published var response: String     // live LLM response
+@Published private(set) var state: VoiceSession.State
+@Published private(set) var transcript: String   // live STT transcript
+@Published private(set) var response: String     // live LLM response
 
-public enum State {   // nested in VoiceSession → VoiceSession.State
+public enum State: Equatable {   // nested in VoiceSession → VoiceSession.State
     case idle
     case listening
     case thinking(partial: String)
@@ -59,11 +63,16 @@ public enum State {   // nested in VoiceSession → VoiceSession.State
 
 ```swift
 func requestPermissions() async -> Bool
-func startListening() async throws
-func stopListening() async
-func interrupt()     // stop TTS mid-sentence
-func cancel()        // cancel everything
+func startListening() async throws   // returns without doing anything unless state is .idle
+func stopListening() async           // while .listening: stop recording, run the LLM → TTS pipeline
+func interrupt()     // stop the current sentence, clear the TTS queue, set .idle
+func cancel()        // also stops recording; same effect on TTS as interrupt()
 ```
+
+{: .warning }
+> Neither `interrupt()` nor `cancel()` stops an LLM generation already in progress. It runs to the
+> end, its later sentences are still queued and spoken, and the assistant turn is saved to the
+> conversation.
 
 ### Config
 
@@ -71,9 +80,12 @@ func cancel()        // cancel everything
 public struct Config {
     var silenceThreshold: TimeInterval = 1.4      // seconds before triggering LLM
     var maxRecordingDuration: TimeInterval = 30
-    var speakingRate: Float = 0.5                 // AVSpeechSynthesizer rate (0–1)
+    var locale: Locale? = nil                     // STT locale; nil = device's preferred language, else en-US
+    var speakingRate: Float = AVSpeechUtteranceDefaultSpeechRate   // 0–1
     var maxTokens: Int = 512
     var systemPrompt: String? = nil
+
+    init()
 }
 ```
 
@@ -89,6 +101,9 @@ Drop-in microphone button. Manages its own `VoiceSession` internally.
 // Minimal — internal session
 VoiceButton(llm: llm)
 
+// Internal session continuing a conversation, with a custom config
+VoiceButton(llm: llm, conversationID: conv.id, config: config)
+
 // With external session for state observation
 VoiceButton(session: session)
 ```
@@ -98,10 +113,10 @@ VoiceButton(session: session)
 Full voice chat UI — transcript bubble, response bubble, and `VoiceButton`.
 
 ```swift
-// Standalone
+// New conversation (created in ConversationStore.shared on the first utterance)
 VoiceChatView(llm: llm)
 
-// With persistent conversation history
+// Continue an existing conversation
 VoiceChatView(llm: llm, conversationID: conv.id)
 ```
 
