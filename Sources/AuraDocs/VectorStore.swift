@@ -22,6 +22,8 @@ actor VectorStore {
         let score: Float
     }
 
+    typealias DocumentRow = (id: UUID, title: String, url: String, chunkCount: Int, indexedAt: Date)
+
     // MARK: - State
 
     private var db: OpaquePointer?
@@ -47,7 +49,13 @@ actor VectorStore {
         // WAL mode enables concurrent reads during writes
         sqlite3_exec(db, "PRAGMA journal_mode = WAL;", nil, nil, nil)
         sqlite3_exec(db, "PRAGMA synchronous = NORMAL;", nil, nil, nil)
-        try migrate()
+        do {
+            try migrate()
+        } catch {
+            // Closed so the next open() runs the migration again instead of using a half-migrated store.
+            close()
+            throw error
+        }
     }
 
     func close() {
@@ -58,39 +66,60 @@ actor VectorStore {
 
     // MARK: - Document management
 
-    func documentExists(id: UUID) throws -> Bool {
-        try ensureOpen()
-        let rows = try query(
-            "SELECT 1 FROM documents WHERE id = ? LIMIT 1;",
-            bindings: [id.uuidString]
-        ) { _ in true }
-        return !rows.isEmpty
-    }
-
-    func insertDocument(id: UUID, title: String, url: String, chunkCount: Int) throws {
-        try ensureOpen()
-        try exec(
-            "INSERT OR REPLACE INTO documents (id, title, url, chunk_count, indexed_at) VALUES (?,?,?,?,?);",
-            bindings: [id.uuidString, title, url, chunkCount, iso(Date())]
-        )
-    }
-
-    func allDocuments() throws -> [(id: UUID, title: String, url: String, chunkCount: Int, indexedAt: Date)] {
+    func document(id: UUID) throws -> DocumentRow? {
         try ensureOpen()
         return try query(
-            "SELECT id, title, url, chunk_count, indexed_at FROM documents ORDER BY indexed_at DESC;"
-        ) { stmt -> (UUID, String, String, Int, Date)? in
-            guard
-                let idStr    = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }),
-                let id       = UUID(uuidString: idStr),
-                let title    = sqlite3_column_text(stmt, 1).map({ String(cString: $0) }),
-                let url      = sqlite3_column_text(stmt, 2).map({ String(cString: $0) }),
-                let dateStr  = sqlite3_column_text(stmt, 4).map({ String(cString: $0) })
-            else { return nil }
-            let count = Int(sqlite3_column_int(stmt, 3))
-            let date  = isoFormatter.date(from: dateStr) ?? Date()
-            return (id, title, url, count, date)
+            "SELECT id, title, url, chunk_count, indexed_at FROM documents WHERE id = ?;",
+            bindings: [id.uuidString],
+            map: rowToDocument
+        ).first
+    }
+
+    /// The document stored under `url` that ``preferredDocumentOrder`` ranks first, e.g. one indexed by a
+    /// version whose IDs changed every launch.
+    func newestDocument(url: String) throws -> DocumentRow? {
+        try ensureOpen()
+        return try query(
+            "SELECT id, title, url, chunk_count, indexed_at FROM documents WHERE url = ? ORDER BY \(Self.preferredDocumentOrder) LIMIT 1;",
+            bindings: [url],
+            map: rowToDocument
+        ).first
+    }
+
+    /// Whether a document that should have chunks has none stored. Older versions stored a document and its
+    /// chunks in separate writes, so indexing interrupted between the two left such a document.
+    func chunksAreMissing(for row: DocumentRow) throws -> Bool {
+        guard row.chunkCount > 0 else { return false }
+        try ensureOpen()
+        return try query(
+            "SELECT 1 FROM chunks WHERE document_id = ? LIMIT 1;",
+            bindings: [row.id.uuidString]
+        ) { _ in true }.isEmpty
+    }
+
+    /// Stores a document and its chunks in one transaction, so a failure never leaves one without the other.
+    func insertDocument(id: UUID, title: String, url: String, chunks: [DocumentChunk]) throws {
+        try ensureOpen()
+        try inTransaction {
+            try exec(
+                "INSERT INTO documents (id, title, url, chunk_count, indexed_at) VALUES (?,?,?,?,?);",
+                bindings: [id.uuidString, title, url, chunks.count, iso(Date())]
+            )
+            for chunk in chunks {
+                try insertChunk(chunk)
+            }
         }
+        for chunk in chunks where !chunk.embedding.isEmpty {
+            embeddingCache[chunk.id] = chunk.embedding
+        }
+    }
+
+    func allDocuments() throws -> [DocumentRow] {
+        try ensureOpen()
+        return try query(
+            "SELECT id, title, url, chunk_count, indexed_at FROM documents ORDER BY indexed_at DESC;",
+            map: rowToDocument
+        )
     }
 
     func deleteDocument(id: UUID) throws {
@@ -106,8 +135,7 @@ actor VectorStore {
         for chunkID in chunkIDs {
             embeddingCache[chunkID] = nil
         }
-        try exec("DELETE FROM chunks WHERE document_id = ?;", bindings: [id.uuidString])
-        try exec("DELETE FROM documents WHERE id = ?;",       bindings: [id.uuidString])
+        try deleteRows(ofDocument: id.uuidString)
     }
 
     /// Returns all chunks for a specific document — used by DocumentExporter.
@@ -231,38 +259,23 @@ actor VectorStore {
 
     // MARK: - Chunk insertion
 
-    func insertChunks(_ chunks: [DocumentChunk]) throws {
-        try ensureOpen()
-        try exec("BEGIN TRANSACTION;")
-        do {
-            for chunk in chunks {
-                let embBlob = floatsToData(chunk.embedding)
-                try exec(
-                    """
-                    INSERT OR REPLACE INTO chunks
-                        (id, document_id, document_title, page_number, text, embedding, token_estimate)
-                    VALUES (?,?,?,?,?,?,?);
-                    """,
-                    bindings: [
-                        chunk.id.uuidString,
-                        chunk.documentID.uuidString,
-                        chunk.documentTitle,
-                        chunk.pageNumber,
-                        chunk.text,
-                        embBlob,
-                        chunk.tokenEstimate
-                    ]
-                )
-                // Warm the cache with freshly inserted embeddings
-                if !chunk.embedding.isEmpty {
-                    embeddingCache[chunk.id] = chunk.embedding
-                }
-            }
-            try exec("COMMIT;")
-        } catch {
-            try? exec("ROLLBACK;")
-            throw error
-        }
+    private func insertChunk(_ chunk: DocumentChunk) throws {
+        try exec(
+            """
+            INSERT OR REPLACE INTO chunks
+                (id, document_id, document_title, page_number, text, embedding, token_estimate)
+            VALUES (?,?,?,?,?,?,?);
+            """,
+            bindings: [
+                chunk.id.uuidString,
+                chunk.documentID.uuidString,
+                chunk.documentTitle,
+                chunk.pageNumber,
+                chunk.text,
+                floatsToData(chunk.embedding),
+                chunk.tokenEstimate
+            ]
+        )
     }
 
     // MARK: - Hybrid Search
@@ -449,19 +462,14 @@ actor VectorStore {
             ON chunks(document_id);
             """)
         try exec("""
+            CREATE INDEX IF NOT EXISTS idx_documents_url
+            ON documents(url);
+            """)
+        try exec("""
             CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
             USING fts5(id UNINDEXED, text, content=chunks, content_rowid=rowid);
             """)
-        try exec("""
-            CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
-                INSERT INTO chunks_fts(id, text) VALUES (new.id, new.text);
-            END;
-            """)
-        try exec("""
-            CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
-                INSERT INTO chunks_fts(chunks_fts, id, text) VALUES('delete', old.id, old.text);
-            END;
-            """)
+        try installFullTextTriggers()
         // IF NOT EXISTS also upgrades databases created before this table existed.
         try exec("""
             CREATE TABLE IF NOT EXISTS metadata (
@@ -469,12 +477,80 @@ actor VectorStore {
                 value TEXT NOT NULL
             );
             """)
+        try removeDuplicateDocuments()
+    }
+
+    /// Earlier triggers omitted the rowid, so a delete never reached the full-text index and later matches
+    /// pointed at missing rows; this replaces them and rebuilds the index from `chunks` once.
+    private func installFullTextTriggers() throws {
+        let current = try query("""
+            SELECT 1 FROM sqlite_master WHERE type = 'trigger'
+              AND ((name = 'chunks_ai' AND sql LIKE '%new.rowid%') OR (name = 'chunks_ad' AND sql LIKE '%old.rowid%'));
+            """) { _ in true }
+        guard current.count < 2 else { return }
+        try inTransaction {
+            try exec("DROP TRIGGER IF EXISTS chunks_ai;")
+            try exec("DROP TRIGGER IF EXISTS chunks_ad;")
+            try exec("""
+                CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+                    INSERT INTO chunks_fts(rowid, id, text) VALUES (new.rowid, new.id, new.text);
+                END;
+                """)
+            try exec("""
+                CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
+                    INSERT INTO chunks_fts(chunks_fts, rowid, id, text) VALUES('delete', old.rowid, old.id, old.text);
+                END;
+                """)
+            try exec("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild');")
+        }
+    }
+
+    /// Ranks the documents stored under one `url`: first one with chunks, since an older version could store a
+    /// document without them, then the newest. indexed_at is fixed-width UTC ISO 8601 (see isoFormatter), so
+    /// text order is time order.
+    private static let preferredDocumentOrder =
+        "EXISTS (SELECT 1 FROM chunks WHERE chunks.document_id = documents.id) DESC, indexed_at DESC, id DESC"
+
+    /// Older versions gave a file a new ID every launch, so re-adding it stored it again. Keeps the document per
+    /// `url` that ``preferredDocumentOrder`` ranks first and deletes the rest.
+    private func removeDuplicateDocuments() throws {
+        let superseded = try query("""
+            SELECT id FROM (
+                SELECT id, row_number() OVER (PARTITION BY url ORDER BY \(Self.preferredDocumentOrder)) AS position
+                FROM documents WHERE url IN (SELECT url FROM documents GROUP BY url HAVING count(*) > 1))
+            WHERE position > 1;
+            """) { stmt -> String? in
+            sqlite3_column_text(stmt, 0).map { String(cString: $0) }
+        }
+        guard !superseded.isEmpty else { return }
+        try inTransaction {
+            for id in superseded {
+                try deleteRows(ofDocument: id)
+            }
+        }
+    }
+
+    /// Chunks first, so `chunks_ad` drops them from the full-text index.
+    private func deleteRows(ofDocument id: String) throws {
+        try exec("DELETE FROM chunks WHERE document_id = ?;", bindings: [id])
+        try exec("DELETE FROM documents WHERE id = ?;", bindings: [id])
     }
 
     // MARK: - SQLite helpers
 
     private func ensureOpen() throws {
         if db == nil { try open() }
+    }
+
+    private func inTransaction(_ work: () throws -> Void) throws {
+        try exec("BEGIN TRANSACTION;")
+        do {
+            try work()
+            try exec("COMMIT;")
+        } catch {
+            try? exec("ROLLBACK;")
+            throw error
+        }
     }
 
     private func exec(_ sql: String, bindings: [Any] = []) throws {
@@ -525,6 +601,20 @@ actor VectorStore {
                     sqlite3_bind_null(stmt, idx)
             }
         }
+    }
+
+    /// Maps `id, title, url, chunk_count, indexed_at`.
+    private func rowToDocument(_ stmt: OpaquePointer?) -> DocumentRow? {
+        guard
+            let idStr    = sqlite3_column_text(stmt, 0).map({ String(cString: $0) }),
+            let id       = UUID(uuidString: idStr),
+            let title    = sqlite3_column_text(stmt, 1).map({ String(cString: $0) }),
+            let url      = sqlite3_column_text(stmt, 2).map({ String(cString: $0) }),
+            let dateStr  = sqlite3_column_text(stmt, 4).map({ String(cString: $0) })
+        else { return nil }
+        let count = Int(sqlite3_column_int(stmt, 3))
+        let date  = isoFormatter.date(from: dateStr) ?? Date()
+        return (id, title, url, count, date)
     }
 
     private func rowToChunk(_ stmt: OpaquePointer?) -> DocumentChunk? {
