@@ -1,5 +1,5 @@
 title: AuraLocal
-description: On-device LLM & VLM inference for iOS, macOS, and visionOS — MLX + llama.cpp/GGUF, no API keys.
+description: On-device LLM & VLM inference for iOS, macOS, and visionOS — MLX + llama.cpp/GGUF, local by default.
 baseurl: "/AuraLocal"
 url: "https://iosdevc.github.io"
 
