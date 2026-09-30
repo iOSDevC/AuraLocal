@@ -127,17 +127,31 @@ final class CostLedgerTests: XCTestCase {
         XCTAssertEqual(ledger.sessionCostUSD, 2)
         XCTAssertEqual(ledger.unpricedRecordCount, 1)
         XCTAssertEqual(ledger.sessionTokens, 4_000_000)
+        XCTAssertEqual(ledger.sessionRecordCount, 2)
 
         ledger.startNewSession()
         XCTAssertEqual(ledger.records.count, 2)
         XCTAssertEqual(ledger.sessionCostUSD, 0)
         XCTAssertEqual(ledger.unpricedRecordCount, 0)
         XCTAssertEqual(ledger.sessionTokens, 0)
+        XCTAssertEqual(ledger.sessionRecordCount, 0)
 
         ledger.record(provider: "custom", model: "m",
                       usage: TokenUsage(inputTokens: 500_000, outputTokens: 0), origin: .cloud, compressionRatio: nil)
         XCTAssertEqual(ledger.sessionCostUSD, Decimal(string: "0.5"))
         XCTAssertEqual(ledger.records.count, 3)
+        XCTAssertEqual(ledger.sessionRecordCount, 1)
+    }
+
+    // MARK: - Provider usage
+
+    func testOpenAIUsageMissingACountIsNotReported() throws {
+        let partial = OpenAICompatibleProvider.parse(line: #"data: {"choices":[],"usage":{"prompt_tokens":12}}"#)
+        XCTAssertTrue(partial.isEmpty, "a missing count is unknown, not 0")
+
+        let complete = OpenAICompatibleProvider.parse(line: #"data: {"usage":{"prompt_tokens":12,"completion_tokens":3}}"#)
+        guard case .usage(let usage)? = complete.first else { return XCTFail("expected a usage event, got \(complete)") }
+        XCTAssertEqual(usage, TokenUsage(inputTokens: 12, outputTokens: 3))
     }
 }
 

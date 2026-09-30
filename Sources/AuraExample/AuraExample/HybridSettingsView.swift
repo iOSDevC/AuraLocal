@@ -69,10 +69,16 @@ struct HybridSettingsView: View {
                     Text("A Hugging Face access token lets AuraLocal download gated or private GGUF repos. Stored in the Keychain.")
                 }
 
-                Section("This session") {
+                Section {
                     LabeledContent("Remote tokens", value: "\(ledger.sessionTokens)")
                     LabeledContent("Cost", value: sessionCostText)
-                    LabeledContent("Escalations", value: "\(ledger.records.count)")
+                    LabeledContent("Escalations", value: "\(ledger.sessionRecordCount)")
+                    Button("Start new session") { ledger.startNewSession() }
+                        .disabled(ledger.sessionRecordCount == 0)
+                } header: {
+                    Text("This session")
+                } footer: {
+                    Text("The cost cap counts spend since the session started. Starting a new one keeps the history.")
                 }
             }
             .navigationTitle("Hybrid settings")
@@ -155,6 +161,13 @@ struct ConsentSheet: View {
                         Text("No price is set for this model, so the cost cap cannot check it.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
+                    if let offer = request.offer {
+                        LabeledContent("Session spend", value: Self.sessionSpendText(offer))
+                    }
+                    if isOverCap {
+                        Text("Sending goes over your session cost cap.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                     if request.preview.originalTokens > request.preview.compressedTokens {
                         LabeledContent("Compression",
                             value: "\(request.preview.originalTokens)→\(request.preview.compressedTokens) (\(String(format: "%.1f", request.preview.factor))×)")
@@ -176,6 +189,20 @@ struct ConsentSheet: View {
             .onDisappear { gate.resolve(false) }   // safety: never leak the continuation
         }
         .frame(minWidth: 420, minHeight: 420)
+    }
+
+    private var isOverCap: Bool {
+        guard let offer = request.offer else { return false }
+        if offer.reason == .costCapped { return true }
+        guard let cost = request.cost else { return false }
+        return cost > 0 && offer.sessionSpentUSD + cost > offer.costCapUSD
+    }
+
+    private static func sessionSpendText(_ offer: EscalationOffer) -> String {
+        let spent = String(format: "$%.4f", NSDecimalNumber(decimal: offer.sessionSpentUSD).doubleValue)
+        let cap = String(format: "$%.2f", NSDecimalNumber(decimal: offer.costCapUSD).doubleValue)
+        let unpriced = offer.unpricedRecordCount == 0 ? "" : " + \(offer.unpricedRecordCount) unpriced"
+        return "\(spent)\(unpriced) of \(cap) cap"
     }
 
     private var projectedCostText: String {

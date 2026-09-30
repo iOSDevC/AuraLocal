@@ -99,10 +99,8 @@ public struct OpenAICompatibleProvider: RemoteLLMProvider {
                     if let content = completion.choices?.first?.message.content, !content.isEmpty {
                         continuation.yield(.token(content))
                     }
-                    if let usage = completion.usage {
-                        continuation.yield(.usage(TokenUsage(
-                            inputTokens: usage.prompt_tokens ?? 0,
-                            outputTokens: usage.completion_tokens ?? 0)))
+                    if let usage = Self.tokenUsage(completion.usage) {
+                        continuation.yield(.usage(usage))
                     }
                     continuation.finish()
                 } catch {
@@ -143,7 +141,7 @@ public struct OpenAICompatibleProvider: RemoteLLMProvider {
 
     // MARK: - SSE parsing (OpenAI dialect)
 
-    private static func parse(line: String) -> [RemoteEvent] {
+    static func parse(line: String) -> [RemoteEvent] {
         guard line.hasPrefix("data:") else { return [] }
         let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
         guard !payload.isEmpty, payload != "[DONE]" else { return [] }
@@ -153,12 +151,16 @@ public struct OpenAICompatibleProvider: RemoteLLMProvider {
         if let content = chunk.choices?.first?.delta.content, !content.isEmpty {
             events.append(.token(content))
         }
-        if let usage = chunk.usage {
-            events.append(.usage(TokenUsage(
-                inputTokens: usage.prompt_tokens ?? 0,
-                outputTokens: usage.completion_tokens ?? 0)))
+        if let usage = tokenUsage(chunk.usage) {
+            events.append(.usage(usage))
         }
         return events
+    }
+
+    /// Both counts or nothing: a missing count is unknown, and pricing it as 0 would undercount the call.
+    private static func tokenUsage(_ usage: Chunk.Usage?) -> TokenUsage? {
+        guard let input = usage?.prompt_tokens, let output = usage?.completion_tokens else { return nil }
+        return TokenUsage(inputTokens: input, outputTokens: output)
     }
 
     private struct Chunk: Decodable {

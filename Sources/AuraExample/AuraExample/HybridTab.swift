@@ -105,8 +105,12 @@ struct HybridTab: View {
                 budgetTokens: max(256, target.contextLength ?? 8192))
             let cost = ledger.projectedCost(
                 target: target, inputTokens: max(1, prompt.count / 4), maxOutput: 512)
+            let offer = EscalationOffer(
+                reason: .userRequested, projectedCostUSD: cost,
+                sessionSpentUSD: ledger.sessionCostUSD, unpricedRecordCount: ledger.unpricedRecordCount,
+                costCapUSD: policy.costCapUSDPerSession)
             let approved = await HybridSettings.shared.consent.requestConsent(
-                target: target, preview: preview, projectedCostUSD: cost)
+                target: target, preview: preview, offer: offer)
             guard approved else { errorText = "Escalation declined — keeping local."; return }
         }
 
@@ -270,7 +274,7 @@ struct HybridTab: View {
                 Text("Escalation history")
                 Spacer()
                 if !ledger.records.isEmpty {
-                    Text("\(ledger.sessionTokens) tok").font(.caption2).foregroundStyle(.secondary)
+                    Text("\(ledger.sessionTokens) tok this session").font(.caption2).foregroundStyle(.secondary)
                 }
             }
         }

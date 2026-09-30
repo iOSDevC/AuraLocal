@@ -184,8 +184,12 @@ struct DomainTestView: View {
                 budgetTokens: max(256, target.contextLength ?? 8192))
             let cost = CostLedger.shared.projectedCost(
                 target: target, inputTokens: max(1, prompt.count / 4), maxOutput: 512)
+            let offer = EscalationOffer(
+                reason: .userRequested, projectedCostUSD: cost,
+                sessionSpentUSD: CostLedger.shared.sessionCostUSD, unpricedRecordCount: CostLedger.shared.unpricedRecordCount,
+                costCapUSD: policy.costCapUSDPerSession)
             let approved = await HybridSettings.shared.consent.requestConsent(
-                target: target, preview: preview, projectedCostUSD: cost)
+                target: target, preview: preview, offer: offer)
             guard approved else {
                 errorText = "Escalation declined — keeping local."
                 return

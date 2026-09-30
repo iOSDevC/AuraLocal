@@ -96,6 +96,7 @@ final class RouteAndEscalateTests: XCTestCase {
             localContextWindow: 8192, localAnswer: nil, domain: nil)
 
         XCTAssertEqual(input.sessionSpentUSD, Decimal(string: "0.95"))
+        XCTAssertEqual(input.unpricedRecordCount, 0)
         XCTAssertEqual(input.projectedCostUSD, Decimal(string: "0.108"))
         input.online = true   // R3 would otherwise depend on the test host
         XCTAssertEqual(EscalationRouter.decide(input), .offer(reason: .costCapped),
@@ -133,6 +134,92 @@ final class RouteAndEscalateTests: XCTestCase {
         XCTAssertGreaterThan(projected, Decimal(string: "0.002")!, "1000 output tokens at $2/1M alone cost $0.002")
     }
 
+    /// $1.00 already spent at $1/1M, so any priced request crosses a $1 cap.
+    private func spentLedger() -> CostLedger {
+        let ledger = CostLedger()
+        ledger.setPrice(TokenPrice(inputUSDPerMillion: 1, outputUSDPerMillion: 1), provider: "test.fake")
+        ledger.record(provider: "test.fake", model: "fake", usage: TokenUsage(inputTokens: 1_000_000, outputTokens: 0),
+                      origin: .cloud, compressionRatio: nil)
+        return ledger
+    }
+
+    private func routeWeakAnswer(ledger: CostLedger, consent: any ConsentGate) async throws -> HybridEscalator.Result? {
+        try await HybridEscalator(ledger: ledger).routeAndEscalate(
+            policy: EscalationPolicy(mode: .askEachTime, allowCloud: true, costCapUSDPerSession: 1),
+            context: "short", question: "unique \(UUID().uuidString)",
+            localAnswer: "I'm not sure, I cannot help with that.",
+            consent: consent, targets: [cloudTarget()])
+    }
+
+    func testOverCapOfferIsDeclinedByTheDefaultGateMethod() async throws {
+        try XCTSkipUnless(NetworkMonitor.shared.isOnline, "cloud routing needs a network path (R3)")
+        let ledger = spentLedger()
+        do {
+            _ = try await routeWeakAnswer(ledger: ledger, consent: ApprovingConsentGate())
+            XCTFail("a gate without the offer method must not approve an over-cap escalation")
+        } catch AuraError.escalationDeclined {}
+        XCTAssertEqual(ledger.records.count, 1, "nothing was sent")
+    }
+
+    func testGateSeesTheCapAndCanOverrideIt() async throws {
+        try XCTSkipUnless(NetworkMonitor.shared.isOnline, "cloud routing needs a network path (R3)")
+        let ledger = spentLedger()
+        let gate = OfferRecordingGate(approves: true)
+
+        let result = try await routeWeakAnswer(ledger: ledger, consent: gate)
+
+        XCTAssertEqual(result?.answer, "CLOUD")
+        let offer = try XCTUnwrap(gate.offers.first)
+        XCTAssertEqual(offer.reason, .costCapped)
+        XCTAssertEqual(offer.sessionSpentUSD, 1)
+        XCTAssertEqual(offer.costCapUSD, 1)
+        XCTAssertEqual(offer.unpricedRecordCount, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(offer.projectedCostUSD), 0)
+    }
+
+    func testUnpricedSessionCallsReachTheGateAsCostUnknown() async throws {
+        try XCTSkipUnless(NetworkMonitor.shared.isOnline, "cloud routing needs a network path (R3)")
+        let ledger = CostLedger()
+        ledger.setPrice(TokenPrice(inputUSDPerMillion: 1, outputUSDPerMillion: 1), provider: "test.fake")
+        ledger.record(provider: "unpriced", usage: nil, origin: .cloud, compressionRatio: nil)
+        let gate = OfferRecordingGate(approves: false)
+
+        do {
+            _ = try await routeWeakAnswer(ledger: ledger, consent: gate)
+            XCTFail("the gate declines, so routeAndEscalate must throw")
+        } catch AuraError.escalationDeclined {}
+
+        XCTAssertEqual(gate.offers.map(\.reason), [.costUnknown])
+        XCTAssertEqual(gate.offers.first?.unpricedRecordCount, 1)
+    }
+
+    func testCloudCallFailingAfterOutputIsRecordedWithUnknownCost() async throws {
+        let ledger = CostLedger()
+        ledger.setPrice(TokenPrice(inputUSDPerMillion: 1, outputUSDPerMillion: 1), provider: "test.failing")
+        let target = RemoteTarget(provider: FailingRemoteProvider(emitsToken: true), modelID: "fake",
+                                  contextLength: 8192, origin: .cloud)
+        do {
+            _ = try await HybridEscalator(ledger: ledger).escalate(to: target, context: "", question: "unique \(UUID().uuidString)")
+            XCTFail("the provider fails mid-stream")
+        } catch is FailingRemoteProvider.StreamError {}
+
+        let entry = try XCTUnwrap(ledger.records.last)
+        XCTAssertNil(entry.usage)
+        XCTAssertNil(entry.costUSD)
+        XCTAssertEqual(ledger.unpricedRecordCount, 1)
+    }
+
+    func testCallFailingBeforeAnyOutputIsNotRecorded() async throws {
+        let ledger = CostLedger()
+        let target = RemoteTarget(provider: FailingRemoteProvider(emitsToken: false), modelID: "fake",
+                                  contextLength: 8192, origin: .cloud)
+        do {
+            _ = try await HybridEscalator(ledger: ledger).escalate(to: target, context: "", question: "unique \(UUID().uuidString)")
+            XCTFail("the provider fails before streaming")
+        } catch is FailingRemoteProvider.StreamError {}
+        XCTAssertTrue(ledger.records.isEmpty)
+    }
+
     func testEscalationRecordsModelAndFreeLANCost() async throws {
         let ledger = CostLedger()
         _ = try await HybridEscalator(ledger: ledger).escalate(
@@ -163,6 +250,23 @@ private struct FakeRemoteProvider: RemoteLLMProvider {
     }
 }
 
+/// Streams one token (optionally) and then fails, like a dropped connection.
+private struct FailingRemoteProvider: RemoteLLMProvider {
+    struct StreamError: Error {}
+    let id = "test.failing"
+    let displayName = "Failing"
+    let retentionNote = "test"
+    let emitsToken: Bool
+
+    func stream(_ request: RemoteRequest) -> AsyncThrowingStream<RemoteEvent, Error> {
+        let emitsToken = self.emitsToken
+        return AsyncThrowingStream { continuation in
+            if emitsToken { continuation.yield(.token("partial")) }
+            continuation.finish(throwing: StreamError())
+        }
+    }
+}
+
 /// A consent gate that always approves (mirrors DenyingConsentGate's shape).
 private struct ApprovingConsentGate: ConsentGate {
     func requestConsent(target: RemoteTarget, preview: CompressionResult, projectedCostUSD: Decimal?) async -> Bool { true }
@@ -176,5 +280,24 @@ private final class RecordingConsentGate: ConsentGate {
     func requestConsent(target: RemoteTarget, preview: CompressionResult, projectedCostUSD: Decimal?) async -> Bool {
         projectedCosts.append(projectedCostUSD)
         return false
+    }
+}
+
+/// Implements the offer method, keeping every offer it was shown.
+@MainActor
+private final class OfferRecordingGate: ConsentGate {
+    private let approves: Bool
+    private(set) var offers: [EscalationOffer] = []
+
+    init(approves: Bool) { self.approves = approves }
+
+    func requestConsent(target: RemoteTarget, preview: CompressionResult, projectedCostUSD: Decimal?) async -> Bool {
+        XCTFail("routeAndEscalate must call requestConsent(target:preview:offer:)")
+        return false
+    }
+
+    func requestConsent(target: RemoteTarget, preview: CompressionResult, offer: EscalationOffer) async -> Bool {
+        offers.append(offer)
+        return approves
     }
 }

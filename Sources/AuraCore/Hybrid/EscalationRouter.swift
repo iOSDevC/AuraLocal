@@ -7,7 +7,7 @@ public enum EscalationReason: String, Sendable, Equatable {
     case domainSensitive   // security/medicine — bias toward a stronger model
     case userRequested     // explicit manual trigger
     case costCapped        // a trigger fired but session spend + projected cost exceeds the cap
-    case costUnknown       // a trigger fired for a cloud target with no known price
+    case costUnknown       // a trigger fired but the cloud target is unpriced, or the session spend is unknown
 }
 
 /// The router's per-request verdict.
@@ -36,6 +36,8 @@ public struct RoutingInput: Sendable {
     public var projectedCostUSD: Decimal?
     /// What the session has already spent (priced records only).
     public var sessionSpentUSD: Decimal
+    /// Session records whose cost is unknown; above zero, `sessionSpentUSD` is only a lower bound.
+    public var unpricedRecordCount: Int
 
     public init(
         policy: EscalationPolicy,
@@ -46,8 +48,9 @@ public struct RoutingInput: Sendable {
         localContextWindow: Int = 8192,
         localAnswer: String? = nil,
         domain: Model.Domain? = nil,
-        projectedCostUSD: Decimal? = 0,
-        sessionSpentUSD: Decimal = 0
+        projectedCostUSD: Decimal? = nil,
+        sessionSpentUSD: Decimal = 0,
+        unpricedRecordCount: Int = 0
     ) {
         self.policy = policy
         self.hasCandidateTarget = hasCandidateTarget
@@ -59,6 +62,7 @@ public struct RoutingInput: Sendable {
         self.domain = domain
         self.projectedCostUSD = projectedCostUSD
         self.sessionSpentUSD = sessionSpentUSD
+        self.unpricedRecordCount = unpricedRecordCount
     }
 }
 
@@ -84,15 +88,7 @@ public enum EscalationRouter {
         }
         guard let reason else { return .stayLocal }
 
-        // R7 — cost: over the session cap, or unknown for cloud ⇒ offer, never silent.
-        // A $0 projection adds no spend, so a free LAN call is never capped.
-        if let projected = input.projectedCostUSD {
-            if projected > 0 && input.sessionSpentUSD + projected > input.policy.costCapUSDPerSession {
-                return .offer(reason: .costCapped)
-            }
-        } else if input.candidateIsCloud {
-            return .offer(reason: .costUnknown)
-        }
+        if let costOffer = costOffer(input) { return costOffer }
 
         // Escalate vs offer by mode + origin.
         switch input.policy.mode {
@@ -104,6 +100,19 @@ public enum EscalationRouter {
             // Auto only for the user's own LAN box; cloud always asks per conversation.
             return input.candidateIsCloud ? .offer(reason: reason) : .escalate(reason: reason)
         }
+    }
+
+    /// R7 — cost: over the session cap, or unknown for cloud ⇒ offer, never silent. `nil` when cost does not
+    /// stand in the way.
+    private static func costOffer(_ input: RoutingInput) -> RoutingDecision? {
+        guard let projected = input.projectedCostUSD else {
+            return input.candidateIsCloud ? .offer(reason: .costUnknown) : nil
+        }
+        guard projected > 0 else { return nil }        // adds no spend, so a free LAN call is never capped
+        if input.sessionSpentUSD + projected > input.policy.costCapUSDPerSession {
+            return .offer(reason: .costCapped)          // certain even when unpriced calls hide more spend
+        }
+        return input.unpricedRecordCount > 0 ? .offer(reason: .costUnknown) : nil
     }
 
     // MARK: - Heuristics

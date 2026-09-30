@@ -60,13 +60,16 @@ public final class CostLedger: ObservableObject {
         sessionRecords.reduce(Decimal(0)) { $0 + ($1.costUSD ?? 0) }
     }
 
+    /// Records since the session started.
+    public var sessionRecordCount: Int { sessionRecords.count }
+
     /// Records since the session started whose cost is unknown.
     public var unpricedRecordCount: Int {
         sessionRecords.reduce(0) { $0 + ($1.costUSD == nil ? 1 : 0) }
     }
 
-    /// Starts a new cost session: `records` keeps the history, while
-    /// `sessionTokens`, `sessionCostUSD` and `unpricedRecordCount` restart at zero.
+    /// Starts a new cost session: `records` keeps the history, while `sessionTokens`,
+    /// `sessionCostUSD`, `unpricedRecordCount` and `sessionRecordCount` restart at zero.
     public func startNewSession() {
         sessionStart = records.count
     }

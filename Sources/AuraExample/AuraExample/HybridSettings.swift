@@ -27,6 +27,8 @@ final class UIConsentGate: ObservableObject, ConsentGate {
         let preview: CompressionResult
         /// nil when the target's price is unknown.
         let cost: Decimal?
+        /// Why it was offered, with the session's spend and cap; nil when the caller passed only a cost.
+        let offer: EscalationOffer?
     }
 
     @Published var pending: Request?
@@ -37,9 +39,22 @@ final class UIConsentGate: ObservableObject, ConsentGate {
         preview: CompressionResult,
         projectedCostUSD: Decimal?
     ) async -> Bool {
+        await present(Request(target: target, preview: preview, cost: projectedCostUSD, offer: nil))
+    }
+
+    /// Shows the session budget, so the user can decide on an offer over the cost cap.
+    func requestConsent(
+        target: RemoteTarget,
+        preview: CompressionResult,
+        offer: EscalationOffer
+    ) async -> Bool {
+        await present(Request(target: target, preview: preview, cost: offer.projectedCostUSD, offer: offer))
+    }
+
+    private func present(_ request: Request) async -> Bool {
         await withCheckedContinuation { cont in
             self.continuation = cont
-            self.pending = Request(target: target, preview: preview, cost: projectedCostUSD)
+            self.pending = request
         }
     }
 
