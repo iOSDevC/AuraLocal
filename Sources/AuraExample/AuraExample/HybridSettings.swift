@@ -25,7 +25,8 @@ final class UIConsentGate: ObservableObject, ConsentGate {
         let id = UUID()
         let target: RemoteTarget
         let preview: CompressionResult
-        let cost: Decimal
+        /// nil when the target's price is unknown.
+        let cost: Decimal?
     }
 
     @Published var pending: Request?
@@ -34,7 +35,7 @@ final class UIConsentGate: ObservableObject, ConsentGate {
     func requestConsent(
         target: RemoteTarget,
         preview: CompressionResult,
-        projectedCostUSD: Decimal
+        projectedCostUSD: Decimal?
     ) async -> Bool {
         await withCheckedContinuation { cont in
             self.continuation = cont

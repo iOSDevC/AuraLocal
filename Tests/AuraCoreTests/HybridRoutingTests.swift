@@ -75,6 +75,48 @@ final class HybridRoutingTests: XCTestCase {
         XCTAssertEqual(d, .offer(reason: .costCapped))
     }
 
+    private func overflowInput(
+        cloud: Bool, projected: Decimal?, spent: Decimal, cap: Decimal = 1.0
+    ) -> RoutingInput {
+        RoutingInput(
+            policy: EscalationPolicy(mode: .autoWithConsentMemory, allowCloud: true, costCapUSDPerSession: cap),
+            hasCandidateTarget: true, candidateIsCloud: cloud,
+            promptTokens: 8000, localContextWindow: 8192,
+            projectedCostUSD: projected, sessionSpentUSD: spent)
+    }
+
+    func testSessionSpendCrossingTheCapForcesOffer() {
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: true, projected: 0.10, spent: 0.95)),
+                       .offer(reason: .costCapped))
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: true, projected: 0.10, spent: 0.50)),
+                       .offer(reason: .sizeOverflow))
+    }
+
+    func testSessionSpendCrossingTheCapStopsAutoEscalation() {
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: false, projected: 0.10, spent: 0.95)),
+                       .offer(reason: .costCapped))
+    }
+
+    func testUnknownCloudCostOffersCostUnknown() {
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: true, projected: nil, spent: 0)),
+                       .offer(reason: .costUnknown))
+    }
+
+    func testUnknownCostWithoutTriggerStaysLocal() {
+        let d = EscalationRouter.decide(RoutingInput(
+            policy: EscalationPolicy(mode: .askEachTime, allowCloud: true),
+            hasCandidateTarget: true, candidateIsCloud: true,
+            promptTokens: 10, localContextWindow: 8192, projectedCostUSD: nil))
+        XCTAssertEqual(d, .stayLocal)
+    }
+
+    func testFreeLANIgnoresSessionSpendAndUnknownCost() {
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: false, projected: 0, spent: 5)),
+                       .escalate(reason: .sizeOverflow))
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: false, projected: nil, spent: 5)),
+                       .escalate(reason: .sizeOverflow))
+    }
+
     // MARK: - Heuristic
 
     func testLowConfidenceHeuristic() {

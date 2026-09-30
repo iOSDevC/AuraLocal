@@ -6,10 +6,12 @@ import Foundation
 @MainActor
 public protocol ConsentGate: Sendable {
     /// Return `true` to proceed with the remote call, `false` to keep the local answer.
+    /// `projectedCostUSD` is nil when the target's price is unknown; show it as
+    /// unknown, not as free.
     func requestConsent(
         target: RemoteTarget,
         preview: CompressionResult,
-        projectedCostUSD: Decimal
+        projectedCostUSD: Decimal?
     ) async -> Bool
 }
 
@@ -21,6 +23,6 @@ public struct DenyingConsentGate: ConsentGate {
     public func requestConsent(
         target: RemoteTarget,
         preview: CompressionResult,
-        projectedCostUSD: Decimal
+        projectedCostUSD: Decimal?
     ) async -> Bool { false }
 }

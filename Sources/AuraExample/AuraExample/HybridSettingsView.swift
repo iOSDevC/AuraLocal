@@ -71,8 +71,7 @@ struct HybridSettingsView: View {
 
                 Section("This session") {
                     LabeledContent("Remote tokens", value: "\(ledger.sessionTokens)")
-                    LabeledContent("Cost", value: String(format: "$%.4f",
-                        NSDecimalNumber(decimal: ledger.sessionCostUSD).doubleValue))
+                    LabeledContent("Cost", value: sessionCostText)
                     LabeledContent("Escalations", value: "\(ledger.records.count)")
                 }
             }
@@ -85,6 +84,12 @@ struct HybridSettingsView: View {
         }
         .frame(minWidth: 460, minHeight: 520)
         .onAppear { hasRetiredGitHubToken = KeychainStore.hasKey(for: Self.retiredGitHubModelsAccount) }
+    }
+
+    private var sessionCostText: String {
+        let priced = String(format: "$%.4f", NSDecimalNumber(decimal: ledger.sessionCostUSD).doubleValue)
+        let unpriced = ledger.unpricedRecordCount
+        return unpriced == 0 ? priced : "\(priced) + \(unpriced) unpriced"
     }
 
     private var retiredGitHubModelsRow: some View {
@@ -145,9 +150,11 @@ struct ConsentSheet: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Cost") {
-                    LabeledContent("Projected", value: request.cost == 0
-                        ? "Free (local)"
-                        : String(format: "$%.4f", NSDecimalNumber(decimal: request.cost).doubleValue))
+                    LabeledContent("Projected", value: projectedCostText)
+                    if request.cost == nil {
+                        Text("No price is set for this model, so the cost cap cannot check it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     if request.preview.originalTokens > request.preview.compressedTokens {
                         LabeledContent("Compression",
                             value: "\(request.preview.originalTokens)→\(request.preview.compressedTokens) (\(String(format: "%.1f", request.preview.factor))×)")
@@ -169,5 +176,11 @@ struct ConsentSheet: View {
             .onDisappear { gate.resolve(false) }   // safety: never leak the continuation
         }
         .frame(minWidth: 420, minHeight: 420)
+    }
+
+    private var projectedCostText: String {
+        guard let cost = request.cost else { return "Cost unknown" }
+        if cost == 0 { return request.target.isLocalNetwork ? "Free (local)" : "$0" }
+        return String(format: "$%.4f", NSDecimalNumber(decimal: cost).doubleValue)
     }
 }

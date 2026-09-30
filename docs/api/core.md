@@ -850,8 +850,9 @@ public final class HybridEscalator {
 public struct EscalationPolicy: Sendable, Equatable, Codable {
     var mode: Mode                     // .off / .askEachTime / .autoWithConsentMemory
     var allowCloud: Bool
-    // Default 1.0. Compared with each request's projected cost (rule R7), not with a running
-    // session total. Over the cap the router offers the escalation instead of escalating silently.
+    // Default 1.0. Rule R7 compares the session's priced spend (CostLedger.sessionCostUSD) plus
+    // the request's projected cost with it. Over the cap the router offers (.costCapped) instead of
+    // escalating silently; an unpriced cloud model is offered as .costUnknown.
     var costCapUSDPerSession: Decimal
     // Default 0.5. Sizes only the consent preview; escalate() always budgets 50% of the
     // target's context window minus maxTokens.
@@ -859,6 +860,37 @@ public struct EscalationPolicy: Sendable, Equatable, Codable {
 
     init(mode: Mode = .off, allowCloud: Bool = false, costCapUSDPerSession: Decimal = 1.0, keepRatio: Double = 0.5)
     static let off: EscalationPolicy   // the default — never leaves the device
+}
+```
+
+### EscalationRouter
+
+The pure decision behind `routeAndEscalate`, which fills `RoutingInput` from its target and its
+`CostLedger`. Call it yourself to test a policy.
+
+```swift
+public enum EscalationRouter {
+    static func decide(_ input: RoutingInput) -> RoutingDecision   // rules R1–R7, no I/O
+}
+
+public struct RoutingInput: Sendable {
+    init(policy: EscalationPolicy, hasCandidateTarget: Bool, candidateIsCloud: Bool,
+         online: Bool = true, promptTokens: Int = 0, localContextWindow: Int = 8192,
+         localAnswer: String? = nil, domain: Model.Domain? = nil,
+         projectedCostUSD: Decimal? = 0,   // nil = the target's price is unknown
+         sessionSpentUSD: Decimal = 0)     // priced spend already recorded this session
+}
+
+public enum RoutingDecision: Sendable, Equatable {
+    case stayLocal
+    case escalate(reason: EscalationReason)
+    case offer(reason: EscalationReason)
+}
+
+public enum EscalationReason: String, Sendable, Equatable {
+    case sizeOverflow, lowConfidence, domainSensitive, userRequested
+    case costCapped    // a trigger fired, but sessionSpentUSD + a non-zero projection exceeds the cap
+    case costUnknown   // a trigger fired for a cloud target whose projection is nil
 }
 ```
 
@@ -950,23 +982,75 @@ public enum KeychainStore {
     static func hasKey(for account: String) -> Bool
 }
 
+// USD per 1M tokens.
+public struct TokenPrice: Sendable, Hashable {
+    var inputUSDPerMillion: Decimal
+    var outputUSDPerMillion: Decimal
+    init(inputUSDPerMillion: Decimal, outputUSDPerMillion: Decimal)
+}
+
 @MainActor
 public final class CostLedger: ObservableObject {
-    static let shared: CostLedger
-    @Published private(set) var records: [Record]   // per-escalation token + $ accounting
+    static let shared: CostLedger      // HybridEscalator's default ledger
+    init()                             // starts with the built-in prices
+
+    @Published private(set) var records: [Record]   // per-escalation token + $ accounting, all sessions
+    // The totals below cover the records since the last startNewSession().
     var sessionTokens: Int
-    var sessionCostUSD: Decimal
+    var sessionCostUSD: Decimal        // priced records only
+    var unpricedRecordCount: Int       // records whose costUSD is nil
+    func startNewSession()             // keeps records, restarts the totals
+
+    // model nil = every model of the provider; a nil price removes the entry.
+    func setPrice(_ price: TokenPrice?, provider: String, model: String? = nil)
+    // The model-specific price, else the provider-wide one, else nil.
+    func price(provider: String, model: String? = nil) -> TokenPrice?
+    // 0 for local-network targets, nil for an unpriced cloud model.
+    func projectedCost(target: RemoteTarget, inputTokens: Int, maxOutput: Int) -> Decimal?
+    // Deprecated: the static form reads CostLedger.shared's prices.
+    static func projectedCost(target: RemoteTarget, inputTokens: Int, maxOutput: Int) -> Decimal?
+
+    func record(provider: String, model: String? = nil, usage: TokenUsage?,
+                origin: RemoteTarget.Origin, compressionRatio: Double?)
+
+    struct Record: Identifiable, Sendable {
+        let id: UUID
+        let provider: String
+        let model: String?
+        let isLocalNetwork: Bool
+        let usage: TokenUsage?
+        let costUSD: Decimal?          // nil: no price for the model, or no usage reported
+        let compressionRatio: Double?
+    }
+}
+
+@MainActor
+public protocol ConsentGate: Sendable {
+    // projectedCostUSD is nil when the target's price is unknown.
+    func requestConsent(target: RemoteTarget, preview: CompressionResult,
+                        projectedCostUSD: Decimal?) async -> Bool
 }
 ```
 
+Built-in prices, approximate list prices to override with your plan's: `claude-sonnet-4-5` on
+`"cloud.anthropic"` ($3 in / $15 out per 1M tokens) and `gpt-4o` on `"cloud.openai"` ($2.50 / $10).
+No provider-wide defaults exist, so any other model starts unpriced.
+
+```swift
+let ledger = CostLedger.shared
+ledger.setPrice(TokenPrice(inputUSDPerMillion: 0.5, outputUSDPerMillion: 1.5), provider: "my-gateway")
+let projected = ledger.projectedCost(target: target, inputTokens: 2_000, maxOutput: 1_024)   // Decimal?
+```
+
 Also available: `ContextCompressor` (token-saving compression), `PIIRedactor`,
-`ResponseCache`, `ConsentGate`, and `NetworkMonitor`.
+`ResponseCache`, and `NetworkMonitor`.
 
 ### Limitations
 
-- `CostLedger` prices only `"cloud.anthropic"` and `"cloud.openai"`. For local-network targets and
-  any other provider the projected cost is $0, so the cost cap (R7) never fires for them. A call
-  whose provider reports no token usage is also recorded at $0.
+- `CostLedger` prices only the two default cloud models out of the box. Any other cloud model is
+  unknown (`nil`), not free, until you call `setPrice`, and until then the router offers each
+  escalation to it with `.costUnknown` rather than checking the cap. Unpriced records add nothing to
+  `sessionCostUSD`, so the spend R7 counts is a lower bound while `unpricedRecordCount > 0`.
 - `ResponseCache.shared` is in memory only (64 entries by default, cleared on relaunch). Its key is
   the provider, the model and the user message (compressed context plus question); the system
   prompt is not part of it.
