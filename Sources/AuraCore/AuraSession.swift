@@ -45,8 +45,13 @@ extension AuraLocal: AuraProfileEngine {
     /// Stable across profile switches — the key the transcript is stored under.
     public let conversationID: UUID
     public private(set) var profile: AuraProfile
+    /// With an ``AuraProfile/outputSchema``, how many times ``stream(_:maxTokens:)`` re-prompts after a reply that
+    /// breaks the schema. Each repair is a full extra generation. Negative values count as 0.
+    public var maxRepairAttempts = 2
 
     private var engine: any AuraProfileEngine
+    /// The active profile's compiled schema; `nil` streams plain deltas.
+    private var validator: OutputSchemaValidator?
     /// The in-flight generation, tracked so a switch (or a new stream) can cancel + **await** it before the engine
     /// is torn down / a second decode starts (one decode at a time on the shared llama.cpp context).
     private var inFlight: Task<Void, Never>?
@@ -61,6 +66,7 @@ extension AuraLocal: AuraProfileEngine {
         self.conversationID = conversationID
         self.profile = profile
         self.makeEngine = makeEngine
+        self.validator = try profile.outputSchema.map(OutputSchemaValidator.init)   // before paying for a model load
         self.engine = try await makeEngine(profile)
     }
 
@@ -75,8 +81,11 @@ extension AuraLocal: AuraProfileEngine {
     /// in-flight generation first (awaiting the pump awaits the real decode — never tear down the shared context
     /// mid-decode), then free the old model's RAM, then build the new engine. `conversationID` is unchanged; the
     /// stored transcript is untouched. On a rebuild failure the session is left recoverable (a retry re-enters).
+    /// A profile whose ``AuraProfile/outputSchema`` does not compile throws ``OutputSchemaError`` before anything
+    /// is cancelled or torn down, so the current profile stays usable.
     public func switchProfile(to newProfile: AuraProfile) async throws {
         guard newProfile != profile || switchFailed else { return }
+        let newValidator = try newProfile.outputSchema.map(OutputSchemaValidator.init)
         inFlight?.cancel()
         await inFlight?.value
         inFlight = nil
@@ -89,28 +98,52 @@ extension AuraLocal: AuraProfileEngine {
         }
         switchFailed = false
         profile = newProfile
+        validator = newValidator
     }
 
     /// Stream a completion, injecting the ACTIVE profile's persona as the system prompt (the persona lives on the
     /// profile, never persisted as a conversation turn). Serializes behind any prior in-flight generation so two
     /// decodes never run on the shared context; tracked so `switchProfile` can cancel + await it before teardown.
+    ///
+    /// With an ``AuraProfile/outputSchema`` the reply is not streamed: the schema is appended to the system prompt,
+    /// each generation is buffered, and its JSON is extracted and validated. A reply that breaks the schema is
+    /// re-prompted with its violations up to ``maxRepairAttempts`` times. The stream then yields exactly one
+    /// element, the conforming JSON text, or finishes throwing ``OutputSchemaError/violations(output:violations:)``
+    /// for the last attempt.
     public func stream(_ prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<String, Error> {
         let engine = self.engine
-        let system = profile.instructions
         let tokens = maxTokens ?? profile.sampling.maxTokens
         let prior = inFlight
         prior?.cancel()
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
-        let task = Task { @MainActor in
-            await prior?.value                         // one decode at a time on the shared context
-            do {
-                try Task.checkCancellation()
-                try await engine.generate(prompt: prompt, systemPrompt: system, maxTokens: tokens) { delta in
-                    continuation.yield(delta)
+        let task: Task<Void, Never>
+        if let validator {
+            let system = Self.systemPrompt(profile.instructions, schema: validator.source)
+            let repairs = max(0, maxRepairAttempts)
+            task = Task { @MainActor in
+                await prior?.value                     // one decode at a time on the shared context
+                do {
+                    let json = try await Self.conformingReply(to: prompt, system: system, maxTokens: tokens,
+                                                              repairs: repairs, engine: engine, validator: validator)
+                    continuation.yield(json)
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
                 }
-                continuation.finish()
-            } catch {
-                continuation.finish(throwing: error)
+            }
+        } else {
+            let system = profile.instructions
+            task = Task { @MainActor in
+                await prior?.value                     // one decode at a time on the shared context
+                do {
+                    try Task.checkCancellation()
+                    try await engine.generate(prompt: prompt, systemPrompt: system, maxTokens: tokens) { delta in
+                        continuation.yield(delta)
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
             }
         }
         inFlight = task
@@ -122,5 +155,61 @@ extension AuraLocal: AuraProfileEngine {
     public func cancel() {
         inFlight?.cancel()
         inFlight = nil
+    }
+}
+
+// MARK: - Output schema
+
+extension AuraSession {
+    /// Generate, validate, and re-prompt with the violations until a reply conforms or the repairs run out.
+    private static func conformingReply(to prompt: String, system: String, maxTokens: Int, repairs: Int,
+                                        engine: any AuraProfileEngine,
+                                        validator: OutputSchemaValidator) async throws -> String {
+        var request = prompt
+        var attempt = 0
+        while true {
+            try Task.checkCancellation()
+            let output = try await bufferedReply(to: request, system: system, maxTokens: maxTokens, engine: engine)
+            try Task.checkCancellation()              // a cancelled decode may return early instead of throwing
+            let failure: OutputSchemaError
+            switch validator.check(output) {
+                case .success(let json): return json
+                case .failure(let error): failure = error
+            }
+            guard attempt < repairs else { throw failure }
+            attempt += 1
+            request = repairPrompt(for: prompt, after: failure)
+        }
+    }
+
+    private static func bufferedReply(to prompt: String, system: String, maxTokens: Int,
+                                      engine: any AuraProfileEngine) async throws -> String {
+        var reply = ""
+        try await engine.generate(prompt: prompt, systemPrompt: system, maxTokens: maxTokens) { delta in
+            reply += delta
+        }
+        return reply
+    }
+
+    private static func systemPrompt(_ instructions: String, schema: String) -> String {
+        let contract = "Reply with a single JSON value that conforms to this JSON Schema, no prose:\n\(schema)"
+        return instructions.isEmpty ? contract : "\(instructions)\n\n\(contract)"
+    }
+
+    private static func repairPrompt(for prompt: String, after failure: OutputSchemaError) -> String {
+        guard case .violations(let output, let found) = failure else { return prompt }
+        let problems = found.map { "- \($0.description)" }.joined(separator: "\n")
+        return """
+            \(prompt)
+
+            Your previous reply did not conform to the required JSON Schema.
+            Previous reply:
+            \(output)
+
+            Problems:
+            \(problems)
+
+            Reply again with only the corrected JSON value.
+            """
     }
 }

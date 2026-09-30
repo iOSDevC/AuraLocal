@@ -30,7 +30,7 @@ AuraLocal uses two inference engines internally, selected automatically by `Back
 All three implement the same `InferenceBackend` protocol — your code looks identical regardless of which backend is running.
 
 {: .warning }
-> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:onProgress:)`, `AuraProfile.tools`) reach only the GGUF backends; an MLX model silently ignores them. The llama.cpp backends are text-only (an `image:` argument is ignored) and flatten a multi-turn history into one prompt (roles dropped, only the last system turn kept); MLX passes the messages with their roles. `AuraProfile.outputSchema` is stored but nothing reads it, so output is not constrained to the schema, and of `AuraProfile.sampling` only `maxTokens` reaches generation.
+> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:onProgress:)`, `AuraProfile.tools`) reach only the GGUF backends; an MLX model silently ignores them. The llama.cpp backends are text-only (an `image:` argument is ignored) and flatten a multi-turn history into one prompt (roles dropped, only the last system turn kept); MLX passes the messages with their roles. `AuraSession` enforces `AuraProfile.outputSchema` the same way on every backend, by validating each reply and re-prompting, not by constrained decoding; other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). Of `AuraProfile.sampling` only `maxTokens` reaches generation.
 
 `BackendKind` also declares `.remote` and `.hybrid`, but no AuraCore API returns them; remote inference goes through `HybridEscalator` (see [Hybrid inference]({{ '/guide/hybrid' | relative_url }})).
 

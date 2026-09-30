@@ -260,6 +260,139 @@ public struct Turn: Identifiable, Codable, Sendable, Equatable {
 
 ---
 
+## AuraSession
+
+A conversation that can switch `AuraProfile`s mid-session. The transcript is keyed by
+`conversationID`, which a switch keeps; the engine is rebuilt for the new profile.
+
+```swift
+@MainActor
+public final class AuraSession
+init(conversationID: UUID = UUID(),
+     profile: AuraProfile,
+     makeEngine: @escaping @MainActor (AuraProfile) async throws -> any AuraProfileEngine = AuraSession.liveEngine) async throws
+
+let conversationID: UUID
+private(set) var profile: AuraProfile
+var maxRepairAttempts: Int = 2     // re-prompts after a reply that breaks profile.outputSchema
+
+func switchProfile(to newProfile: AuraProfile) async throws
+func stream(_ prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<String, Error>
+func cancel()
+```
+
+`stream` sends `profile.instructions` as the system prompt and defaults `maxTokens` to
+`profile.sampling.maxTokens`. One generation runs at a time: a new `stream` or a `switchProfile`
+cancels the previous one and waits for it to stop.
+
+### AuraProfile
+
+```swift
+public struct AuraProfile: Sendable, Identifiable, Equatable {
+    let id: String
+    var displayName: String
+    var instructions: String            // the system prompt
+    var model: Model
+    var sampling: SamplingParams        // only maxTokens reaches generation
+    var tools: [any LLMTool]            // GGUF backends only
+    var outputSchema: OutputSchema?
+    var escalation: EscalationPolicy    // default .off
+}
+
+public enum OutputSchema: Sendable, Equatable, Codable {
+    case json(String)                   // a JSON Schema document
+}
+```
+
+`AuraProfileCatalog.chat(model:)`, `.agent(model:tools:)` and `.securityReview(model:)` build the
+common profiles.
+
+### Structured output
+
+With `outputSchema` set, `AuraSession` enforces the schema by **validation and repair**, not
+constrained decoding: neither pinned runtime has a usable grammar seam, so the model can still
+write anything, and the session checks what comes back.
+
+1. `init` and `switchProfile` compile the schema before building an engine. A schema that does not
+   compile throws `OutputSchemaError`; a failed `switchProfile` leaves the current profile and
+   engine untouched.
+2. `stream` appends the schema to the system prompt with an instruction to reply with a single
+   JSON value, buffers the whole reply, extracts the JSON and validates it.
+3. A reply that breaks the schema is sent back with the original prompt and the list of
+   violations, up to `maxRepairAttempts` times. Each repair is a full extra generation.
+4. The stream yields **one** element, the conforming JSON text, or finishes throwing
+   `OutputSchemaError.violations(output:violations:)` for the last reply.
+
+Without a schema, `stream` yields deltas as they are generated.
+
+```swift
+let profile = AuraProfile(
+    id: "extract", displayName: "Extract",
+    instructions: "Extract the person mentioned in the text.",
+    model: .qwen3_1_7b,
+    sampling: .precise,
+    outputSchema: .json(#"""
+        {"type": "object",
+         "properties": {"name": {"type": "string"}, "age": {"type": "integer", "minimum": 0}},
+         "required": ["name", "age"], "additionalProperties": false}
+        """#))
+
+let session = try await AuraSession(profile: profile)
+for try await json in session.stream("Ana turned 30 last week.") {
+    print(json)   // e.g. {"name": "Ana", "age": 30}
+}
+```
+
+`AuraLocal.chat` and `AuraLocal.stream` do not read profiles. To check their output, use the
+validator directly:
+
+```swift
+public struct OutputSchemaValidator: Sendable {
+    init(_ schema: OutputSchema) throws(OutputSchemaError)
+    func validate(_ json: String) -> [OutputSchemaViolation]                     // empty = conforms
+    func conformingJSON(in output: String) throws(OutputSchemaError) -> String  // extract, then validate
+    static func extractJSON(from output: String) -> String?
+}
+
+public struct OutputSchemaViolation: Sendable, Equatable, CustomStringConvertible {
+    let path: String       // JSON pointer (RFC 6901); "" is the whole value
+    let message: String
+}
+
+public enum OutputSchemaError: Error, LocalizedError, Sendable, Equatable {
+    case invalidSchema(String)            // not JSON (a GBNF grammar, say), or a malformed keyword value
+    case unsupportedKeywords([String])    // JSON pointers into the schema
+    case violations(output: String, violations: [OutputSchemaViolation])
+}
+```
+
+Supported keywords:
+
+| Keywords | Notes |
+|----------|-------|
+| `type` | A name or an array of names. `integer` accepts whole numbers, including `3.0` |
+| `properties`, `required`, `additionalProperties` | `additionalProperties` is a boolean or a schema |
+| `items`, `minItems`, `maxItems` | `items` is one schema; the tuple (array) form is rejected |
+| `enum`, `const` | |
+| `minLength`, `maxLength` | Counted in Unicode scalars |
+| `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` | The exclusive bounds are numbers, not booleans |
+| `anyOf`, `oneOf`, `allOf` | |
+| `description`, `title`, `$schema`, `examples`, `default`, `$comment` | Accepted and ignored |
+
+Any other keyword (`$ref`, `$defs`, `pattern`, `format`, `patternProperties`, `if`/`then`/`else`,
+`not`, …) makes compilation throw `unsupportedKeywords`, so no constraint is skipped silently.
+`true` and `false` work as schemas anywhere a schema does.
+
+`extractJSON` takes, in order: the whole reply when it is JSON; the first ```` ```json ```` (or
+unlabelled) fenced block that parses; the first balanced `{…}` or `[…]` that parses, ignoring
+brackets inside strings.
+
+{: .warning }
+> Validation checks shape, not truth: a conforming reply can still hold wrong values. A small model
+> that keeps breaking the schema costs up to `1 + maxRepairAttempts` generations per `stream` call.
+
+---
+
 ## HardwareAnalyzer
 
 Assesses whether a catalog `Model` fits this device's memory. All methods are synchronous.

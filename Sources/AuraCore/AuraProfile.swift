@@ -26,7 +26,8 @@ public struct AuraProfile: Sendable, Identifiable {
     public var sampling: SamplingParams
     /// Empty ⇒ plain chat; non-empty ⇒ agentic (function-calling). Only the GGUF backend honors tools.
     public var tools: [any LLMTool]
-    /// Optional structured-output constraint. Carried now; grammar/JSON-mode plumbing is a later increment.
+    /// Optional JSON Schema every reply must conform to. ``AuraSession`` compiles it when the profile is applied
+    /// and validates each reply, re-prompting on violations; see ``OutputSchema``.
     public var outputSchema: OutputSchema?
     /// Remote-escalation policy for this profile. Default `.off` (local-only).
     public var escalation: EscalationPolicy
@@ -97,10 +98,12 @@ public struct SamplingParams: Sendable, Equatable, Codable {
 
 // MARK: - OutputSchema
 
-/// An optional structured-output constraint carried by a profile. Only `.json` is defined for now; enforcement
-/// (GBNF / JSON-mode into the sampler) is a later increment — no JSON-mode seam exists in the backend yet.
+/// A structured-output contract carried by a profile. Enforced by validation and repair, not constrained
+/// decoding: neither pinned runtime has a usable grammar seam, so ``AuraSession`` checks each reply with
+/// ``OutputSchemaValidator`` and re-prompts with the violations (at most ``AuraSession/maxRepairAttempts`` times).
 public enum OutputSchema: Sendable, Equatable, Codable {
-    /// A JSON schema / GBNF grammar string the output must conform to.
+    /// A JSON Schema document, limited to the keywords ``OutputSchemaValidator`` supports. Anything else,
+    /// including a GBNF grammar, is rejected with ``OutputSchemaError`` when the profile is applied.
     case json(String)
 }
 
