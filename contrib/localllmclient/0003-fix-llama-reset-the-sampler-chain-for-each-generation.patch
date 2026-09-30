@@ -1,0 +1,127 @@
+From cf124e73bceed5ea0480ec778701a472e92e5491 Mon Sep 17 00:00:00 2001
+From: Cristopher Bautista <cristopher.abg@icloud.com>
+Date: Wed, 30 Sep 2026 09:04:55 -0600
+Subject: [PATCH] fix(llama): reset the sampler chain for each generation
+
+Context builds one llama_sampler chain for its lifetime and nothing ever resets it, so sampler
+state carries over from one generation to the next on the same client:
+
+- Grammar (responseFormat .json or .grammar): the grammar sampler keeps its parse state. Once
+  the first answer completes the grammar, every later generation on that client can only emit
+  end-of-generation or the grammar's trailing whitespace, so it returns an empty string (or,
+  with json.gbnf, whitespace only).
+- Repetition penalties: the next answer is penalised for tokens of the previous one.
+- RNG: the dist sampler keeps advancing, so a fixed seed only reproduces the first generation of
+  a client, not each call.
+
+llama-server builds a fresh sampler per request. The equivalent here is llama_sampler_reset on
+the chain when a new generation begins, which is LlamaClient.textStream(from:): responseStream,
+generateText, generateToolCalls, resumeStream and LLMSession (streamResponse, respond, automatic
+tool calling) all go through it. Nothing changes within a generation, and the prompt cache / KV
+reuse is untouched.
+
+Seed semantics after this change: resetting the dist sampler re-seeds it. With a fixed
+Parameter.seed every generation starts from that seed, so the same input on the same client
+gives the same output each time (previously repeated calls drew different samples). With the
+default seed (nil, LLAMA_DEFAULT_SEED) each generation gets a new random seed, as before in
+effect.
+
+Tests (LocalLLMClientLlamaTests, run against a real model): two consecutive generations with a
+custom grammar both match it; two consecutive JSON generations are both non-empty, valid JSON;
+the same prompt twice with a fixed seed and a repeat penalty gives the same output. All three
+fail without the fix and pass with it, on both test models (SmolVLM-256M as on CI, and the
+local default gemma-4-E4B).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Sources/LocalLLMClientLlama/Context.swift     |  7 +++
+ Sources/LocalLLMClientLlama/LlamaClient.swift |  1 +
+ .../LocalLLMClientLlamaTests.swift            | 44 +++++++++++++++++++
+ 3 files changed, 52 insertions(+)
+
+diff --git a/Sources/LocalLLMClientLlama/Context.swift b/Sources/LocalLLMClientLlama/Context.swift
+index 756dfd6..ad21a5f 100644
+--- a/Sources/LocalLLMClientLlama/Context.swift
++++ b/Sources/LocalLLMClientLlama/Context.swift
+@@ -114,6 +114,13 @@ public final class Context: @unchecked Sendable {
+         batch.clear()
+     }
+ 
++    /// Returns every sampler to its initial state, as llama-server does per request.
++    /// Otherwise a grammar the previous answer completed only allows end-of-generation,
++    /// and the repetition penalties still count that answer's tokens.
++    func resetSampling() {
++        llama_sampler_reset(sampling)
++    }
++
+     func addCache(for chunk: MessageChunk, position: llama_pos) {
+         let endIndex = promptCaches.endIndex - 1
+         switch (chunk, promptCaches.last?.chunk) {
+diff --git a/Sources/LocalLLMClientLlama/LlamaClient.swift b/Sources/LocalLLMClientLlama/LlamaClient.swift
+index 6e53884..02e7176 100644
+--- a/Sources/LocalLLMClientLlama/LlamaClient.swift
++++ b/Sources/LocalLLMClientLlama/LlamaClient.swift
+@@ -76,6 +76,7 @@ public final class LlamaClient: LLMClient {
+     /// - Throws: An `LLMError.failedToDecode` error if the input cannot be decoded.
+     public func textStream(from input: LLMInput) throws -> Generator {
+         context.discardPendingTokens()
++        context.resetSampling()
+ 
+         do {
+             switch input.value {
+diff --git a/Tests/LocalLLMClientLlamaTests/LocalLLMClientLlamaTests.swift b/Tests/LocalLLMClientLlamaTests/LocalLLMClientLlamaTests.swift
+index 3f4d598..cd1ce4c 100644
+--- a/Tests/LocalLLMClientLlamaTests/LocalLLMClientLlamaTests.swift
++++ b/Tests/LocalLLMClientLlamaTests/LocalLLMClientLlamaTests.swift
+@@ -116,4 +116,48 @@ extension ModelTests.LocalLLMClientLlamaTests {
+         let result = try await LocalLLMClient.llama(parameter: .init(context: 512, batch: 2, options: .init(verbose: true))).generateText(from: "Hello, world!")
+         #expect(!result.isEmpty)
+     }
++
++    @Test
++    func grammarAppliesToEveryGeneration() async throws {
++        let client = try await LocalLLMClient.llama(parameter: .init(
++            context: 512,
++            temperature: 0,
++            options: .init(responseFormat: .grammar(gbnf: #"root ::= "yes" | "no""#))
++        ))
++
++        // A grammar left completed by the first answer would only allow end-of-generation.
++        for question in ["Is the sky blue?", "Is fire cold?"] {
++            let result = try await client.generateText(from: LLMInput.chat([.user("\(question) Answer yes or no.")]))
++            #expect(["yes", "no"].contains(result), "\(question) -> \(result.debugDescription)")
++        }
++    }
++
++    @Test
++    func jsonAppliesToEveryGeneration() async throws {
++        let client = try await LocalLLMClient.llama(parameter: .init(
++            context: 1024,
++            temperature: 0,
++            options: .init(responseFormat: .json)
++        ))
++
++        for question in ["What is the answer to one plus two?", "What is the capital of France?"] {
++            let result = try await client.generateText(from: LLMInput.chat([
++                .system("You are a helpful assistant."),
++                .user("\(question)\nRespond in JSON.\n\n{ \"answer\": \"<answer>\" }\n")
++            ]))
++            #expect(!result.isEmpty, "\(question)")
++            #expect((try? JSONSerialization.jsonObject(with: Data(result.utf8))) != nil, "\(question) -> \(result.debugDescription)")
++        }
++    }
++
++    @Test
++    func fixedSeedRepeatsAcrossGenerations() async throws {
++        // Carried-over penalties or RNG state would make the second answer differ.
++        let client = try await LocalLLMClient.llama(parameter: .init(context: 512, seed: 42, temperature: 1.0, penaltyRepeat: 1.3))
++
++        let first = try await client.generateText(from: prompt)
++        let second = try await client.generateText(from: prompt)
++        #expect(!first.isEmpty)
++        #expect(first == second)
++    }
+ }
+-- 
+2.50.1 (Apple Git-155)
+
