@@ -5,7 +5,7 @@
 converted to Core ML for the Neural Engine.
 
 ```sh
-uv run scripts/embeddings/convert_e5_coreml.py --out ~/models/multilingual-e5-small
+uv run scripts/embeddings/convert_e5_coreml.py --out build/multilingual-e5-small
 ```
 
 `uv` reads the pinned dependencies from the script header (Python 3.11, torch 2.7.0,

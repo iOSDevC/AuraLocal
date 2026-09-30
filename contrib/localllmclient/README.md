@@ -9,7 +9,7 @@ work is reviewable before anything is pushed anywhere public.
 
 | | |
 |---|---|
-| Base | `main @ d92cb1f` (2026-08-26) |
+| Base | `main @ d92cb1f` (2026-08-25) |
 | Size | 2 commits · 292 insertions · **0 deletions** |
 | Verified | built against upstream with llama.cpp from source; 7 tests in 4 suites pass, including upstream's own pre-existing `ContextTests` |
 
@@ -44,6 +44,8 @@ Adds `Parameter.flashAttention` (`.auto`/`.enabled`/`.disabled`) and `Parameter.
 (`.f16`/`.q8_0`/`.q4_0`), plus `Context.stateSizeBytes`.
 
 Defaults (`.auto`, `.f16`) reproduce llama.cpp's own, so existing callers see no behaviour change.
+LocalLLMClient PR #97 (open since 2026-04-28) also exposes Flash Attention and the KV cache type (as
+`flashAttention: Bool` defaulting to `true`, and separate K/V types); reconcile with it before submitting.
 
 Measured with upstream's test model at 2048 context, cache filled before measuring:
 
@@ -78,7 +80,7 @@ Building upstream from source needs its submodule (llama.cpp):
 git submodule update --init --recursive --depth 1
 ```
 
-## ⚠️ Do not point AuraLocal at a fork
+## Do not point AuraLocal at a fork
 
 Tempting, but it re-introduces exactly the failure fixed in `4dfcbb6`: SwiftPM honours only the
 **root** package's `Package.resolved`, so a fragile dependency graph that resolves here breaks for
@@ -99,9 +101,11 @@ e.g. `ukisai/Swift-1.5-Qwen3.8-27B-GGUF`). b8851 registers the arch and its pre-
 looks supported, but it derives layer recurrence arithmetically instead of reading
 `qwen35.attention.recurrent_layers`: with `block_count` 65 the MTP block is misclassified as
 recurrent, and the load throws on the `blk.64.ssm_*` tensors the file does not contain. The loader
-fix landed upstream in llama.cpp PR #24025, first shipped in **b9495** (2026-06-03).
+fix landed upstream in llama.cpp PR #22673 (MTP support, which flags the NextN layers non-recurrent),
+first shipped in **b9180** (2026-05-16); PR #24031 (b9488, 2026-06-03) also reads
+`qwen35.attention.recurrent_layers` from the GGUF.
 
-Until LocalLLMClient bumps `llamaVersion` to b9495 or later, that whole family is MLX-only here — see
+Until LocalLLMClient bumps `llamaVersion` to b9180 or later, that whole family is MLX-only here — see
 `swift15_qwen38_27b_mlx` in `models.json`. Standalone llama.cpp and LM Studio at a current build run
 the GGUFs today; AuraLocal cannot, and forking to fix it is ruled out above.
 

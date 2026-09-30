@@ -4,64 +4,70 @@
 
 # AuraLocal
 
-Lightweight on-device LLM & VLM Swift package for iOS/macOS/visionOS. Run Qwen3, Llama 3, Mistral, Gemma, SmolVLM and more — locally, privately, no API keys. Supports both MLX (small models, Apple Silicon GPU) and llama.cpp/GGUF (large models 7B–70B, including layer-streaming for memory-constrained devices).
+Lightweight on-device LLM & VLM Swift package for iOS/macOS/visionOS. Run Qwen3, Llama 3, Mistral, Gemma, SmolVLM and more — locally and privately by default (no API keys unless you opt into cloud escalation). Supports both MLX (Apple Silicon GPU) and llama.cpp/GGUF (up to 70B, including layer-streaming for memory-constrained devices).
+
+**Documentation:** [iosdevc.github.io/AuraLocal](https://iosdevc.github.io/AuraLocal/) — installation, hybrid inference, RAG, the CLI and the other guides.
+Research notes, not a shipped feature: [Distributed inference](docs/guide/distributed.md).
 
 ---
 
 ## Highlights
 
-- **Dual-backend inference** — MLX for 0.5B–4B models on GPU; llama.cpp/GGUF for 7B–70B with full Metal acceleration on macOS or layer-streaming on iOS.
+- **Dual-backend inference** — MLX for GPU inference (≤4B on most iPhones, 8B at the iPhone 17 Pro budget, up to 35B on a Mac); llama.cpp/GGUF for 1B–70B, with full Metal acceleration or layer-streaming when a model doesn't fit.
 - **Layer-streaming mode** — Run 7B–12B models on entitled 6–8 GB iPhones at ~2–5 tok/s. The OS pages weights from disk on demand, so the app's own footprint stays small — but mapped pages that are faulted in still count toward the resident size jetsam measures, so they are evictable rather than free. Without both memory entitlements an 8B is refused outright.
 - **`InferenceBackend` protocol** — Clean abstraction over all backends; `BackendRouter` selects the optimal engine automatically based on model format and device RAM.
-- **GGUF model catalog** — 7 new large models (Llama 3.1, Qwen 2.5, Mistral, Phi-3, Gemma 2) with automatic download from HuggingFace, resume support, and `@Published` progress.
+- **GGUF model catalog** — 7 large models (Llama 3.1, Qwen 2.5, Mistral, Phi-3, Gemma 2; 5 download today, see [the GGUF table](#text-models--gguf-llamacpp)) with automatic download from HuggingFace, resume support, and `@Published` progress.
 - **GQA-aware memory estimates** — KV cache calculations account for Grouped-Query Attention (Llama 3.1 8B: 256 MB at FP16/2048 ctx vs ~1 GB with naive full-attention assumption).
 - **Unified model management** — `ModelManager.shared.load()` provides LRU caching, in-flight deduplication, automatic memory-pressure eviction, and backend-aware GGUF downloading.
 - **Swift 6 concurrency** — All public APIs are `@MainActor`-isolated or `Sendable`, with `actor`-based stores for data-race safety.
-- **OOM prevention that fails safe** — One source of truth (`HardwareProfile.availableMemoryBytes()`) asks the OS and returns `nil` rather than inventing a number. iOS reports "unknown" exactly when the process is at its jetsam limit, so unknown counts as *pressure*: pressure trips, allocation is refused, context shrinks. Paired with `DispatchSource` listeners and per-generation checks.
+- **OOM prevention that fails safe** — One source of truth (`HardwareProfile.availableMemoryBytes()`) asks the OS and returns `nil` rather than inventing a number. iOS reports "unknown" exactly when the process is at its jetsam limit, so unknown counts as *pressure*: layer-streaming shrinks its context to 512 tokens and stops a reply early (checked every 32 tokens), and the model cache keeps one model. Paired with `DispatchSource` listeners and per-generation checks.
 - **Hybrid RAG pipeline** — FTS5 keyword pre-filter + Accelerate cosine re-ranking, stored in SQLite. Zero external dependencies.
 - **Local provider detection** — `AuraLocal.detectLocalProviders()` discovers a running Ollama (`:11434`) or llama.cpp `llama-server` (`:8080/v1`) and the models each exposes, via a dependency-free URLSession probe (never throws — a down server is a normal result).
-- **Token-optimized hybrid inference** — A **mixed pipeline**: the same `AuraLocal.stream()` API drives on-device GGUF, your own llama-server/Ollama, or a cloud model — chosen per request. Stay local by default; escalate to a stronger model only when needed, and **cut the tokens sent to the remote** via selective-context compression (**~2–4×**), a response cache (repeat calls cost **$0**), and payload redaction. Every escalation prints a receipt — *"sent 800 of 6,000 tokens · $0.004"*. Fail-closed and consent-gated. See [Hybrid Inference](#hybrid-inference-local--remote).
-- **GitHub Models remote target** — Bring your GitHub/Copilot account into the hybrid line via GitHub's official OpenAI-compatible endpoint (`models.github.ai/inference`) — BYOK with a `models:read` PAT stored in the Keychain, working from iOS, macOS, and visionOS.
-- **Agent orchestration (per-step escalation)** — The agent crew routes each *sub-task* to the cheapest capable executor: a weak local draft transparently escalates to a bigger model through the same compression + consent + cost machinery — not just the top-level answer.
+- **Token-optimized hybrid inference** — Stay local by default: `AuraLocal.stream()` runs on-device models, and `HybridEscalator` sends a request to your own llama-server/Ollama box or a cloud model only when needed, streaming its answer through an `onToken` callback. It **cuts the tokens sent to the remote** via selective-context compression (input-dependent), an in-memory response cache (repeat calls in a session cost **$0**), and opt-in PII redaction. Every escalation returns its token counts, and `CostLedger` records its cost, for a receipt. The policy path is off by default and consent-gated. See [Hybrid Inference](#hybrid-inference-local--remote).
+- **Agent orchestration (Architect-step escalation)** — `AgentCrew` (Extractor → Reviewer → Architect → Reporter) escalates the Architect's local draft to a bigger model when it looks weak, reusing the same compression + consent + cost machinery.
 - **On-device ML tools, not just LLMs** — Typed, availability-checked wrappers over Apple's ML frameworks, using models that ship with the OS and no extra dependencies: Vision (OCR lines, image classification, barcodes & QR, face detection), NaturalLanguage (language ID, named entities, sentiment, embeddings), SoundAnalysis (303 everyday sounds), a runner for **your own Core ML models**, and **on-device Create ML training** of text classifiers. `SystemToolRegistry` reports which built-in tools run on each device. See [On-device ML tools](#on-device-ml-tools).
-- **`aura` CLI & binaries** — A headless integration harness (`aura providers | tools | ask | ocr | ml`) plus build scripts for a release CLI and a drag-to-Applications `.dmg`. See [CLI & Binaries](#cli--binaries).
+- **`aura` CLI & binaries** — A headless integration harness (`aura providers | tools | ocr | ml | models | imagegen`) plus build scripts for a release CLI and a drag-to-Applications `.dmg`. See [CLI & Binaries](#cli--binaries).
+- **Will this Hugging Face model run here?** — `ModelCompatibilityChecker` reads a repo's config and GGUF/safetensors headers and reports, for a device preset, whether AuraLocal's pinned runtimes (mlx-swift-lm 3.31.3, llama.cpp b8851) can load it, why not, and its `models.json` entry. Also `aura models search|check|devices` and the Model Finder example app.
+- **Multilingual dense RAG (opt-in)** — `AutoEmbeddingProvider(embeddingModelAt:)` swaps TF-IDF for multilingual-e5-small via Core ML; the index re-embeds itself when the provider changes.
 
 ---
 
 ## Requirements
 
 - **iOS 18+** / **macOS 15+** / **visionOS 2+**
-- **Xcode 16+**
-- **Swift 6.0** (C++ interoperability mode enabled — required by llama.cpp)
+- **Xcode 16.3+** (Swift 6.1: the pinned LocalLLMClient 0.5.0 and mlx-swift-lm 3.31.3 declare tools-version 6.1); **Xcode 26** (iOS 26 / macOS 26 SDK) to build `AuraAppleIntelligence` and `AuraAgents`, which import FoundationModels
+- **Swift 6.1+** (C++ interoperability mode enabled — required by llama.cpp)
 - `Increased Memory Limit` **and** `Extended Virtual Addressing` entitlements (both required for models > 500 MB — the second one is what makes mmap/layer-streaming actually work on iOS)
 
-> **Note:** The C++ interoperability requirement means all targets that import `AuraCore` must enable `.interoperabilityMode(.Cxx)` in their `Package.swift` `swiftSettings`.
+> **Note:** The C++ interoperability requirement means all targets that import `AuraCore` must enable `.interoperabilityMode(.Cxx)` in their `Package.swift` `swiftSettings`. In an Xcode app target, set the build setting `SWIFT_OBJC_INTEROP_MODE = objcxx` (as `Examples/ModelFinder/project.yml` does).
 
 ---
 
 ## Installation
 
-Add via Swift Package Manager:
+Add via Swift Package Manager (in Xcode's **Add Package** dialog, choose a commit or branch rule, not a version rule):
 
 ```
 https://github.com/iOSDevC/AuraLocal
 ```
 
-Or in `Package.swift`:
+Or in `Package.swift`, pinned to a commit on `main`:
 
 ```swift
 // swift-tools-version: 6.0
-.package(url: "https://github.com/iOSDevC/AuraLocal", from: "1.3.0")
+.package(url: "https://github.com/iOSDevC/AuraLocal", revision: "<commit SHA from main>")
 ```
 
-> Prefer a tagged pin over `branch: "main"` — `main` can move under integrators.
+> A version requirement (`from:` / `exact:`) cannot resolve. AuraLocal depends on LocalLLMClient by
+> `revision:` (its `unsafeFlags` rule out a version pin), and SwiftPM rejects a version-pinned package
+> whose dependencies are pinned by revision or branch. `branch: "main"` also resolves, but it moves under you.
 
 If your package imports `AuraCore`, add the C++ interop setting:
 
 ```swift
 .target(
     name: "MyTarget",
-    dependencies: ["AuraCore"],
+    dependencies: [.product(name: "AuraCore", package: "AuraLocal")],
     swiftSettings: [.interoperabilityMode(.Cxx)]
 )
 ```
@@ -70,7 +76,7 @@ If your package imports `AuraCore`, add the C++ interop setting:
 
 | Dependency | Purpose |
 |-----------|---------|
-| [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) | MLX GPU inference for small models (≤4B) |
+| [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) | MLX GPU inference for `.mlx` models |
 | [LocalLLMClient](https://github.com/tattn/LocalLLMClient) | Swift wrapper for llama.cpp — GGUF inference + Metal kernels |
 | [swift-transformers](https://github.com/huggingface/swift-transformers) | `Tokenizers` — tokenization for MLX models |
 
@@ -78,12 +84,12 @@ If your package imports `AuraCore`, add the C++ interop setting:
 
 | Module | Contents |
 |--------|----------|
-| `AuraCore` | Core inference, dual-backend engine, models, conversation persistence, hybrid escalation, on-device ML tools |
+| `AuraCore` | Core inference, dual-backend engine, models, conversation persistence, hybrid escalation, on-device ML tools, Hugging Face compatibility checker |
 | `AuraUI` | SwiftUI views and ViewModels for drop-in UI |
-| `AuraVoice` | Full-duplex voice interface (STT + TTS), 100% local |
-| `AuraDocs` | RAG document library — PDF, DOCX, text, images |
+| `AuraVoice` | Turn-based voice (on-device STT + TTS), 100% local |
+| `AuraDocs` | RAG document library — PDF, DOCX, text, images · TF-IDF or multilingual-e5-small embeddings |
 | `AuraAppleIntelligence` | Apple FoundationModels agents, tools & structured output (iOS 26 / macOS 26) |
-| `AuraAgents` | Reusable multi-agent orchestration (`AgentCrew`) with per-step hybrid escalation |
+| `AuraAgents` | Reusable multi-agent orchestration (`AgentCrew`) with hybrid escalation of its Architect step |
 | `AuraImageGen` | FLUX text-to-image + `lora.safetensors` via mflux (**macOS only**) |
 
 ---
@@ -93,16 +99,16 @@ If your package imports `AuraCore`, add the C++ interop setting:
 `BackendRouter` automatically selects the best engine based on model format and device hardware:
 
 ```
-model.format == .mlx  →  MLXBackend      (GPU, Apple Silicon, models ≤4B)
-model.format == .gguf + fits in RAM →  LlamaCppBackend   (full GPU offload, macOS 8B–70B)
-model.format == .gguf + streamingRequired →  LayerStreamingBackend  (mmap, iOS 6–8 GB, 7B–12B)
+model.format == .mlx                      →  MLXBackend             (Apple Silicon GPU; not the Simulator)
+model.format == .gguf + fits in memory    →  LlamaCppBackend        (full Metal offload, macOS or iOS)
+model.format == .gguf + streamingRequired →  LayerStreamingBackend  (mmap; in practice iPhone / iPad)
 ```
 
 | Backend | Platform | Model Size | Peak RAM | Tokens/sec |
 |---------|----------|-----------|---------|------------|
-| MLX | iOS + macOS | ≤4B | 500 MB – 3 GB | 20–45 |
-| llama.cpp (standard) | macOS | 7B–70B | 4–40 GB | 8–20 |
-| Layer-streaming | iOS | 7B–12B | small resident set | 2–6 |
+| MLX | iOS + macOS | 258M–35B in the catalog (≤4B on most iPhones) | ~1 – 20 GB | 20–45 (≤4B) |
+| llama.cpp (standard) | iOS + macOS, when the model fits | 1.2B–70B | ~1 – 40 GB | 8–20 (Mac) |
+| Layer-streaming | iOS, when it does not fit | 7B–14B (32B at the iPhone 17 Pro budget) | ~1 GB for a 7B–8B | 2–6 |
 
 You can inspect which backend a model will use:
 
@@ -112,20 +118,22 @@ import AuraCore
 let backend = BackendRouter.recommendedBackend(for: .llama3_1_8b_gguf)
 // → .llamaCpp      (Mac with 16 GB)
 // → .layerStreaming (entitled 6 GB iPhone — ~3 GB budget)
-// → refused as .tooLarge without the memory entitlements (~1.5 GB budget)
+// → still .llamaCpp when not even streaming fits: recommendedBackend never reports a refusal.
+//   Check HardwareAnalyzer.assess(.llama3_1_8b_gguf).fitLevel == .tooLarge (ModelManager.load throws AuraError.modelTooLarge)
 ```
 
 ---
 
 ## Hybrid Inference (local + remote)
 
-AuraLocal is **local-first**: everything runs on-device by default. Hybrid inference is a
-**mixed pipeline** — the *same* `AuraLocal.stream()` API drives on-device GGUF, your own
-`llama-server`/Ollama box, or a cloud model (Anthropic / OpenAI), selected **per request**.
-When a task exceeds the local model it **escalates**, but only after **shrinking the payload**
-so the remote (often paid) call sends far fewer tokens. Escalation is **opt-in, consent-gated,
-and fail-closed** — if the remote is offline, a key is missing, consent is declined, or the
-call errors, the local answer stands.
+AuraLocal is **local-first**: everything runs on-device by default. `AuraLocal.stream()` and
+`chat()` run on-device models only; `HybridEscalator` is the remote path. It sends a request to
+your own `llama-server`/Ollama box or a cloud model (Anthropic / OpenAI), selected **per request**,
+and streams the answer through an `onToken` callback. When a task exceeds the local model it
+**escalates**, but only after **shrinking the payload** so the remote (often paid) call sends far
+fewer tokens. The policy path is **opt-in and consent-gated**: `routeAndEscalate` returns `nil`
+when the request stays local (policy off, no target, a missing key) and throws when consent is
+declined or the call fails. In every one of those cases your code keeps the local answer.
 
 ### Token savings — the headline feature
 
@@ -134,19 +142,21 @@ Spending as few remote tokens as possible is the whole point. Four mechanisms **
 | Mechanism | What it does | Effect |
 |---|---|---|
 | **Local-first routing** | Answer on-device whenever the local model suffices | Remote tokens: **0** |
-| **Selective-context compression** | Keep only the sentences relevant to the question, within a budget derived from the remote's context window | **~2–4× fewer** input tokens |
-| **Response cache** | Identical escalations replay the prior answer — no remote call | Repeat calls: **$0** |
-| **PII redaction** | Strip secrets before sending | Smaller + safer payload |
+| **Selective-context compression** | Keep only the sentences relevant to the question, within a budget derived from the remote's context window | **Fewer** input tokens when the context exceeds the budget (input-dependent; a context that fits is sent unchanged) |
+| **Response cache** | Identical escalations in the same app session replay the prior answer (in-memory, cleared on relaunch) | Repeat calls: **$0** |
+| **PII redaction** | Strip secrets before sending (opt-in: `escalate(…, redactPII: true)`) | Smaller + safer payload |
 
-`CostLedger` records every call and the UI shows a receipt per escalation — e.g.
-*"sent 800 of 6,000 tokens (7.5×) · $0.004"* — so the savings are **visible, not implicit**.
+`HybridEscalator.Result` carries `compression` (`originalTokens`, `compressedTokens`, `factor`) and
+`usage`, and `CostLedger.shared.records` keeps each call's `costUSD` (`sessionCostUSD` sums them), so
+your UI can show a receipt per escalation. The Example app's Hybrid tab shows one and lists each
+call's cost in its escalation history.
 
 ### Mixed integration at a glance
 
 1. **Local GGUF** answers by default — **0 remote tokens**.
 2. The **router** decides local-vs-remote per request (size overflow, local uncertainty, sensitive domain, policy, cost cap).
-3. On escalation: **compress → redact → consent**, then call the chosen remote — *your own* `llama-server`/Ollama first, cloud (BYOK) second.
-4. The remote streams back through the **same `AuraLocal.stream()` path**; **any failure keeps the local answer**.
+3. On escalation: **compress → consent** (every cloud request; your LAN box too under `.askEachTime`), then call the chosen remote — *your own* `llama-server`/Ollama first, cloud (BYOK) second. `PIIRedactor` runs only when you call `escalate(to:…, redactPII: true)` yourself; `routeAndEscalate` does not redact.
+4. The remote streams back through `HybridEscalator`'s `onToken` callback (cumulative text). If `routeAndEscalate` returns `nil` or throws, keep the local answer: the `nil` check and the `catch` are your code's.
 
 ### Detect local providers
 
@@ -185,40 +195,62 @@ if let target = await HybridEscalator.bestLocalTarget() {
 An `EscalationPolicy` (per-profile, default `.off`) plus a pure `EscalationRouter`
 decide **local vs remote** (rules R1–R7: consent gate, target availability,
 reachability, size overflow, local uncertainty + sensitive-domain bias, cost cap).
-Consent is **per-conversation for cloud** and **per-profile-auto for your own LAN box**.
+Cloud escalations ask your `ConsentGate` **on every request**; under `.autoWithConsentMemory`,
+your own LAN box escalates without asking. Remembering consent per conversation is up to your
+`ConsentGate`. Without `localAnswer`, only size overflow can trigger an escalation.
 
 ```swift
 let escalator = HybridEscalator()
 let result = try await escalator.routeAndEscalate(
-    policy: profile.escalation,        // .off / .askEachTime / .autoWithConsentMemory
+    policy: profile.escalation,        // .off, or EscalationPolicy(mode: .askEachTime / .autoWithConsentMemory, allowCloud: true)
     context: history, question: prompt,
-    domain: .security,                 // sensitive domains escalate more readily
-    consent: myConsentGate)            // presents the compressed payload for approval
+    domain: .security,                 // with localAnswer, short answers in security/medicine escalate more readily
+    localAnswer: localDraft,           // the local model's draft; enables R5/R6
+    consent: myConsentGate)            // your ConsentGate; it receives a compressed preview to approve
+// result == nil → the router kept the request local; keep localDraft
 ```
 
-### Per-step escalation (agent orchestration)
+### Agent orchestration (Architect-step escalation)
 
-Escalation isn't only for the top-level answer. `HybridEscalator.routeAndEscalate(localAnswer:)`
-routes each **sub-task** to the cheapest capable executor: the agent crew drafts a step
-locally, and only when that draft looks weak (the router's low-confidence trigger) does it
-transparently escalate to a bigger model — reusing the same compression, consent, and cost
-machinery. Fail-closed: any error or a *stay-local* decision keeps the local draft.
+`AgentCrew` (in `AuraAgents`) runs Extractor → Reviewer → Architect → Reporter on-device and
+escalates only the **Architect** step: when its local draft looks weak (the router's
+low-confidence trigger), `HybridEscalator.routeAndEscalate(localAnswer:)` sends it to a bigger
+model, reusing the same compression, consent, and cost machinery. Fail-closed: any error or a
+*stay-local* decision keeps the local draft.
 
 ### What's included
 
 | Area | Type(s) |
 |---|---|
 | Discovery | `LocalProviderDetector`, `LocalProviderStatus`, `LocalProviderModel` |
-| Providers | `RemoteLLMProvider`, `OpenAICompatibleProvider` (llama-server / Ollama / OpenAI / **GitHub Models**), `AnthropicProvider` |
-| Transport | `SSELineStream`, `RemoteBackend` (an `InferenceBackend` — remote flows through the same `AuraLocal.stream()` path) |
+| Providers | `RemoteLLMProvider`, `OpenAICompatibleProvider` (llama-server / Ollama / OpenAI), `AnthropicProvider` |
+| Transport (internal) | SSE parsing (inside the providers' `stream(_:)`) and a remote `InferenceBackend` used by `HybridEscalator.escalate(to:…)` |
 | Routing | `EscalationRouter` (R1–R7), `EscalationPolicy`, `RoutingDecision` |
 | Compression | `ContextCompressor` + pluggable `SelfInfoScorer` (default `HeuristicScorer`) |
 | Privacy & cost | `ConsentGate`, `KeychainStore` (BYOK, this-device-only), `PIIRedactor`, `CostLedger`, `ResponseCache`, `NetworkMonitor` |
 
+> **GitHub Models is retired.** GitHub shut down GitHub Models on 2026-07-30.
+> `OpenAICompatibleProvider.gitHubModels(apiKey:)`, the `cloud.github-models` Keychain target in
+> `HybridEscalator.cloudTargets`, and `aura ask` still point at it and no longer work. Use your own
+> llama-server/Ollama box or an Anthropic/OpenAI key instead.
+
 **Privacy & cost:** cloud API keys live only in the Keychain (never in source, files,
-or logs); the consent sheet shows the **exact compressed payload** before any cloud
-send; `PIIRedactor` strips obvious secrets; `CostLedger` records per-escalation token
-usage and cost; `ResponseCache` avoids paying twice for identical requests.
+or logs). `ConsentGate` receives the target, the projected cost and a compressed preview of the
+context, and your app presents it: the Example app ships a sheet, and the library's only built-in
+gate, `DenyingConsentGate`, declines everything. `PIIRedactor` strips obvious secrets when you pass
+`redactPII: true`; `CostLedger` records per-escalation token usage and cost; `ResponseCache` avoids
+paying twice for identical requests within one app session.
+
+> **Limitations.**
+> - The consent preview is not byte-identical to the payload. It is compressed with
+>   `EscalationPolicy.keepRatio`, while the send is compressed to half the remote's context window
+>   (minus `maxTokens`) and adds the question and system prompt. They match only while `keepRatio`
+>   is 0.5, the default.
+> - Prices are built in only for `cloud.anthropic` and `cloud.openai` (an internal table). Every
+>   other provider, including a custom `OpenAICompatibleProvider`, is priced at **$0**, both
+>   recorded and projected, so it never trips the cost cap. A response without usage data is also
+>   recorded at $0.
+> - The cost cap is compared with each request's projected cost, not with the session's running total.
 
 > **Deferred — true self-information compression.** The current scorer is heuristic
 > (relevance + recency). A real Selective-Context scorer needs per-token logprobs from
@@ -227,6 +259,8 @@ usage and cost; `ResponseCache` avoids paying twice for identical requests.
 > C API (`llama.h` is available) and run a windowed prefill (à la `perplexity.cpp`) — it
 > drops in behind `SelfInfoScorer` without touching callers. Not yet shipped (doubles
 > model memory + heavy iOS-side C interop).
+
+See the [Hybrid guide](docs/guide/hybrid.md).
 
 ---
 
@@ -282,8 +316,8 @@ print(report.status.label, report.headline)  // e.g. "Runs, with caveats — mfl
 
 Fit is judged by **kind**, not raw size: an `.llm` peaks ≈1.15× its weights and can layer-stream, a
 `.diffusion` model peaks **≈2.2×** (text encoder + VAE + activations) and cannot. That multiplier is
-measured — so a 6.8 GB FLUX reads *too large* with 13 GB free and *good* with ~27 GB, instead of a naive
-"it's only 6.8 GB, it fits."
+measured — so a 6.8 GB FLUX reads *too large* with 13 GB free, *good* with ~20 GB and *excellent* from
+~25 GB, instead of a naive "it's only 6.8 GB, it fits."
 
 **Measured** on an M1 Pro (32 GB), schnell 4-bit, 1024×1024, 4 steps: **peak memory footprint ≈ 20 GB**
 (the *runtime* peak — not the ~9 GB on-disk size), **~25 s/step ≈ 100 s** of diffusion (≈2–3 min/image
@@ -291,6 +325,8 @@ with model load). It fits a 32 GB Mac but runs best **exclusively** (it presses 
 limit) — don't co-load an LLM. FLUX does **not** run on iPhone (far too large) or the iOS Simulator
 (no Metal GPU); the mflux subprocess is also blocked by the macOS **App Sandbox**, so it serves the
 `aura` CLI and non-sandboxed apps (like the Example), not App-Store-sandboxed apps.
+
+See the [Image generation guide](docs/guide/imagegen.md).
 
 ---
 
@@ -326,14 +362,14 @@ let report = try await TextClassifierTrainer().train(
     csvAt: URL(fileURLWithPath: "/path/to/expenses.csv"),
     writingModelTo: URL.documentsDirectory.appending(path: "Expenses.mlmodel"),
     algorithm: .transferLearning(.bertEmbedding))
-let category = try await TextClassifierTool(modelAt: report.modelURL).classify("Taxi al aeropuerto").label
+let category = try await TextClassifierTool(modelAt: report.modelURL).classify("Taxi to the airport").label
 ```
 
 Every tool reports `availability()`; check it before calling, since the execution methods do not.
 For example, Vision classification, barcodes and faces report unavailable in the Simulator, and
 Create ML training is unavailable in the iOS / visionOS Simulator.
 `SystemToolRegistry.discover()` lists the built-in tools with their availability;
-`CoreMLModelTool` and `TextClassifierTool` are created per model file instead. Try them with `aura tools` and `aura ml …`, or in the **ML** tab of the
+`CoreMLModelTool`, `TextClassifierTool` and `CoreMLTextEmbeddingTool` are created per model file or bundle instead. Try them with `aura tools` and `aura ml …`, or in the **ML** tab of the
 example app. Full guide, with a train → ship → classify walkthrough and a bring-your-own-model
 section: [On-device ML tools](docs/guide/ml-tools.md).
 
@@ -352,16 +388,18 @@ handy as a reference and in CI. Build with `scripts/build-cli.sh` (or
 ```
 aura providers                      # detect Ollama / llama-server + models
 aura tools                          # list on-device ML tools by category, with availability
-aura ask "<prompt>" [--model <id>]  # ask GitHub Models (default openai/gpt-4o)
+aura ask "<prompt>" [--model <id>]  # broken: calls GitHub Models, retired by GitHub on 2026-07-30
 aura ocr <image>                    # extract text via native Vision OCR
 aura ml <subcommand> …              # on-device ML: classify-image, barcodes, faces, ocr-lines,
                                     # language, entities, sentiment, similarity, sounds,
                                     # coreml-describe, coreml-predict, train-text, classify-text
+aura imagegen "<prompt>" [--lora <path>] …  # FLUX image generation via mflux (macOS)
 aura models search|check|devices …  # which Hugging Face models run here, and why not
 ```
 
-`ask` reads a GitHub fine-grained PAT (`models:read`) from `AURA_GITHUB_TOKEN` /
-`GITHUB_TOKEN`, or the Keychain (`cloud.github-models`) — never from source or CI logs.
+`ask` still targets GitHub Models (token from `AURA_GITHUB_TOKEN` / `GITHUB_TOKEN` or the Keychain
+`cloud.github-models`), which GitHub retired on 2026-07-30, so it fails. All flags:
+[CLI guide](docs/guide/cli.md).
 
 ### Demo app (`.dmg`)
 
@@ -375,8 +413,19 @@ Requires macOS 26 (AgentCrew).
 
 A small iOS 18 / macOS 15 app that searches Hugging Face and shows, per repo, whether AuraLocal's pinned
 runtimes can run it on a chosen device (this one, iPhone classes, Macs) and why not — with the exact
-`models.json` entry for the ones that run. See its README and
+`models.json` entry for the ones that run. See [its README](Examples/ModelFinder/README.md) and
 [Finding compatible models](docs/guide/models.md#finding-compatible-models).
+
+The same check from code:
+
+```swift
+import AuraCore
+
+let report = await ModelCompatibilityChecker().check("mlx-community/Qwen3-4B-4bit", on: .iPhone8GB)
+print(report.status.label, "—", report.headline)
+for finding in report.blockers { print("blocker:", finding.title) }
+if let entry = report.suggestedEntry { print(entry.jsonText()) }   // the models.json entry, when it runs
+```
 
 ---
 
@@ -386,13 +435,13 @@ runtimes can run it on a chosen device (this one, iPhone classes, Macs) and why 
 import AuraCore
 
 // MLX small model — one-liner
-let reply = try await AuraLocal.chat("¿Cuánto gasté esta semana?")
+let reply = try await AuraLocal.chat("How much did I spend this week?")
 
 // Reusable instance (loads model once — preferred for multiple calls)
 let llm = try await AuraLocal.text(.qwen3_1_7b) { progress in
     print(progress) // "Downloading Qwen3 1.7B: 42%"
 }
-let reply = try await llm.chat("Summarize my expenses")
+let summary = try await llm.chat("Summarize my expenses")
 
 // Streaming
 for try await token in llm.stream("Explain this transaction") {
@@ -400,7 +449,7 @@ for try await token in llm.stream("Explain this transaction") {
 }
 
 // With system prompt
-let reply = try await llm.chat(
+let answer = try await llm.chat(
     "What is the VAT rate in Mexico?",
     systemPrompt: "You are a personal finance assistant."
 )
@@ -416,15 +465,15 @@ import AuraCore
 // Load via ModelManager — handles GGUF download + backend selection automatically
 let llm = try await ModelManager.shared.load(.llama3_1_8b_gguf)
 
-// Observe download progress in SwiftUI
-@ObservedObject var manager = ModelManager.shared
+// Observe download progress (in a SwiftUI view: @ObservedObject var manager = ModelManager.shared)
+let manager = ModelManager.shared
 
 switch manager.state(for: .llama3_1_8b_gguf) {
-case .idle:                         // not started
-case .downloading(let progress):    // "Downloading Llama 3.1 8B: 62%"
-case .loading:                      // weights loaded, initializing session
-case .ready:                        // ready for inference
-case .failed(let error):            // download or load error
+case .idle: break                                   // not started
+case .downloading(let progress): print(progress)    // human-readable progress text
+case .loading: break                                // downloaded, loading into memory
+case .ready: break                                  // ready for inference
+case .failed(let error): print(error)               // download or load error
 }
 
 // Chat — same API regardless of backend
@@ -450,15 +499,19 @@ for try await token in llm.stream("Explain quantum computing simply") {
 
 ### Text Models — GGUF (llama.cpp)
 
-| Model | Disk Size | iOS (streaming) | macOS | Notes |
-|-------|-----------|-----------------|-------|-------|
-| `.llama3_1_8b_gguf` ⭐ | ~4.7 GB | 6+ GB RAM | 8+ GB RAM | Primary large model |
-| `.qwen2_5_7b_gguf` | ~4.4 GB | 6+ GB RAM | 8+ GB RAM | Qwen 2.5 series |
-| `.mistral_7b_gguf` | ~4.1 GB | 6+ GB RAM | 8+ GB RAM | Fast, efficient |
-| `.phi3_medium_gguf` | ~8.0 GB | 8+ GB RAM | 16+ GB RAM | High quality |
-| `.gemma2_9b_gguf` | ~5.4 GB | 8+ GB RAM | 12+ GB RAM | Google Gemma 2 |
-| `.qwen2_5_32b_gguf` | ~20.0 GB | Not viable | 48+ GB RAM | Mac Studio/Pro |
-| `.llama3_1_70b_gguf` | ~40.0 GB | Not viable | 80+ GB RAM | Mac Pro |
+| Model | Disk Size | Smallest iOS preset | Smallest Mac preset | Notes |
+|-------|-----------|---------------------|---------------------|-------|
+| `.llama3_1_8b_gguf` ⭐ | ~4.7 GB | 4 GB (streaming) | 16 GB | Primary large model |
+| `.qwen2_5_7b_gguf` | ~4.4 GB | 4 GB (streaming) | 16 GB | **Download broken**: upstream ships this quant split into shards |
+| `.mistral_7b_gguf` | ~4.1 GB | 4 GB (streaming) | 16 GB | Fast, efficient |
+| `.phi3_medium_gguf` | ~8.0 GB | 6 GB (streaming) | 16 GB | High quality |
+| `.gemma2_9b_gguf` | ~5.5 GB | 4 GB (streaming) | 16 GB | Google Gemma 2 |
+| `.qwen2_5_32b_gguf` | ~18.5 GB | 12 GB iPhone 17 Pro (streaming) | 32 GB (streams on 16 GB) | **Download broken**: upstream ships this quant split into shards |
+| `.llama3_1_70b_gguf` | ~40.0 GB | Not viable | 64 GB (streams on 32 GB) | Largest in the catalog |
+
+Each cell is the smallest device preset at which `HardwareAnalyzer.assess` rates the model runnable. The
+budgets are estimates (except the measured 32 GB Mac), and the iPhone cells assume the memory
+entitlements; see [Large Models — GGUF](docs/guide/models.md#large-models--gguf).
 
 > **Tip:** Use `HardwareAnalyzer.compatibleModels()` to get a device-specific list sorted by fit level.
 
@@ -533,11 +586,11 @@ import AuraCore
 let result = HardwareAnalyzer.assess(.llama3_1_8b_gguf)
 
 switch result.fitLevel {
-case .excellent:         // runs comfortably
-case .good:              // runs well
-case .marginal:          // runs but may be slow
-case .streamingRequired: // too large for monolithic load; uses layer-streaming
-case .tooLarge:          // cannot run on this device even with streaming
+case .excellent:         break  // runs comfortably
+case .good:              break  // runs well
+case .marginal:          break  // runs but may be slow
+case .streamingRequired: break  // too large for monolithic load; uses layer-streaming
+case .tooLarge:          break  // cannot run on this device even with streaming
 }
 
 print(result.fitLevel.isRunnable) // true for all except .tooLarge
@@ -559,26 +612,29 @@ let results = HardwareAnalyzer.compatibleModels(profile: profile)
 | Current layer weights (Q4) | ~130 MB |
 | Prefetched next layer | ~130 MB |
 | Embedding table | ~130 MB |
-| KV cache (Q4, 1024 tokens, GQA) | ~32 MB |
+| KV cache (1024–2048 tokens, GQA, fp16) | ~56–256 MB |
 | Activations + overhead | ~80 MB |
 | Safety margin | ~250 MB |
-| **Total app usage** | **≤750 MB** |
+| **Total app usage** | **~0.8–1 GB** (incl. the 250 MB margin) |
 
 ---
 
 ## Background Lifecycle (iOS)
 
-`BackgroundLifecycle` automatically pauses inference when the app enters background on iOS, preventing jetsam termination due to active Metal GPU buffers:
+`BackgroundLifecycle` tracks whether an iOS app is in the background. It does **not** stop a running
+generation, and nothing in AuraCore reads `isPaused`, so check it before starting one. Touch
+`BackgroundLifecycle.shared` at launch so it starts observing. With `aggressiveMemorySaving`,
+backgrounding evicts every model except the most recently used.
 
 ```swift
 import AuraCore
 
-// Check if inference is paused (app in background)
+// true while the app is in the background
 if BackgroundLifecycle.shared.isPaused {
     // wait before starting a new generation
 }
 
-// Enable aggressive memory saving (evicts models when backgrounded)
+// Evict every model except the most recently used when backgrounded
 BackgroundLifecycle.shared.aggressiveMemorySaving = true
 ```
 
@@ -589,6 +645,7 @@ This is a no-op on macOS where apps are not suspended.
 ## Receipt Scanner Example
 
 ```swift
+import Foundation
 import AuraCore
 
 struct ReceiptData: Codable {
@@ -638,7 +695,7 @@ for try await token in llm.stream("Tell me more", in: conv.id) {
 }
 
 // One-liner (creates conversation automatically)
-let (reply, convID) = try await AuraLocal.chat("Hello", model: .qwen3_1_7b)
+let (greeting, convID) = try await AuraLocal.chat("Hello", model: .qwen3_1_7b)
 
 // List all conversations
 let conversations = try await store.allConversations()
@@ -658,7 +715,8 @@ try await llm.summarizeAndPrune(conversationID: conv.id)
 When a conversation exceeds the token budget, `summarizeAndPrune` uses the model itself to summarize older turns and replace them with a compact system-level summary — preserving semantic continuity without truncating abruptly.
 
 ```swift
-// Called automatically during chat if conversation exceeds 4096 tokens
+// AuraUI's TextChatTab calls this after every reply; with the AuraLocal API, call it yourself
+// (a no-op below maxContextTokens)
 try await llm.summarizeAndPrune(
     conversationID: conv.id,
     keepLastN: 10,         // always keep the 10 most recent turns
@@ -670,7 +728,7 @@ try await llm.summarizeAndPrune(
 
 ## Voice Interface
 
-`AuraVoice` provides a full-duplex voice pipeline using only Apple frameworks — no external dependencies, no network calls.
+`AuraVoice` provides a turn-based (half-duplex) voice pipeline using only Apple frameworks — no external dependencies, no network calls.
 
 ```
 Microphone → SFSpeechRecognizer (on-device) → AuraLocal.stream() → AVSpeechSynthesizer
@@ -678,7 +736,7 @@ Microphone → SFSpeechRecognizer (on-device) → AuraLocal.stream() → AVSpeec
 
 Sentences are streamed to TTS **while the LLM is still generating** — the assistant starts speaking after the first complete sentence, not after the full response.
 
-Language is detected automatically per utterance using `NLLanguageRecognizer` and mapped to the best available system voice with region (e.g. `"es"` → `"es-MX"`).
+Speech is recognized in one locale: `Config.locale`, else the device's first preferred language, else `en-US`. Each sentence of the reply is language-detected with `NLLanguageRecognizer` to pick the TTS voice (enhanced quality first). A code such as `"es"` becomes the first of the user's preferred languages that starts with it (`"es-MX"` only if listed), otherwise it stays `"es"`.
 
 ### Drop-in button
 
@@ -727,7 +785,7 @@ await session.stopListening()
 // Interrupt TTS mid-sentence
 session.interrupt()
 
-// Cancel everything
+// Stop recording and TTS (an LLM reply in progress keeps generating and speaking)
 session.cancel()
 ```
 
@@ -778,7 +836,7 @@ Add to your `Info.plist`:
 | `.pdf` | PDFKit (text extraction per page) |
 | `.docx` | ZIP + XML (no external dependencies) |
 | `.txt`, `.md`, `.markdown` | Plain text |
-| `.png`, `.jpg`, `.jpeg`, `.heic`, `.tiff` | MLX VLM OCR |
+| `.png`, `.jpg`, `.jpeg`, `.heic`, `.tiff` | MLX VLM OCR (needs a `visionLLM` in `configure`; otherwise `unsupportedFormat`) |
 
 ### Retrieval pipeline
 
@@ -808,7 +866,8 @@ let llm      = try await AuraLocal.text(.qwen3_1_7b)
 let embedder = AutoEmbeddingProvider()
 
 let library = DocumentLibrary.shared
-await library.configure(embeddingProvider: embedder, llm: llm)
+await library.configure(embeddingProvider: embedder, llm: llm,
+                        visionLLM: try await AuraLocal.vision())   // needed to index images
 try await library.open()
 
 // 2. Index documents — progress delivered on @MainActor
@@ -832,22 +891,26 @@ for source in answer.sources {
 }
 ```
 
-### Stateful document chat
+### Document chat
 
 ```swift
 import AuraDocs
 
-// DocumentChat maintains conversation history and cites sources per message
+// DocumentChat keeps a message list and cites sources per message
 let chat = DocumentChat(library: library, llm: llm)
 
 let reply1 = try await chat.send("What is the payment schedule?")
-let reply2 = try await chat.send("And the penalties for late payment?") // context-aware
+let reply2 = try await chat.send("What are the penalties for late payment?") // answered on its own
 
 for msg in chat.messages {
     print(msg.role, msg.text)
     print(msg.sources.map { $0.documentTitle }) // cited documents
 }
 ```
+
+> **Limitation:** `DocumentChat` answers each question independently. Earlier turns are kept in
+> `messages` and persisted to `ConversationStore`, but never sent to the model, so a follow-up must
+> name its subject.
 
 ### Advanced options
 
@@ -917,11 +980,11 @@ For voice, add `AuraVoice` and place `VoiceChatView(llm:)` in a tab (it needs an
 | **Text** | `AuraUI` | Multi-conversation chat; MLX + GGUF model picker with backend badges |
 | **Vision** | `AuraUI` | Image analysis with standard and streaming modes |
 | **OCR** | `AuraUI` | Document and receipt extraction |
-| **Models** | `AuraUI` | Browser: all models, download status, backend badge, fit level badge |
-| **Voice** | `AuraVoice` | Full-duplex voice chat with auto language detection |
+| **Models** (`ModelSection`) | `AuraUI` | A `List` section, not a tab: download status, backend badge, fit badge per model |
+| **Voice** | `AuraVoice` | Turn-based voice chat; TTS voice picked per sentence |
 | **Docs** | `AuraDocs` | Document library and RAG chat |
 
-The **Models** tab shows three badge types per model:
+`ModelSection` shows three badge types per model:
 - **MLX** (blue) — GPU inference via mlx-swift
 - **GGUF** (purple) — Full load via llama.cpp
 - **STREAM** (orange) — Layer-streaming via llama.cpp (low RAM mode)
@@ -940,15 +1003,15 @@ import AuraCore
 let llm = try await ModelManager.shared.load(.qwen3_1_7b)
 let largeLLM = try await ModelManager.shared.load(.llama3_1_8b_gguf)
 
-// Observe per-model state in SwiftUI
-@ObservedObject var manager = ModelManager.shared
+// Observe per-model state (in a SwiftUI view: @ObservedObject var manager = ModelManager.shared)
+let manager = ModelManager.shared
 
 switch manager.state(for: .llama3_1_8b_gguf) {
-case .idle:                      // not loaded
-case .downloading(let progress): // "Downloading Llama 3.1 8B GGUF: 42%"
-case .loading:                   // file downloaded, loading into memory/session
-case .ready:                     // ready for inference
-case .failed(let error):         // download or load error
+case .idle: break                                // not loaded
+case .downloading(let progress): print(progress) // human-readable progress text
+case .loading: break                             // file downloaded, loading into memory
+case .ready: break                               // ready for inference
+case .failed(let error): print(error)            // download or load error
 }
 
 // Check which backend a model will use
@@ -962,13 +1025,9 @@ ModelManager.shared.evictAll()
 
 ### Memory Budget
 
-The LRU cache size adapts to the device:
-
-| Device RAM | Budget | Behavior |
-|-----------|--------|----------|
-| < 4 GB | 1 model | Evicts on every model switch |
-| 4–6 GB | 1–2 models | iPhone 15, base iPad |
-| 8+ GB | 2–4 models | iPad Pro, Mac |
+The LRU cache budget is computed once, when `ModelManager.shared` is created: (available memory − 2 GB)
+÷ 1.5 GB, rounded down and clamped to 1…4 models. It is 1 when the OS reports no figure (the process is
+at its jetsam limit).
 
 When the OS sends a memory warning (`DispatchSource.makeMemoryPressureSource` + `UIApplication.didReceiveMemoryWarningNotification`), all models except the most recently used are evicted immediately.
 
@@ -1023,9 +1082,9 @@ All streaming APIs use `AsyncThrowingStream` to bridge inference callbacks to Sw
 ```
 AuraCore
 ├── InferenceBackend (protocol)
-│   ├── MLXBackend          →  MLXLLM / MLXVLM (GPU, Apple Silicon, ≤4B models)
-│   ├── LlamaCppBackend     →  LocalLLMClient → llama.cpp Metal (GGUF, 7B–70B, macOS)
-│   └── LayerStreamingBackend → LocalLLMClient → mmap streaming (GGUF, 7B–12B, iOS)
+│   ├── MLXBackend          →  MLXLLM / MLXVLM (Apple Silicon GPU, .mlx models)
+│   ├── LlamaCppBackend     →  LocalLLMClient → llama.cpp Metal (GGUF that fits in memory)
+│   └── LayerStreamingBackend → LocalLLMClient → mmap streaming (GGUF that does not fit)
 │
 ├── BackendRouter           →  selects backend by model.format + HardwareAnalyzer
 ├── AuraEngine              →  thin delegator to InferenceBackend
@@ -1034,10 +1093,14 @@ AuraCore
 ├── HardwareAnalyzer        →  fit levels (excellent / good / marginal / streamingRequired / tooLarge)
 │                              GQA-aware KV cache estimates, streaming memory budget
 ├── MemoryBudgetManager     →  jetsam monitoring, adaptive context, per-generation pressure checks
-├── BackgroundLifecycle     →  iOS app lifecycle, pauses inference in background
+├── BackgroundLifecycle     →  iOS background flag (isPaused) + optional eviction
 │
 ├── ModelManager            →  LRU cache, memory-pressure eviction, GGUF download orchestration
 ├── GGUFModelDownloader     →  HuggingFace downloads with resume + @Published progress
+│
+├── Hybrid/ + Remote/       →  HybridEscalator, EscalationRouter, providers, CostLedger
+├── SystemTools/            →  Vision · NaturalLanguage · SoundAnalysis · Core ML · Create ML tools, SystemToolRegistry
+├── ModelCompatibility/     →  ModelCompatibilityChecker, DevicePreset, CompatibilityReport
 │
 ├── ConversationStore       →  SQLite-backed chat history (actor)
 └── AuraLocal+History       →  context window · auto-title · summarize+prune
@@ -1062,7 +1125,7 @@ AuraDocs (optional)
 ├── DocumentChunker          →  sliding window · sentence boundaries · overlap
 ├── AutoEmbeddingProvider    →  TF-IDF sparse (default) · multilingual-e5-small via Core ML (opt-in)
 ├── VectorStore              →  SQLite BLOB vectors · FTS5 pre-filter · cosine re-rank
-├── DocumentChat             →  stateful Q&A · source citations · ConversationStore
+├── DocumentChat             →  per-question Q&A · source citations · history in ConversationStore
 └── DocsTab                  →  SwiftUI tab · file picker · progress bar · chat sheet
 
 Sources/
@@ -1072,13 +1135,20 @@ Sources/
 ├── AuraUI/
 ├── AuraVoice/
 ├── AuraDocs/
+├── AuraAgents/
+├── AuraAppleIntelligence/
+├── AuraImageGen/
+├── aura/                   (CLI)
 └── AuraExample/
 
+Examples/
+└── ModelFinder/
+
 MLX models download automatically and are cached at:
-  ~/Library/Caches/models/<org>/<repo>/
+  ~/Library/Caches/huggingface/hub/models--<org>--<repo>/snapshots/main/
 
 GGUF models are downloaded to:
-  ~/Library/Caches/gguf/<model-name>.gguf
+  ~/Library/Caches/models/<org>/<repo>/<file>.gguf
 ```
 
 ---
