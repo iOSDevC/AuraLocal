@@ -79,9 +79,11 @@ static func parseDocTags(_ raw: String) -> String
 ### Instance Methods
 
 ```swift
-// Text generation
-func chat(_ prompt: String, systemPrompt: String? = nil, maxTokens: Int = 1024) async throws -> String
-func stream(_ prompt: String, systemPrompt: String? = nil, maxTokens: Int = 1024) -> AsyncThrowingStream<String, Error>
+// Text generation (constraint: GGUF on llama.cpp only, see below)
+func chat(_ prompt: String, systemPrompt: String? = nil, maxTokens: Int = 1024,
+          constraint: GenerationConstraint? = nil) async throws -> String
+func stream(_ prompt: String, systemPrompt: String? = nil, maxTokens: Int = 1024,
+            constraint: GenerationConstraint? = nil) -> AsyncThrowingStream<String, Error>
 
 // Vision (image nil = text-only)
 func analyze(_ prompt: String, image: PlatformImage? = nil, maxTokens: Int = 800) async throws -> String
@@ -94,6 +96,38 @@ func chat(_ prompt: String, in conversationID: UUID, systemPrompt: String? = nil
 func stream(_ prompt: String, in conversationID: UUID, systemPrompt: String? = nil, maxTokens: Int = 1024,
             maxContextTokens: Int = 3072, store: ConversationStore = .shared) -> AsyncThrowingStream<String, Error>
 ```
+
+### Constrained Generation
+
+```swift
+public enum GenerationConstraint: Sendable, Equatable {
+    case json                                          // a JSON object (LocalLLMClient's json.gbnf)
+    case grammar(gbnf: String, root: String = "root")  // any GBNF grammar
+}
+
+public enum GenerationConstraintError: LocalizedError, Equatable {
+    case unsupportedBackend(BackendKind)   // .mlx, .layerStreaming or .remote
+    case invalidGrammar(root: String)      // blank, or rejected by llama.cpp
+}
+```
+
+```swift
+let json = try await llm.chat("Return a JSON object with name and age for: Ana, 31.",
+                              maxTokens: 128, constraint: .json)
+let verdict = try await llm.chat("Is 4 even? Answer yes or no.", maxTokens: 8,
+                                 constraint: .grammar(gbnf: #"root ::= "yes" | "no""#))
+```
+
+Only `chat(_:systemPrompt:maxTokens:constraint:)` and `stream(_:systemPrompt:maxTokens:constraint:)` take a
+constraint. Each constrained call runs on its own short-lived llama.cpp client; see
+[Constrained generation]({{ '/guide/backends' | relative_url }}#constrained-generation-gguf-only) for why, what it
+costs, and the limits.
+
+{: .warning }
+> Only `LlamaCppBackend` enforces a constraint. An MLX, layer-streaming or remote backend throws
+> `GenerationConstraintError.unsupportedBackend` instead of answering unconstrained. `maxTokens` or a full context
+> window still cuts the output, and a cut JSON object does not parse. A cancelled constrained call throws
+> `CancellationError`.
 
 ### History Methods
 

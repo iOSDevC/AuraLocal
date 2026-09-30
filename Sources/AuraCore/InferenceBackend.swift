@@ -24,6 +24,16 @@ public protocol InferenceBackend: AnyObject {
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String
 
+    /// Generate text whose output must satisfy `constraint`. Backends that cannot enforce it throw
+    /// ``GenerationConstraintError/unsupportedBackend(_:)`` rather than ignore it.
+    func generate(
+        prompt: String,
+        systemPrompt: String?,
+        maxTokens: Int,
+        constraint: GenerationConstraint,
+        onToken: @escaping @MainActor (String) -> Void
+    ) async throws -> String
+
     /// Generate text from a vision input (image + prompt).
     func generate(
         prompt: String,

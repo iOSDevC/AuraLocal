@@ -110,6 +110,11 @@ final class UnavailableBackend: InferenceBackend {
         throw AuraError.invalidResponse(message)
     }
 
+    func generate(prompt: String, systemPrompt: String?, maxTokens: Int, constraint: GenerationConstraint,
+                  onToken: @escaping @MainActor (String) -> Void) async throws -> String {
+        throw AuraError.invalidResponse(message)
+    }
+
     func generate(prompt: String, image: PlatformImage?, maxTokens: Int,
                   onToken: @escaping @MainActor (String) -> Void) async throws -> String {
         throw AuraError.invalidResponse(message)

@@ -487,7 +487,15 @@ let reply = try await llm.chat("Write a short story about a robot.")
 for try await token in llm.stream("Explain quantum computing simply") {
     print(token, terminator: "")
 }
+
+// Constrained output: JSON or a GBNF grammar. Only a GGUF loaded in full (LlamaCppBackend);
+// MLX, layer-streaming and remote throw.
+let person = try await llm.chat("Return a JSON object with name and age for: Ana, 31.",
+                                maxTokens: 128, constraint: .json)
 ```
+
+Each constrained call runs on its own short-lived llama.cpp client; see
+[Constrained generation](docs/guide/backends.md#constrained-generation-gguf-only) for the cost and the limits.
 
 ### Text Models — MLX (GPU, Apple Silicon)
 

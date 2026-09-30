@@ -119,6 +119,17 @@ final class MLXBackend: InferenceBackend {
         )
     }
 
+    /// Nothing in the MLX path applies a grammar to the logits.
+    func generate(
+        prompt: String,
+        systemPrompt: String?,
+        maxTokens: Int,
+        constraint: GenerationConstraint,
+        onToken: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        throw GenerationConstraintError.unsupportedBackend(.mlx)
+    }
+
     func generate(
         prompt: String,
         image: PlatformImage?,

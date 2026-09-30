@@ -95,24 +95,30 @@ public final class AuraLocal {
     // MARK: - Text API
     
     /// Send a message and receive the full response.
+    ///
+    /// `constraint` restricts the output to JSON or a GBNF grammar. Only GGUF models on the llama.cpp
+    /// backend honour it; any other backend throws ``GenerationConstraintError/unsupportedBackend(_:)``.
     public func chat(
         _ prompt: String,
         systemPrompt: String? = nil,
-        maxTokens: Int = 1024
+        maxTokens: Int = 1024,
+        constraint: GenerationConstraint? = nil
     ) async throws -> String {
         try await engine.generate(
             prompt: prompt,
             systemPrompt: systemPrompt,
             maxTokens: maxTokens,
+            constraint: constraint,
             onToken: { _ in }
         )
     }
-    
-    /// Stream tokens one by one.
+
+    /// Stream tokens one by one. `constraint` behaves as in ``chat(_:systemPrompt:maxTokens:constraint:)``.
     public func stream(
         _ prompt: String,
         systemPrompt: String? = nil,
-        maxTokens: Int = 1024
+        maxTokens: Int = 1024,
+        constraint: GenerationConstraint? = nil
     ) -> AsyncThrowingStream<String, Error> {
         let engine = self.engine
         return AsyncThrowingStream { continuation in
@@ -122,7 +128,8 @@ public final class AuraLocal {
                     _ = try await engine.generate(
                         prompt: prompt,
                         systemPrompt: systemPrompt,
-                        maxTokens: maxTokens
+                        maxTokens: maxTokens,
+                        constraint: constraint
                     ) { @MainActor partial in
                         let newText = String(partial.dropFirst(lastLength))
                         lastLength = partial.count

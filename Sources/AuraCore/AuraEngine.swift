@@ -47,9 +47,19 @@ final class AuraEngine {
         prompt: String,
         systemPrompt: String? = nil,
         maxTokens: Int = 1024,
+        constraint: GenerationConstraint? = nil,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        try await backend.generate(
+        if let constraint {
+            return try await backend.generate(
+                prompt: prompt,
+                systemPrompt: systemPrompt,
+                maxTokens: maxTokens,
+                constraint: constraint,
+                onToken: onToken
+            )
+        }
+        return try await backend.generate(
             prompt: prompt,
             systemPrompt: systemPrompt,
             maxTokens: maxTokens,

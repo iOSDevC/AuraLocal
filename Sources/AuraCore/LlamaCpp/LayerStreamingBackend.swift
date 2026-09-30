@@ -133,6 +133,17 @@ final class LayerStreamingBackend: InferenceBackend {
         return fullText
     }
 
+    /// A dedicated second context is exactly what a streaming-sized device cannot afford.
+    func generate(
+        prompt: String,
+        systemPrompt: String?,
+        maxTokens: Int,
+        constraint: GenerationConstraint,
+        onToken: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        throw GenerationConstraintError.unsupportedBackend(.layerStreaming)
+    }
+
     func generate(
         prompt: String,
         image: PlatformImage?,

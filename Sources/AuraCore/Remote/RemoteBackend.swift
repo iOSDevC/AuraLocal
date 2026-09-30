@@ -36,6 +36,17 @@ final class RemoteBackend: InferenceBackend {
                       maxTokens: maxTokens, onToken: onToken)
     }
 
+    /// The provider wire types carry no grammar or response format.
+    func generate(
+        prompt: String,
+        systemPrompt: String?,
+        maxTokens: Int,
+        constraint: GenerationConstraint,
+        onToken: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        throw GenerationConstraintError.unsupportedBackend(.remote)
+    }
+
     func generate(
         prompt: String,
         image: PlatformImage?,

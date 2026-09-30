@@ -16,6 +16,11 @@ final class LlamaCppBackend: InferenceBackend {
     // MARK: - State
 
     private var session: LLMSession?
+    /// The GGUF the session loaded; dedicated constrained clients map the same file.
+    private var loadedFileURL: URL?
+    /// Orders calls into the session and dedicated clients. It cannot wait for decodes LocalLLMClient keeps
+    /// running in its own tasks after a call returns (cancelled prefill, tools cut by maxTokens).
+    private let decodeLock = DecodeGate()
     private let model: Model
     private let temperature: Float
     private let tools: [any LLMTool]
@@ -70,6 +75,7 @@ final class LlamaCppBackend: InferenceBackend {
         let newSession = LLMSession(model: localModel, tools: tools)
         try await newSession.prewarm()
         session = newSession
+        loadedFileURL = ggufURL
 
         onProgress("\(model.displayName) ready")
     }
@@ -80,32 +86,72 @@ final class LlamaCppBackend: InferenceBackend {
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        guard let session else { throw AuraError.modelNotLoaded }
+        guard session != nil else { throw AuraError.modelNotLoaded }
+        let fullPrompt = Self.flattenedPrompt(prompt, systemPrompt: systemPrompt)
 
-        let fullPrompt: String
-        if let sys = systemPrompt {
-            fullPrompt = "System: \(sys)\n\nUser: \(prompt)"
-        } else {
-            fullPrompt = prompt
+        return try await decodeLock.run {
+            // A stream started from a cancelled task returns at once but leaves its prefill running on the context.
+            try Task.checkCancellation()
+            guard let session else { throw AuraError.modelNotLoaded }
+
+            // Stateless per call: callers (e.g. AuraLocal's `AIProvider` contract) pass the full conversation
+            // as `prompt`, so clear any accumulated session history first — otherwise the model re-ingests
+            // prior turns on top of the transcript (O(N²) growth → context overflow → truncated/empty replies).
+            session.messages = []
+
+            var fullText = ""
+            var tokenCount = 0
+            let responseStream = session.streamResponse(to: fullPrompt)
+            for try await partial in responseStream {
+                guard !Task.isCancelled else { break }
+                fullText += partial
+                tokenCount += 1
+                onToken(fullText)
+                if tokenCount >= maxTokens { break }   // honor the caller's token budget
+            }
+
+            return fullText
         }
+    }
 
-        // Stateless per call: callers (e.g. AuraLocal's `AIProvider` contract) pass the full conversation
-        // as `prompt`, so clear any accumulated session history first — otherwise the model re-ingests
-        // prior turns on top of the transcript (O(N²) growth → context overflow → truncated/empty replies).
-        session.messages = []
-
-        var fullText = ""
-        var tokenCount = 0
-        let responseStream = session.streamResponse(to: fullPrompt)
-        for try await partial in responseStream {
-            guard !Task.isCancelled else { break }
-            fullText += partial
-            tokenCount += 1
-            onToken(fullText)
-            if tokenCount >= maxTokens { break }   // honor the caller's token budget
+    // Pinned LocalLLMClient never resets its sampler (contrib/localllmclient/0003): each call gets its own client.
+    func generate(
+        prompt: String,
+        systemPrompt: String?,
+        maxTokens: Int,
+        constraint: GenerationConstraint,
+        onToken: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        if case .grammar(let gbnf, let root) = constraint,
+           gbnf.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw GenerationConstraintError.invalidGrammar(root: root)
         }
+        guard session != nil, loadedFileURL != nil else { throw AuraError.modelNotLoaded }
 
-        return fullText
+        let fullPrompt = Self.flattenedPrompt(prompt, systemPrompt: systemPrompt)
+        let window = Self.constrainedContextWindow(forPrompt: fullPrompt, maxTokens: maxTokens, cap: contextSize())
+        let parameter = LlamaClient.Parameter(
+            context: window,
+            numberOfThreads: threadCount(),
+            batch: min(window, 2048),
+            temperature: temperature,
+            topP: 0.95,
+            options: .init(responseFormat: constraint.llamaFormat)
+        )
+
+        return try await decodeLock.run {
+            try Task.checkCancellation()
+            // unload() (e.g. ModelManager.evict) may have run while this call was queued.
+            guard session != nil, let loadedFileURL else { throw AuraError.modelNotLoaded }
+            return try await Self.generateOnDedicatedClient(
+                url: loadedFileURL,
+                parameter: parameter,
+                constraint: constraint,
+                prompt: fullPrompt,
+                maxTokens: maxTokens,
+                onToken: onToken
+            )
+        }
     }
 
     func generate(
@@ -152,6 +198,62 @@ final class LlamaCppBackend: InferenceBackend {
 
     func unload() {
         session = nil
+        loadedFileURL = nil
+    }
+
+    // MARK: - Constrained generation
+
+    /// Tokens reserved for the chat template around the prompt (role markers, a default system prompt).
+    static let templateTokenAllowance = 256
+
+    /// KV window for a dedicated constrained client. A token never covers less than one UTF-8 byte, so the
+    /// prompt's byte count bounds its token count without loading a tokenizer. Terms are clamped to `cap`
+    /// first so `maxTokens: .max` cannot overflow.
+    static func constrainedContextWindow(forPrompt prompt: String, maxTokens: Int, cap: Int) -> Int {
+        let needed = min(prompt.utf8.count, cap) + min(max(maxTokens, 0), cap) + templateTokenAllowance
+        let padded = (needed + 255) / 256 * 256   // llama.cpp pads n_ctx to 256 anyway
+        return min(padded, cap)
+    }
+
+    static func flattenedPrompt(_ prompt: String, systemPrompt: String?) -> String {
+        guard let systemPrompt else { return prompt }
+        return "System: \(systemPrompt)\n\nUser: \(prompt)"
+    }
+
+    /// Iterates the generator in the calling task, so no decode is left running once this returns and the
+    /// client (context, KV cache, model handle) is freed.
+    nonisolated private static func generateOnDedicatedClient(
+        url: URL,
+        parameter: LlamaClient.Parameter,
+        constraint: GenerationConstraint,
+        prompt: String,
+        maxTokens: Int,
+        onToken: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        let client = try await LocalLLMClient.llama(url: url, parameter: parameter)
+        if case .grammar(_, let root) = constraint, !grammarSamplerExists(in: client) {
+            throw GenerationConstraintError.invalidGrammar(root: root)
+        }
+
+        var fullText = ""
+        var tokenCount = 0
+        for try await partial in try client.textStream(from: .chat([.user(prompt)])) {
+            fullText += partial
+            tokenCount += 1
+            await onToken(fullText)
+            if tokenCount >= maxTokens { break }
+        }
+        // Cancellation ends the stream early; the partial text would not satisfy the constraint.
+        try Task.checkCancellation()
+        return fullText
+    }
+
+    /// 0.5.0 chains a nil sampler when llama.cpp rejects a GBNF and crashes on the first token, so read its
+    /// private state first. If an upgrade renames it, this fails closed.
+    nonisolated static func grammarSamplerExists(in client: LlamaClient) -> Bool {
+        guard let sampler = Mirror(reflecting: client).descendant("context", "grammer") else { return false }
+        let optional = Mirror(reflecting: sampler)
+        return optional.displayStyle != .optional || !optional.children.isEmpty
     }
 
     // MARK: - Platform Configuration
@@ -182,5 +284,18 @@ final class LlamaCppBackend: InferenceBackend {
         #else
         return min(ProcessInfo.processInfo.activeProcessorCount, 4)
         #endif
+    }
+}
+
+// MARK: - GenerationConstraint → LocalLLMClient
+
+extension GenerationConstraint {
+    var llamaFormat: LlamaClient.ResponseFormat {
+        switch self {
+            case .json:
+                return .json
+            case .grammar(let gbnf, let root):
+                return .grammar(gbnf: gbnf, root: root)
+        }
     }
 }

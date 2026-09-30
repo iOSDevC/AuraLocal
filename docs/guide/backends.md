@@ -30,7 +30,7 @@ AuraLocal uses two inference engines internally, selected automatically by `Back
 All three implement the same `InferenceBackend` protocol — your code looks identical regardless of which backend is running.
 
 {: .warning }
-> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:onProgress:)`, `AuraProfile.tools`) reach only the GGUF backends; an MLX model silently ignores them. The llama.cpp backends are text-only (an `image:` argument is ignored) and flatten a multi-turn history into one prompt (roles dropped, only the last system turn kept); MLX passes the messages with their roles. `AuraProfile.outputSchema` is stored but nothing reads it, so output is not constrained to the schema, and of `AuraProfile.sampling` only `maxTokens` reaches generation.
+> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:onProgress:)`, `AuraProfile.tools`) reach only the GGUF backends; an MLX model silently ignores them. The llama.cpp backends are text-only (an `image:` argument is ignored) and flatten a multi-turn history into one prompt (roles dropped, only the last system turn kept); MLX passes the messages with their roles. A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `AuraProfile.outputSchema` is stored but nothing reads it, so output is not constrained to the schema, and of `AuraProfile.sampling` only `maxTokens` reaches generation.
 
 `BackendKind` also declares `.remote` and `.hybrid`, but no AuraCore API returns them; remote inference goes through `HybridEscalator` (see [Hybrid inference]({{ '/guide/hybrid' | relative_url }})).
 
@@ -109,6 +109,91 @@ Used for `.gguf` models when the full file fits in available RAM.
 // On a Mac with 32 GB RAM, Llama 3.1 8B uses this backend
 let llm = try await ModelManager.shared.load(.llama3_1_8b_gguf)
 ```
+
+---
+
+## Constrained Generation (GGUF only)
+
+`chat` and `stream` take an optional `constraint:` that llama.cpp's sampler enforces token by token:
+
+```swift
+let llm = try await ModelManager.shared.load(.llama3_1_8b_gguf)
+
+let json = try await llm.chat(
+    "Return a JSON object with name and age for: Ana, 31.",
+    maxTokens: 128,
+    constraint: .json                                    // a JSON object at the root
+)
+let verdict = try await llm.chat(
+    "Is 4 even? Answer yes or no.",
+    maxTokens: 8,
+    constraint: .grammar(gbnf: #"root ::= "yes" | "no""#)  // root defaults to "root"
+)
+```
+
+| Backend | `constraint:` |
+|---------|---------------|
+| `LlamaCppBackend` | Enforced |
+| `MLXBackend` | Throws `GenerationConstraintError.unsupportedBackend(.mlx)` |
+| `LayerStreamingBackend` | Throws `.unsupportedBackend(.layerStreaming)` |
+| `RemoteBackend` | Throws `.unsupportedBackend(.remote)` |
+
+`.json` uses the `json.gbnf` grammar bundled with LocalLLMClient, whose root is an object. A `.grammar` that is
+blank, or that llama.cpp rejects (syntax error, undefined rule, no rule named `root`, left recursion), throws
+`GenerationConstraintError.invalidGrammar(root:)`.
+
+### Why each call gets its own client
+
+The pinned LocalLLMClient (0.5.0) builds one sampler chain per client and never resets it. After the first
+constrained answer the grammar sits in its end state, so every later generation on that client can only emit
+end-of-generation or the grammar's trailing whitespace: the replies come back empty (or whitespace-only for
+`.json`). Penalty history leaks across calls the same way. Until a release
+carries the reset (prepared as `contrib/localllmclient/0003`), `LlamaCppBackend` runs each constrained call on a
+dedicated, short-lived client built on the same GGUF file:
+
+- **Context:** UTF-8 bytes of the prompt + `maxTokens` + 256 for the chat template, rounded up to a multiple of
+  256 (llama.cpp pads to that anyway) and capped at `HardwareAnalyzer.recommendedContextWindow(for:)`. A token
+  never covers less than one byte, so below the cap the prompt always fits; the price is over-reserving, since
+  English text averages several bytes per token. When the cap applies, the window can fill before the answer
+  ends, and generation then stops without an error, cutting the output as `maxTokens` does.
+- **Sampling:** the main session's temperature, top-p and thread count. No tools.
+- **Scheduling:** calls on one backend, constrained or not, take turns in arrival order; the dedicated client is
+  freed before the call returns, and the main session is never touched. A call cancelled before its turn throws
+  `CancellationError` without decoding. The turns do **not** cover decodes LocalLLMClient keeps running in its own
+  tasks after a main-session call has returned: a call cancelled during its prefill, or a call with tools cut
+  short by `maxTokens`, keeps decoding, and the next call overlaps it (a constrained one on its own context, an
+  unconstrained one on the same context, where it has crashed or hung).
+
+Measured on an M1 Pro (32 GB, macOS 26.7.1) with Qwen2.5-0.5B-Instruct Q4_K_M (491 MB), a ~150-byte prompt,
+`maxTokens: 128` and ~26 generated tokens (768-token dedicated context; the main session ran at 8192). Other builds
+were loading the machine (1-minute load average 146 at the start and 182 at the end of the final run; not logged
+for the others), so read the latencies as upper bounds.
+
+| | Measured |
+|---|---|
+| Build the dedicated client, page cache warm, main session loaded | median 238 ms (220–281, n=7); 450 ms under heavier load |
+| First build in a fresh process, GGUF not in the page cache | 549–1133 ms (n=3) |
+| First build in a fresh process, GGUF in the page cache | 260–499 ms (n=3) |
+| `chat(constraint: .json)` end to end | median 1.56 s (2.78 s under heavier load), against 0.25 s (0.31 s) for the same unconstrained `chat` |
+| Grammar sampling alone | ~66–74 ms per generated token on top of unconstrained decoding |
+| Dedicated client after build (no generation) | +10 MB at the 768-token window; +94 to +97 MB had it used the 8192-token main window |
+| Peak per constrained call, over the loaded session | first call +145 to +157 MB; later calls +82 to +152 MB |
+| Process footprint after 20 constrained calls | +94 to +141 MB over the loaded session; stops growing after ~13 calls (both runs) |
+
+Most of a constrained call is grammar sampling, not the client build: the pinned client runs the grammar over the
+whole vocabulary (152k tokens here) twice per token, and a reused client pays the same on its one working call.
+The footprint that stays after the calls is freed memory the allocator keeps for reuse (`vmmap` reports it as empty
+`MALLOC_LARGE`/`MALLOC_SMALL` regions; `malloc_zone_pressure_relief` returned none of it). It stops growing, but on
+iOS it counts toward the jetsam limit, and so does the per-call peak.
+
+### Limits
+
+- `maxTokens` still cuts the output, and a cut JSON object does not parse. Budget for the whole object. Reaching
+  the context cap cuts it the same way, also without an error.
+- A cancelled constrained call throws `CancellationError`; it never returns the partial output.
+- The prompt is flattened the same way as an unconstrained call (`System: …` / `User: …` in one user turn).
+- Only `chat(_:systemPrompt:maxTokens:constraint:)` and `stream(_:systemPrompt:maxTokens:constraint:)` take a
+  constraint; the history, vision and `AuraSession` paths do not.
 
 ---
 
