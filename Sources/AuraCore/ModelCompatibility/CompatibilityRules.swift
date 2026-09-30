@@ -76,6 +76,7 @@ struct RuleInput: Sendable {
     var trainedContext: Int? {
         switch weightFormat {
         case .gguf: ggufMetadata?.contextLength ?? listing?.ggufContextLength
+        case .imageGeneration: nil
         default: settings?.contextLength
         }
     }

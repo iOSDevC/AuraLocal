@@ -214,6 +214,24 @@ final class ModelCompatibilityTests: XCTestCase {
         XCTAssertTrue(DevicePreset.mac32GB.isMeasured)
     }
 
+    func testImagePipelinesRunOnlyOnMacThroughAuraImageGen() {
+        let listing = HFRepoInfo(
+            repoID: "o/flux-mflux-4bit",
+            files: [RepoFile(path: "transformer/0.safetensors", sizeBytes: 6_000_000_000),
+                    RepoFile(path: "text_encoder_2/0.safetensors", sizeBytes: 3_000_000_000)],
+            tags: ["mlx", "text-to-image"], pipelineTag: "text-to-image", licenseID: "apache-2.0")
+        let snapshot = RepoSnapshot(repoID: "o/flux-mflux-4bit", listing: listing)
+
+        let onMac = CompatibilityEvaluator.evaluate(snapshot, on: .mac64GB)
+        let onPhone = CompatibilityEvaluator.evaluate(snapshot, on: .iPhone17Pro)
+
+        XCTAssertEqual(onMac.weightFormat, .imageGeneration)
+        XCTAssertEqual(onMac.status, .runnableWithCaveats)
+        XCTAssertEqual(onMac.weightsBytes, 9_000_000_000, "every safetensors of the pipeline counts")
+        XCTAssertNil(onMac.suggestedEntry)
+        XCTAssertTrue(onPhone.blockers.contains { $0.rule == "imagegen" })
+    }
+
     func testEveryPresetIsReachableByID() {
         for preset in DevicePreset.classes {
             XCTAssertEqual(DevicePreset.named(preset.id)?.id, preset.id)
