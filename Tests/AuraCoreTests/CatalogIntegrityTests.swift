@@ -42,4 +42,38 @@ final class CatalogIntegrityTests: XCTestCase {
         XCTAssertEqual(Model.qwen3_1_7b.id, "qwen3_1_7b")
         XCTAssertLessThan(Model.qwen3_1_7b.approximateSizeMB, 3_000)
     }
+
+    func testMedicalCandidatesUseTheirVerifiedBackendsAndArtifacts() throws {
+        let medGemma15 = try XCTUnwrap(ModelRegistry.shared.model(id: "medgemma_1_5_4b"))
+        XCTAssertEqual(medGemma15.repoID, "mlx-community/medgemma-1.5-4b-it-4bit")
+        XCTAssertEqual(medGemma15.format, .mlx)
+        XCTAssertNil(medGemma15.ggufFilename)
+        XCTAssertEqual(medGemma15.domain, .medicine)
+
+        let mediPhi = try XCTUnwrap(ModelRegistry.shared.model(id: "mediphi_3_8b_mlx"))
+        XCTAssertEqual(mediPhi.repoID, "bisonnetworking/MediPhi-Instruct-mlx-4bit")
+        XCTAssertEqual(mediPhi.format, .mlx)
+        XCTAssertNil(mediPhi.ggufFilename)
+
+        let apollo = try XCTUnwrap(ModelRegistry.shared.model(id: "apollo2_1_5b_gguf"))
+        XCTAssertEqual(apollo.format, .gguf)
+        XCTAssertEqual(apollo.ggufFilename, "Apollo2-1.5B.Q4_K_M.gguf")
+
+        let medPsy = try XCTUnwrap(ModelRegistry.shared.model(id: "medpsy_1_7b_gguf"))
+        XCTAssertEqual(medPsy.format, .gguf)
+        XCTAssertEqual(medPsy.ggufFilename, "medpsy-1.7b-q4_k_m-imat.gguf")
+    }
+
+    #if canImport(MLXLLM)
+    func testMedicalMLXTurnTerminatorsMatchTheirModelCards() {
+        XCTAssertEqual(
+            MLXBackend.configuration(for: .mediphi_3_8b_mlx).extraEOSTokens,
+            ["<|end|>"]
+        )
+        XCTAssertEqual(
+            MLXBackend.configuration(for: .medgemma_1_5_4b).extraEOSTokens,
+            ["<end_of_turn>"]
+        )
+    }
+    #endif
 }

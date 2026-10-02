@@ -437,6 +437,19 @@ public extension Model {
     /// `AuraLocal.vision(.medgemma_4b)` aunque se use text-only.
     static let medgemma_4b = ModelRegistry.shared.model(id: "medgemma_4b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
+    /// MedGemma 1.5 4B IT, conversión MLX 4-bit multimodal. Conserva HAI-DEF;
+    /// registrarla no cambia el modelo predeterminado ni inicia una descarga.
+    static let medgemma_1_5_4b = ModelRegistry.shared.model(id: "medgemma_1_5_4b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+
+    /// MediPhi-Instruct 3.8B, conversión MLX 4-bit basada en Phi-3. Inglés.
+    static let mediphi_3_8b_mlx = ModelRegistry.shared.model(id: "mediphi_3_8b_mlx") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+
+    /// Apollo2 1.5B Q4_K_M. GGUF se enruta por llama.cpp, nunca por MLX.
+    static let apollo2_1_5b_gguf = ModelRegistry.shared.model(id: "apollo2_1_5b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+
+    /// MedPsy 1.7B Q4_K_M imatrix. GGUF, validado en inglés por su autor.
+    static let medpsy_1_7b_gguf = ModelRegistry.shared.model(id: "medpsy_1_7b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+
     /// FinGPT MT (Llama 3 8B base) — multi-task financial assistant:
     /// sentiment, FAQ financiero, headline classification, NER financiero.
     /// GGUF Q4_K_M, ~5 GB. Requiere device con 6 GB+ RAM efectiva.
