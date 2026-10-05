@@ -429,7 +429,7 @@ try ModelDownloads.delete(model)                                // file + .parti
   `unsupported`.
   An error response never becomes a model file.
 - **Token**: gated repos need a read token in the Keychain item that `ModelDownloads`, `GGUFModelDownloader`,
-  `ChunkedDownloader` and `ModelCompatibilityChecker` read (the MLX load path and the AuraUI Models tab do not; service
+  `ChunkedDownloader` and `ModelCompatibilityChecker` read, as does AuraUI's `ModelSection` through `ModelDownloads` (the MLX load path does not; service
   `dev.auralocal.remote`, account `download.huggingface`): `KeychainDownloadAuth.saveHuggingFaceToken(_:)`,
   `deleteHuggingFaceToken()`, `hasHuggingFaceToken`. It is sent to `huggingface.co` / `hf.co` only, never to the
   CDN a file redirects to. On iOS the item belongs to the app that saved it.

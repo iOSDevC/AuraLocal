@@ -49,7 +49,7 @@ complete downloads whose `HardwareAnalyzer` fit on this device is not *Too large
 
 **Gated repos.** Accept the license on the repo page, create a read token, and save it in the **Settings** tab. It
 goes to the Keychain item that AuraLocal's downloaders (`ModelDownloads`, `GGUFModelDownloader`, `ChunkedDownloader`)
-and the checker read — not the MLX load path or the AuraUI Models tab (service `dev.auralocal.remote`,
+and the checker read, as does AuraUI's `ModelSection` — not the MLX load path (service `dev.auralocal.remote`,
 account `download.huggingface`) and is sent to `huggingface.co` only. On iOS that item belongs to this app; other
 AuraLocal apps don't see it. Search stays anonymous, so private repos don't appear in results. No OAuth sign-in
 (it would need a registered Hugging Face OAuth app and URL scheme).

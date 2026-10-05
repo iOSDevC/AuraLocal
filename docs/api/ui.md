@@ -53,7 +53,7 @@ struct MyApp: App {
 | **Text** | `AuraUI` | Multi-conversation chat with streaming. MLX + GGUF model picker. |
 | **Vision** | `AuraUI` | Image analysis — Standard and Stream modes. |
 | **OCR** | `AuraUI` | Receipt and document extraction with FastVLM or Granite Docling. |
-| **Models** | `AuraUI` (`ModelSection`) | No tab type. `ModelSection` is a `Section` of model rows with download status, backend, fit and speed badges; place it in your own `List`. |
+| **Models** | `AuraUI` (`ModelSection`) | No tab type. `ModelSection` is a `Section` of model rows with download (through `ModelDownloads`: the paths the backends load, the Hugging Face token, a free-space check, cancel and resume), delete, and backend, fit and speed badges; place it in your own `List`. |
 | **Voice** | `AuraVoice` | No tab type. Place `VoiceChatView(llm:)` in your own tab for turn-based voice chat. See [AuraVoice]({{ '/api/voice' | relative_url }}). |
 | **Docs** | `AuraDocs` | `DocsTab`: document library and RAG chat. Requires `AuraDocs` import. See [AuraDocs]({{ '/api/rag' | relative_url }}). |
 

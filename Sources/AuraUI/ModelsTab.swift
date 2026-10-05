@@ -36,7 +36,8 @@ public struct ModelSection: View {
 
 // MARK: - ModelRow
 
-/// A row with download, select, and delete actions powered by ChunkedDownloader.
+/// A row with download, cancel and delete actions. Downloads go through ``ModelDownloads`` so files land where the
+/// backends load them from, with the Hugging Face token, a free-space check and resume from `.partial`.
 struct ModelRow: View {
     let model: Model
     let compatibility: ModelCompatibility?
@@ -46,6 +47,7 @@ struct ModelRow: View {
     @State private var downloadPercent: Int = 0
     @State private var errorMessage: String?
     @State private var isDownloaded: Bool = false
+    @State private var downloadTask: Task<Void, Never>?
 
     private enum DownloadState {
         case idle
@@ -107,7 +109,7 @@ struct ModelRow: View {
         }
         .padding(.vertical, 2)
         .opacity(compatibility?.fitLevel == .tooLarge ? 0.5 : 1.0)
-        .onAppear { isDownloaded = checkDownloaded() }
+        .onAppear { isDownloaded = model.isDownloaded }
     }
 
     // MARK: - Action View
@@ -129,13 +131,14 @@ struct ModelRow: View {
                             .padding(5)
                             .background(.red.opacity(0.1), in: Circle())
                     }
+                    .accessibilityLabel("Delete \(model.displayName)")
                 }
             } else if compatibility?.fitLevel == .tooLarge {
                 Label("Too Large", systemImage: "xmark.circle")
                     .font(.caption2)
                     .foregroundStyle(.red)
             } else {
-                Button { Task { await download() } } label: {
+                Button { startDownload() } label: {
                     Text("Download")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.white)
@@ -146,13 +149,21 @@ struct ModelRow: View {
             }
 
         case .downloading:
-            Text("\(downloadPercent)%")
-                .font(.caption.weight(.semibold).monospacedDigit())
-                .foregroundStyle(.tint)
-                .contentTransition(.numericText())
+            HStack(spacing: 8) {
+                Text("\(downloadPercent)%")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.tint)
+                    .contentTransition(.numericText())
+                Button { downloadTask?.cancel() } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Cancel download")
+            }
 
         case .failed:
-            Button { Task { await download() } } label: {
+            Button { startDownload() } label: {
                 Text("Retry")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white)
@@ -165,130 +176,47 @@ struct ModelRow: View {
 
     // MARK: - Download
 
-    private func download() async {
+    private func startDownload() {
         downloadState = .downloading
         downloadPercent = 0
         errorMessage = nil
-
-        let repoID = model.rawValue
-        let sanitized = repoID.replacingOccurrences(of: "/", with: "--")
-        let modelDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appending(path: "huggingface/hub/models--\(sanitized)/snapshots/main", directoryHint: .isDirectory)
-
-        do {
-            try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
-        } catch {
-            fail(error.localizedDescription)
-            return
-        }
-
-        // Fetch file list
-        guard let apiURL = URL(string: "https://huggingface.co/api/models/\(repoID)/tree/main") else {
-            fail("Invalid URL")
-            return
-        }
-
-        let apiData: Data
-        let apiResponse: URLResponse
-        do {
-            (apiData, apiResponse) = try await URLSession.shared.data(from: apiURL)
-        } catch {
-            fail(error.localizedDescription)
-            return
-        }
-
-        if let http = apiResponse as? HTTPURLResponse, http.statusCode != 200 {
-            fail("API HTTP \(http.statusCode)")
-            return
-        }
-
-        struct HFFile: Codable {
-            let path: String
-            let size: Int?
-            let type: String?
-        }
-
-        guard let files = try? JSONDecoder().decode([HFFile].self, from: apiData) else {
-            fail("Invalid response")
-            return
-        }
-
-        let downloadable = files.filter { $0.type == "file" }
-        guard !downloadable.isEmpty else { fail("Empty repo"); return }
-
-        let totalBytes = downloadable.compactMap(\.size).reduce(0, +)
-        var completedBytes: Int64 = 0
-
-        let downloader = ChunkedDownloader()
-
-        for file in downloadable {
-            let fileURL = modelDir.appending(path: file.path)
-            let fileSize = Int64(file.size ?? 0)
-
-            if FileManager.default.fileExists(atPath: fileURL.path()) {
-                completedBytes += fileSize
-                downloadPercent = totalBytes > 0 ? Int(completedBytes * 100 / Int64(totalBytes)) : 0
-                continue
-            }
-
-            let parent = fileURL.deletingLastPathComponent()
-            try? FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-
-            guard let dlURL = URL(string: "https://huggingface.co/\(repoID)/resolve/main/\(file.path)") else {
-                continue
-            }
-
-            let captured = completedBytes
+        let model = self.model
+        downloadTask = Task {
             do {
-                try await downloader.download(from: dlURL, to: fileURL, fileName: file.path) { progress in
-                    let globalBytes = captured + progress.bytesDownloaded
-                    let pct = totalBytes > 0 ? Int(globalBytes * 100 / Int64(totalBytes)) : 0
-                    Task { @MainActor in
-                        downloadPercent = pct
-                    }
+                _ = try await ModelDownloads.download(model) { done, total in
+                    let percent = total > 0 ? Int(done * 100 / total) : 0
+                    Task { @MainActor in downloadPercent = percent }
                 }
+                downloadState = .idle
+                isDownloaded = model.isDownloaded
             } catch {
-                fail("\((file.path as NSString).lastPathComponent): \(error.localizedDescription)")
-                return
+                // Cancellation can surface as CancellationError or URLError(.cancelled); the partial file stays on
+                // disk either way and the next download resumes from it.
+                if Task.isCancelled {
+                    downloadState = .idle
+                } else {
+                    errorMessage = error.localizedDescription
+                    downloadState = .failed
+                }
             }
-
-            completedBytes += fileSize
+            downloadTask = nil
         }
-
-        downloadState = .idle
-        isDownloaded = true
-        errorMessage = nil
     }
 
     // MARK: - Delete
 
     private func deleteModel() {
         ModelManager.shared.evict(model)
-        let sanitized = model.rawValue.replacingOccurrences(of: "/", with: "--")
-        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appending(path: "huggingface/hub/models--\(sanitized)", directoryHint: .isDirectory)
-        try? FileManager.default.removeItem(at: dir)
-        isDownloaded = false
-        errorMessage = nil
+        do {
+            try ModelDownloads.delete(model)
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isDownloaded = model.isDownloaded
     }
 
     // MARK: - Helpers
-
-    private func fail(_ msg: String) {
-        errorMessage = msg
-        downloadState = .failed
-    }
-
-    private func checkDownloaded() -> Bool {
-        let sanitized = model.rawValue.replacingOccurrences(of: "/", with: "--")
-        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appending(path: "huggingface/hub/models--\(sanitized)/snapshots/main", directoryHint: .isDirectory)
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: dir.path(), isDirectory: &isDir), isDir.boolValue else {
-            return false
-        }
-        return ((try? FileManager.default.contentsOfDirectory(atPath: dir.path()))?.isEmpty == false)
-    }
 
     private var formattedSize: String {
         let mb = model.approximateSizeMB
