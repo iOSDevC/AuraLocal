@@ -27,7 +27,7 @@ final class SearchSession {
     var query = "qwen 4bit"
     var formatChoice = FormatFilter.any
     var ordering = HuggingFaceSearch.Sort.downloads
-    var onlyRunnable = false
+    var compatibleOnly = false
     var deviceID = DevicePreset.thisDeviceID {
         didSet { reevaluate() }
     }
@@ -50,7 +50,7 @@ final class SearchSession {
 
     /// Search results, minus the ones already known not to run when the filter is on.
     var visibleMatches: [HFModelHit] {
-        guard onlyRunnable else { return matches }
+        guard compatibleOnly else { return matches }
         return matches.filter { reports[$0.id].map { $0.status != .notRunnable } ?? true }
     }
 

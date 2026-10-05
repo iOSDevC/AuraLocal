@@ -16,7 +16,9 @@ public struct EscalationPolicy: Sendable, Equatable, Codable {
     public var mode: Mode
     /// Allow cloud (BYOK) targets in addition to the user's own LAN box.
     public var allowCloud: Bool
-    /// Hard ceiling on remote spend per session; the router never exceeds it silently.
+    /// Ceiling on priced remote spend per ``CostLedger`` session. A priced request that would cross it is offered
+    /// as `.costCapped`, which the default ``ConsentGate/requestConsent(target:preview:offer:)`` declines; only a
+    /// gate that implements that method can let the user go over. A $0 LAN request never counts against it.
     public var costCapUSDPerSession: Decimal
     /// Fraction of context to keep when compressing (0…1).
     public var keepRatio: Double

@@ -99,19 +99,22 @@ public final class HybridEscalator {
         }
 
         let backend = RemoteBackend(target: target)
-        let answer = try await backend.generate(
-            prompt: userContent, systemPrompt: systemPrompt,
-            maxTokens: maxTokens, onToken: onToken)
+        let answer: String
+        do {
+            answer = try await backend.generate(
+                prompt: userContent, systemPrompt: systemPrompt,
+                maxTokens: maxTokens, onToken: onToken)
+        } catch {
+            // Output means tokens were billed; without usage the record's cost is unknown, never $0.
+            if backend.didReceiveOutput || backend.lastUsage != nil {
+                record(target, usage: backend.lastUsage, compression: compressed)
+            }
+            throw error
+        }
 
         ResponseCache.shared.insert(
             answer, provider: target.provider.id, model: target.modelID, prompt: userContent)
-
-        let didCompress = compressed.originalTokens > compressed.compressedTokens
-        ledger.record(
-            provider: target.provider.id,
-            usage: backend.lastUsage,
-            origin: target.origin,
-            compressionRatio: didCompress ? compressed.ratio : nil)
+        record(target, usage: backend.lastUsage, compression: compressed)
 
         return Result(
             answer: answer,
@@ -120,6 +123,16 @@ public final class HybridEscalator {
             providerName: target.provider.displayName,
             redactedPIICount: redactedCount,
             fromCache: false)
+    }
+
+    private func record(_ target: RemoteTarget, usage: TokenUsage?, compression: CompressionResult) {
+        let didCompress = compression.originalTokens > compression.compressedTokens
+        ledger.record(
+            provider: target.provider.id,
+            model: target.modelID,
+            usage: usage,
+            origin: target.origin,
+            compressionRatio: didCompress ? compression.ratio : nil)
     }
 
     // MARK: - Cloud targets (Phase 2)
@@ -179,7 +192,9 @@ public final class HybridEscalator {
 
     /// Consult the router and (if needed) the consent gate, then escalate.
     /// Returns `nil` when the policy/router keeps the request local. Throws
-    /// ``AuraError/escalationDeclined`` if the user declines an offer.
+    /// ``AuraError/escalationDeclined`` if the gate declines an offer, which the
+    /// default ``ConsentGate/requestConsent(target:preview:offer:)`` does when it
+    /// is over the cost cap.
     ///
     /// Pass `localAnswer` (the local model's draft) to enable the router's
     /// low-confidence trigger (R5/R6) — without it only size-overflow can escalate.
@@ -205,10 +220,47 @@ public final class HybridEscalator {
         }
         guard let target = candidates.first else { return nil }   // R2: no target
 
-        let promptTokens = ContextCompressor.estimateTokens((systemPrompt ?? "") + context + question)
-        let projected = CostLedger.projectedCost(target: target, inputTokens: promptTokens, maxOutput: maxTokens)
+        let input = routingInput(
+            policy: policy, target: target,
+            promptTokens: ContextCompressor.estimateTokens((systemPrompt ?? "") + context + question),
+            maxTokens: maxTokens, localContextWindow: localContextWindow,
+            localAnswer: localAnswer, domain: domain)
 
-        let decision = EscalationRouter.decide(RoutingInput(
+        switch EscalationRouter.decide(input) {
+        case .stayLocal:
+            return nil
+        case .escalate:
+            return try await escalate(to: target, systemPrompt: systemPrompt,
+                                      context: context, question: question,
+                                      maxTokens: maxTokens, onToken: onToken)
+        case .offer(let reason):
+            let budget = max(256, Int(Double(target.contextLength ?? 8192) * policy.keepRatio) - maxTokens)
+            let preview = compressor.compress(context: context, question: question, budgetTokens: budget)
+            let offer = EscalationOffer(
+                reason: reason, projectedCostUSD: input.projectedCostUSD,
+                sessionSpentUSD: input.sessionSpentUSD, unpricedRecordCount: input.unpricedRecordCount,
+                costCapUSD: policy.costCapUSDPerSession)
+            guard await consent.requestConsent(target: target, preview: preview, offer: offer) else {
+                throw AuraError.escalationDeclined
+            }
+            return try await escalate(to: target, systemPrompt: systemPrompt,
+                                      context: context, question: question,
+                                      maxTokens: maxTokens, onToken: onToken)
+        }
+    }
+
+    /// The router's view of one request, priced by this escalator's ledger and
+    /// counting what the ledger's session has already spent.
+    func routingInput(
+        policy: EscalationPolicy,
+        target: RemoteTarget,
+        promptTokens: Int,
+        maxTokens: Int,
+        localContextWindow: Int,
+        localAnswer: String?,
+        domain: Model.Domain?
+    ) -> RoutingInput {
+        RoutingInput(
             policy: policy,
             hasCandidateTarget: true,
             candidateIsCloud: !target.isLocalNetwork,
@@ -217,24 +269,8 @@ public final class HybridEscalator {
             localContextWindow: localContextWindow,
             localAnswer: localAnswer,
             domain: domain,
-            projectedCostUSD: projected))
-
-        switch decision {
-        case .stayLocal:
-            return nil
-        case .escalate:
-            return try await escalate(to: target, systemPrompt: systemPrompt,
-                                      context: context, question: question,
-                                      maxTokens: maxTokens, onToken: onToken)
-        case .offer:
-            let budget = max(256, Int(Double(target.contextLength ?? 8192) * policy.keepRatio) - maxTokens)
-            let preview = compressor.compress(context: context, question: question, budgetTokens: budget)
-            guard await consent.requestConsent(target: target, preview: preview, projectedCostUSD: projected) else {
-                throw AuraError.escalationDeclined
-            }
-            return try await escalate(to: target, systemPrompt: systemPrompt,
-                                      context: context, question: question,
-                                      maxTokens: maxTokens, onToken: onToken)
-        }
+            projectedCostUSD: ledger.projectedCost(target: target, inputTokens: promptTokens, maxOutput: maxTokens),
+            sessionSpentUSD: ledger.sessionCostUSD,
+            unpricedRecordCount: ledger.unpricedRecordCount)
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// Supplies HTTP auth headers for a download request, resolved from the URL's host.
 /// Lets any downloader authenticate gated/private sources without host-specific
@@ -54,6 +55,27 @@ public struct KeychainDownloadAuth: DownloadAuthorizing {
             return ["Authorization": "Bearer \(token)"]
         }
         return [:]
+    }
+}
+
+public extension KeychainDownloadAuth {
+    /// Stores the Hugging Face read token that `ModelDownloads`, `GGUFModelDownloader`, `ChunkedDownloader` and
+    /// `ModelCompatibilityChecker` send to `huggingface.co`; the MLX load path and the AuraUI Models tab do not.
+    /// Surrounding whitespace is trimmed; an empty token throws `errSecParam` instead of storing a blank credential.
+    static func saveHuggingFaceToken(_ token: String) throws {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw KeychainStore.KeychainError.status(errSecParam) }
+        try KeychainStore.save(trimmed, for: huggingFaceAccount)
+    }
+
+    /// Removes the stored Hugging Face token; no-op when none is stored.
+    static func deleteHuggingFaceToken() {
+        KeychainStore.delete(for: huggingFaceAccount)
+    }
+
+    /// Whether a Hugging Face token is stored.
+    static var hasHuggingFaceToken: Bool {
+        KeychainStore.hasKey(for: huggingFaceAccount)
     }
 }
 

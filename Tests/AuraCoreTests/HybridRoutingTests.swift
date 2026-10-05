@@ -46,7 +46,7 @@ final class HybridRoutingTests: XCTestCase {
         let d = EscalationRouter.decide(RoutingInput(
             policy: EscalationPolicy(mode: .autoWithConsentMemory, allowCloud: true),
             hasCandidateTarget: true, candidateIsCloud: true,
-            promptTokens: 8000, localContextWindow: 8192))
+            promptTokens: 8000, localContextWindow: 8192, projectedCostUSD: 0))
         XCTAssertEqual(d, .offer(reason: .sizeOverflow))
     }
 
@@ -73,6 +73,67 @@ final class HybridRoutingTests: XCTestCase {
             hasCandidateTarget: true, candidateIsCloud: false,
             promptTokens: 8000, localContextWindow: 8192, projectedCostUSD: 0.50))
         XCTAssertEqual(d, .offer(reason: .costCapped))
+    }
+
+    private func overflowInput(
+        cloud: Bool, projected: Decimal?, spent: Decimal, cap: Decimal = 1.0
+    ) -> RoutingInput {
+        RoutingInput(
+            policy: EscalationPolicy(mode: .autoWithConsentMemory, allowCloud: true, costCapUSDPerSession: cap),
+            hasCandidateTarget: true, candidateIsCloud: cloud,
+            promptTokens: 8000, localContextWindow: 8192,
+            projectedCostUSD: projected, sessionSpentUSD: spent)
+    }
+
+    func testSessionSpendCrossingTheCapForcesOffer() {
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: true, projected: 0.10, spent: 0.95)),
+                       .offer(reason: .costCapped))
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: true, projected: 0.10, spent: 0.50)),
+                       .offer(reason: .sizeOverflow))
+    }
+
+    func testSessionSpendCrossingTheCapStopsAutoEscalation() {
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: false, projected: 0.10, spent: 0.95)),
+                       .offer(reason: .costCapped))
+    }
+
+    func testUnknownCloudCostOffersCostUnknown() {
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: true, projected: nil, spent: 0)),
+                       .offer(reason: .costUnknown))
+    }
+
+    func testUnknownCostWithoutTriggerStaysLocal() {
+        XCTAssertEqual(EscalationRouter.decide(RoutingInput(
+            policy: EscalationPolicy(mode: .askEachTime, allowCloud: true),
+            hasCandidateTarget: true, candidateIsCloud: true,
+            promptTokens: 10, localContextWindow: 8192, projectedCostUSD: nil)), .stayLocal)
+    }
+
+    func testOmittedProjectionIsUnknownForCloudNotFree() {
+        XCTAssertEqual(EscalationRouter.decide(RoutingInput(
+            policy: EscalationPolicy(mode: .autoWithConsentMemory, allowCloud: true),
+            hasCandidateTarget: true, candidateIsCloud: true,
+            promptTokens: 8000, localContextWindow: 8192)), .offer(reason: .costUnknown))
+    }
+
+    func testUnpricedSessionCallsMakeTheSpendUnknown() {
+        var input = overflowInput(cloud: true, projected: 0.10, spent: 0.20)
+        input.unpricedRecordCount = 1
+        XCTAssertEqual(EscalationRouter.decide(input), .offer(reason: .costUnknown))
+        input.sessionSpentUSD = 0.95
+        XCTAssertEqual(EscalationRouter.decide(input), .offer(reason: .costCapped),
+                       "the priced lower bound alone already crosses the cap")
+
+        var lan = overflowInput(cloud: false, projected: 0, spent: 0.20)
+        lan.unpricedRecordCount = 3
+        XCTAssertEqual(EscalationRouter.decide(lan), .escalate(reason: .sizeOverflow))
+    }
+
+    func testFreeLANIgnoresSessionSpendAndUnknownCost() {
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: false, projected: 0, spent: 5)),
+                       .escalate(reason: .sizeOverflow))
+        XCTAssertEqual(EscalationRouter.decide(overflowInput(cloud: false, projected: nil, spent: 5)),
+                       .escalate(reason: .sizeOverflow))
     }
 
     // MARK: - Heuristic

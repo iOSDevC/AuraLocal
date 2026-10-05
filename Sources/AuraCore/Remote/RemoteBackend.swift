@@ -9,8 +9,10 @@ final class RemoteBackend: InferenceBackend {
     let target: RemoteTarget
     private let temperature: Float
 
-    /// Usage reported by the last successful generation (for the cost ledger).
+    /// Usage the provider reported for the last generation, even one that later failed (for the cost ledger).
     private(set) var lastUsage: TokenUsage?
+    /// True once the last generation produced text, so a failure after it still cost tokens.
+    private(set) var didReceiveOutput = false
 
     init(target: RemoteTarget, temperature: Float = 0.7) {
         self.target = target
@@ -79,6 +81,7 @@ final class RemoteBackend: InferenceBackend {
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
         lastUsage = nil
+        didReceiveOutput = false
         let request = RemoteRequest(
             model: target.modelID, system: system, messages: messages,
             maxTokens: maxTokens, temperature: temperature)
@@ -87,6 +90,7 @@ final class RemoteBackend: InferenceBackend {
             try Task.checkCancellation()
             switch event {
             case .token(let delta):
+                didReceiveOutput = true
                 full += delta
                 onToken(full)          // cumulative — AuraLocal.stream() re-diffs to deltas
             case .usage(let usage):

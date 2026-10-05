@@ -1,17 +1,66 @@
 # Model Finder
 
-A small iOS 18 / macOS 15 app that searches Hugging Face and tells you, per repo, whether AuraLocal can really
-run it on a given device — and if not, why. It is a UI over `ModelCompatibilityChecker` (AuraCore); see
-[Finding compatible models](../../docs/guide/models.md#finding-compatible-models).
+A small iOS 18 / macOS 15 app that searches Hugging Face, tells you, per repo, whether AuraLocal can really
+run it on a given device — and if not, why — and downloads the ones that fit to where AuraLocal loads them from.
+It is a UI over `ModelCompatibilityChecker` and `ModelDownloads` (AuraCore); see
+[Finding compatible models](../../docs/guide/models.md#finding-compatible-models) and
+[Downloading without loading](../../docs/guide/models.md#downloading-without-loading).
 
 - Search field, format filter (MLX + GGUF / MLX / GGUF), sort, a device picker (this device, iPhone classes,
-  Macs — each budget labelled measured or estimate, with its source), and a **Hide models that won't run**
-  toggle, which hides only rows already checked as won't run.
+  Macs — each budget labelled measured or estimate, with its source; default this device), and a **Compatible
+  only** toggle, which hides only rows already checked as won't run (unchecked rows stay visible).
 - Results show a verdict badge per row. Checks run lazily when a row appears and are cached per repo; a row and
   the detail pane share one fetch, which is cancelled only when no view waits on it any more. A new search cancels
   the one in flight. Changing the device re-evaluates the cache without refetching.
 - The detail view lists the findings (blockers first), the per-quant fit table for GGUF repos, a config summary,
   license and gating, **Copy catalog entry** (the exact `models.json` entry) and **Open on Hugging Face**.
+
+## Downloads
+
+Repos rated *Runs* or *Runs, with caveats* get a **Download** section in the detail view.
+
+- **GGUF**: a quant picker limited to single-file, top-level quants not rated too large for the selected device
+  (split quants never appear). **MLX**: a fixed file set — top-level `*.safetensors`, `*.json`, `*.jinja` of
+  `main`.
+- Before starting it shows the size and the free space (`Download 415.2 MB · 118 GB free`), or how much is
+  already on disk (`Resume (302 MB of 415.2 MB on disk)`). Then a progress bar and **Cancel**.
+- One download at a time; other Download buttons are disabled while one runs.
+- Errors have their own message: a gated repo (HTTP 401/403 with `X-Error-Code: GatedRepo`, or a rejected token)
+  links to Settings and the repo page, a missing file (404), a repo that is missing, renamed or private (an
+  anonymous 401 without an error code; Hugging Face does not tell these apart), not enough space (`Needs X, Y free.`), a size mismatch or a network error (the partial file is kept).
+- Files land exactly where the backends read them: GGUF at `Library/Caches/models/<org>/<repo>/<file>.gguf`
+  (`Model.resolvedFileURL`), MLX at `Library/Caches/huggingface/hub/models--<org>--<repo>/snapshots/main/` with a
+  `.complete` marker written last. `ModelManager.shared.load(_:)` finds them without downloading again.
+
+**Interruptions.** There are no background downloads: the session is a default `URLSession`, so locking the phone
+or leaving the app for more than ~30 s (a background-task window) stops the transfer. Each file is written in 32 MB
+chunks to `<file>.partial`; **Resume** — in the detail view or the Downloads tab, also after a relaunch —
+continues from it, unless the file changed on Hugging Face meanwhile (another ETag): then it starts over. An optional toggle keeps the screen awake while downloading.
+
+**Downloads tab.** A scan of the disk on every visit, so it survives relaunches without a database: finished GGUF
+files, paused GGUF `.partial` files, and MLX snapshots (complete or not), with size, Resume, **Delete** (swipe or
+context menu; unloads the model first and reports the freed space) and **Try it**. The app remembers the sized
+`Model` for each download in `UserDefaults` so Try it can judge memory; files it did not download show without
+Try it. Caches can be purged by iOS when storage is low.
+
+**Try it** loads the model with `ModelManager`, asks one short question (32 tokens max), shows the reply and the
+load/reply times, and always unloads it — also on cancel, on Done and on a memory warning. It is enabled only for
+complete downloads whose `HardwareAnalyzer` fit on this device is not *Too large* (MLX also not *Streaming*).
+
+**Gated repos.** Accept the license on the repo page, create a read token, and save it in the **Settings** tab. It
+goes to the Keychain item that AuraLocal's downloaders (`ModelDownloads`, `GGUFModelDownloader`, `ChunkedDownloader`)
+and the checker read — not the MLX load path or the AuraUI Models tab (service `dev.auralocal.remote`,
+account `download.huggingface`) and is sent to `huggingface.co` only. On iOS that item belongs to this app; other
+AuraLocal apps don't see it. Search stays anonymous, so private repos don't appear in results. No OAuth sign-in
+(it would need a registered Hugging Face OAuth app and URL scheme).
+
+**Simulator.** GGUF downloads and Try it work (llama.cpp on the CPU); MLX can be downloaded but not run there.
+"This device" on the Simulator reflects the Mac host's memory, not an iPhone's.
+
+**Real devices.** iOS caps an app's memory well below the phone's RAM. The
+`com.apple.developer.kernel.increased-memory-limit` entitlement raises that cap but needs a signing team with the
+capability, so it is not in this project; add it in Signing & Capabilities for larger models. Not verified on a
+device: memory limits, the background-task window, MLX Try it.
 
 ## Generate, open, run
 
@@ -40,12 +89,8 @@ xcodebuild -project ModelFinder.xcodeproj -scheme ModelFinder -destination 'gene
 To run on a device, set your team in Signing & Capabilities. The Mac build is sandboxed with outgoing network
 access only.
 
-Model Finder has no token field, so gated repositories are judged from their listing alone: `config.json` and
-file headers come back as HTTP 401 caveats and the verdict is often *Unknown*. It sends a token only if one is
-saved in the Keychain item AuraLocal's downloaders read (service `dev.auralocal.remote`, account
-`download.huggingface`) where this app can read it — on iOS every app has its own Keychain items, so another
-app's token is not visible; on macOS it depends on the item's access control (not tested). For gated repos, use
-`aura models check` with the token in that item in your login Keychain.
+For gated repositories the checker uses the same token: without one, `config.json` and file headers come back as
+HTTP 401 caveats and the verdict is often *Unknown* or *Runs, with caveats*.
 
 The same checks are available headless: `aura models search "<query>"` and `aura models check <repo>` — see
 [CLI](../../docs/guide/cli.md#model-compatibility-aura-models).

@@ -67,10 +67,14 @@ for source in answer.sources {
 }
 ```
 
-{: .warning }
-> Re-adding a file skips it only within the same launch: document IDs come from the path's
-> `hashValue`, which Swift seeds per process, so after a relaunch `add(url:)` indexes the same file
-> again. Check `allDocuments()` by `url` before re-adding.
+{: .note }
+> Re-adding a file returns its existing entry, in this or any later launch. A document's ID is a
+> UUID version 5 of the file's location (relative to the home directory when inside it), so `./`,
+> `..` and symlinked spellings of the same path map to it. Entries indexed by earlier versions,
+> whose IDs changed every launch, are matched by `url` instead, and `open()` removes the duplicates
+> those versions left for one file, keeping the newest one that has chunks. An entry whose chunks
+> are missing (an earlier version was interrupted while indexing) is deleted and the file indexed
+> again. A moved or renamed file counts as a new document.
 
 ---
 

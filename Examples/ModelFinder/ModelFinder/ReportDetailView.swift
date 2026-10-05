@@ -9,11 +9,18 @@ import UIKit
 /// Everything the checker found about one repo, blockers first.
 struct ReportDetailView: View {
     let result: CompatibilityReport
+    let transfers: DownloadCenter
+    let openSettings: () -> Void
     @State private var copied = false
 
     var body: some View {
         Form {
             summary
+            if let suggestion = result.suggestedEntry,
+               result.status == .runnable || result.status == .runnableWithCaveats {
+                DownloadSection(result: result, suggestion: suggestion, transfers: transfers, openSettings: openSettings)
+                    .id(result.repoID)
+            }
             Section("Findings") {
                 ForEach(result.findings) { FindingRow(item: $0) }
             }

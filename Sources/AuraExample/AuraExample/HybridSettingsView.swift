@@ -69,11 +69,16 @@ struct HybridSettingsView: View {
                     Text("A Hugging Face access token lets AuraLocal download gated or private GGUF repos. Stored in the Keychain.")
                 }
 
-                Section("This session") {
+                Section {
                     LabeledContent("Remote tokens", value: "\(ledger.sessionTokens)")
-                    LabeledContent("Cost", value: String(format: "$%.4f",
-                        NSDecimalNumber(decimal: ledger.sessionCostUSD).doubleValue))
-                    LabeledContent("Escalations", value: "\(ledger.records.count)")
+                    LabeledContent("Cost", value: sessionCostText)
+                    LabeledContent("Escalations", value: "\(ledger.sessionRecordCount)")
+                    Button("Start new session") { ledger.startNewSession() }
+                        .disabled(ledger.sessionRecordCount == 0)
+                } header: {
+                    Text("This session")
+                } footer: {
+                    Text("The cost cap counts spend since the session started. Starting a new one keeps the history.")
                 }
             }
             .navigationTitle("Hybrid settings")
@@ -85,6 +90,12 @@ struct HybridSettingsView: View {
         }
         .frame(minWidth: 460, minHeight: 520)
         .onAppear { hasRetiredGitHubToken = KeychainStore.hasKey(for: Self.retiredGitHubModelsAccount) }
+    }
+
+    private var sessionCostText: String {
+        let priced = String(format: "$%.4f", NSDecimalNumber(decimal: ledger.sessionCostUSD).doubleValue)
+        let unpriced = ledger.unpricedRecordCount
+        return unpriced == 0 ? priced : "\(priced) + \(unpriced) unpriced"
     }
 
     private var retiredGitHubModelsRow: some View {
@@ -145,9 +156,18 @@ struct ConsentSheet: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Cost") {
-                    LabeledContent("Projected", value: request.cost == 0
-                        ? "Free (local)"
-                        : String(format: "$%.4f", NSDecimalNumber(decimal: request.cost).doubleValue))
+                    LabeledContent("Projected", value: projectedCostText)
+                    if request.cost == nil {
+                        Text("No price is set for this model, so the cost cap cannot check it.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let offer = request.offer {
+                        LabeledContent("Session spend", value: Self.sessionSpendText(offer))
+                    }
+                    if isOverCap {
+                        Text("Sending goes over your session cost cap.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                     if request.preview.originalTokens > request.preview.compressedTokens {
                         LabeledContent("Compression",
                             value: "\(request.preview.originalTokens)→\(request.preview.compressedTokens) (\(String(format: "%.1f", request.preview.factor))×)")
@@ -169,5 +189,25 @@ struct ConsentSheet: View {
             .onDisappear { gate.resolve(false) }   // safety: never leak the continuation
         }
         .frame(minWidth: 420, minHeight: 420)
+    }
+
+    private var isOverCap: Bool {
+        guard let offer = request.offer else { return false }
+        if offer.reason == .costCapped { return true }
+        guard let cost = request.cost else { return false }
+        return cost > 0 && offer.sessionSpentUSD + cost > offer.costCapUSD
+    }
+
+    private static func sessionSpendText(_ offer: EscalationOffer) -> String {
+        let spent = String(format: "$%.4f", NSDecimalNumber(decimal: offer.sessionSpentUSD).doubleValue)
+        let cap = String(format: "$%.2f", NSDecimalNumber(decimal: offer.costCapUSD).doubleValue)
+        let unpriced = offer.unpricedRecordCount == 0 ? "" : " + \(offer.unpricedRecordCount) unpriced"
+        return "\(spent)\(unpriced) of \(cap) cap"
+    }
+
+    private var projectedCostText: String {
+        guard let cost = request.cost else { return "Cost unknown" }
+        if cost == 0 { return request.target.isLocalNetwork ? "Free (local)" : "$0" }
+        return String(format: "$%.4f", NSDecimalNumber(decimal: cost).doubleValue)
     }
 }

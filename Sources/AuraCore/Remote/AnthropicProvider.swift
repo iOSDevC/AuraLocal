@@ -28,7 +28,7 @@ public struct AnthropicProvider: RemoteLLMProvider {
                     let urlRequest = try makeRequest(request)
                     let session = SSELineStream.makeSession()
                     defer { session.invalidateAndCancel() }
-                    var inputTokens = 0
+                    var inputTokens: Int?
                     for try await line in SSELineStream.lines(for: urlRequest, session: session) {
                         if Task.isCancelled { break }
                         guard line.hasPrefix("data:") else { continue }
@@ -41,10 +41,10 @@ public struct AnthropicProvider: RemoteLLMProvider {
                                 continuation.yield(.token(text))
                             }
                         case "message_start":
-                            inputTokens = event.message?.usage?.input_tokens ?? 0
+                            inputTokens = event.message?.usage?.input_tokens
                         case "message_delta":
-                            if let out = event.usage?.output_tokens {
-                                continuation.yield(.usage(TokenUsage(inputTokens: inputTokens, outputTokens: out)))
+                            if let usage = Self.tokenUsage(event.usage, inputTokens: inputTokens) {
+                                continuation.yield(.usage(usage))
                             }
                         default:
                             break
@@ -81,6 +81,13 @@ public struct AnthropicProvider: RemoteLLMProvider {
         r.setValue(version, forHTTPHeaderField: "anthropic-version")
         r.httpBody = try JSONSerialization.data(withJSONObject: body)
         return r
+    }
+
+    /// Both counts or nothing: a missing count is unknown, and pricing it as 0 would undercount the call.
+    /// `message_delta` may repeat `input_tokens`; otherwise it comes from `message_start`.
+    private static func tokenUsage(_ usage: Event.Usage?, inputTokens: Int?) -> TokenUsage? {
+        guard let input = usage?.input_tokens ?? inputTokens, let output = usage?.output_tokens else { return nil }
+        return TokenUsage(inputTokens: input, outputTokens: output)
     }
 
     // MARK: - SSE event (Anthropic dialect)

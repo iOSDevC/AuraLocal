@@ -113,3 +113,92 @@ public enum DownloadedModels {
         return fileComponents[rootComponents.count..<(fileComponents.count - 1)].joined(separator: "/")
     }
 }
+
+// MARK: - MLX snapshots and partial files
+
+/// An MLX snapshot folder under `<Caches>/huggingface/hub/models--<org>--<repo>/snapshots/main`.
+public struct DownloadedSnapshot: Sendable, Identifiable, Equatable {
+    public let repoID: String
+    public let directory: URL
+    /// Every file in the folder, `.partial` files included.
+    public let sizeBytes: Int64
+    /// The `.complete` marker is present, so ``Model/isDownloaded`` is `true` and MLX loads it without fetching.
+    public let isComplete: Bool
+
+    public init(repoID: String, directory: URL, sizeBytes: Int64, isComplete: Bool) {
+        self.repoID = repoID
+        self.directory = directory
+        self.sizeBytes = sizeBytes
+        self.isComplete = isComplete
+    }
+
+    public var id: String { directory.path }
+}
+
+public extension DownloadedModels {
+
+    /// MLX snapshots on disk, complete or not, sorted by repo id.
+    static func scanSnapshots(fileManager: FileManager = .default) -> [DownloadedSnapshot] {
+        scanSnapshots(hubRoot: hubDirectory(fileManager: fileManager), fileManager: fileManager)
+    }
+
+    /// Unfinished `*.partial` downloads under the GGUF models root and the MLX hub folder.
+    static func partialFiles(fileManager: FileManager = .default) -> [URL] {
+        partialFiles(roots: [modelsDirectory(fileManager: fileManager), hubDirectory(fileManager: fileManager)],
+                     fileManager: fileManager)
+    }
+}
+
+extension DownloadedModels {
+
+    static func hubDirectory(fileManager: FileManager) -> URL {
+        fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appending(path: "huggingface/hub")
+    }
+
+    static func scanSnapshots(hubRoot: URL, fileManager: FileManager) -> [DownloadedSnapshot] {
+        let folders = (try? fileManager.contentsOfDirectory(atPath: hubRoot.path)) ?? []
+        return folders.filter { $0.hasPrefix("models--") }
+            .compactMap { snapshot(inRepoFolder: hubRoot.appendingPathComponent($0), fileManager: fileManager) }
+            .sorted { $0.repoID.localizedCaseInsensitiveCompare($1.repoID) == .orderedAscending }
+    }
+
+    private static func snapshot(inRepoFolder folder: URL, fileManager: FileManager) -> DownloadedSnapshot? {
+        let directory = folder.appending(path: "snapshots/\(ModelDownloads.snapshotFolder)")
+        var isFolder: ObjCBool = false
+        guard fileManager.fileExists(atPath: directory.path, isDirectory: &isFolder), isFolder.boolValue else {
+            return nil
+        }
+        let name = folder.lastPathComponent.dropFirst("models--".count)
+        guard let separator = name.range(of: "--") else { return nil }
+        let repoID = name.replacingCharacters(in: separator, with: "/")
+        let marker = directory.appendingPathComponent(ModelDownloads.completeMarker)
+        return DownloadedSnapshot(repoID: repoID, directory: directory,
+                                  sizeBytes: directorySize(directory, fileManager: fileManager),
+                                  isComplete: fileManager.fileExists(atPath: marker.path))
+    }
+
+    static func partialFiles(roots: [URL], fileManager: FileManager) -> [URL] {
+        roots.flatMap { regularFiles(under: $0, fileManager: fileManager) }
+            .filter { $0.pathExtension == HubFileTransfer.partialExtension }
+            .sorted { $0.path < $1.path }
+    }
+
+    /// Total size of the regular files under `directory`; 0 when it does not exist.
+    static func directorySize(_ directory: URL, fileManager: FileManager) -> Int64 {
+        regularFiles(under: directory, fileManager: fileManager)
+            .map { Int64((try? $0.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0) }
+            .saturatingSum()
+    }
+
+    private static func regularFiles(under root: URL, fileManager: FileManager) -> [URL] {
+        guard let enumerator = fileManager.enumerator(
+            at: root, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey], options: [], errorHandler: nil
+        ) else { return [] }
+        return enumerator.compactMap { item in
+            guard let url = item as? URL,
+                  (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { return nil }
+            return url
+        }
+    }
+}

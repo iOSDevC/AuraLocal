@@ -294,6 +294,156 @@ public struct Turn: Identifiable, Codable, Sendable, Equatable {
 
 ---
 
+## AuraSession
+
+A conversation that can switch `AuraProfile`s mid-session; the engine is rebuilt for the new
+profile. `AuraSession` keeps no history: each `stream` call is a single turn with no earlier
+messages. `conversationID` stays the same across switches, as a key for you to store turns under
+(for example in `ConversationStore`).
+
+```swift
+@MainActor
+public final class AuraSession
+init(conversationID: UUID = UUID(),
+     profile: AuraProfile,
+     makeEngine: @escaping @MainActor (AuraProfile) async throws -> any AuraProfileEngine = AuraSession.liveEngine) async throws
+
+let conversationID: UUID
+private(set) var profile: AuraProfile
+var maxRepairAttempts: Int = 2     // re-prompts after a reply that breaks profile.outputSchema
+
+func switchProfile(to newProfile: AuraProfile) async throws
+func stream(_ prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<String, Error>
+func cancel()
+```
+
+`stream` sends `profile.instructions` as the system prompt and defaults `maxTokens` to
+`profile.sampling.maxTokens`. One generation runs at a time: a new `stream` or a `switchProfile`
+cancels the previous one and waits for it to stop, also after `cancel()`, which returns without
+waiting. A `stream` or `switchProfile` called while a switch is rebuilding the engine waits for it,
+so that stream runs on the new profile. After a switch fails to build its engine, `stream` throws
+`AuraError.modelNotLoaded` until a later `switchProfile` succeeds.
+
+### AuraProfile
+
+```swift
+public struct AuraProfile: Sendable, Identifiable, Equatable {
+    let id: String
+    var displayName: String
+    var instructions: String            // the system prompt
+    var model: Model
+    var sampling: SamplingParams        // only maxTokens reaches generation
+    var tools: [any LLMTool]            // GGUF backends only
+    var outputSchema: OutputSchema?
+    var escalation: EscalationPolicy    // default .off
+}
+
+public enum OutputSchema: Sendable, Equatable, Codable {
+    case json(String)                   // a JSON Schema document
+}
+```
+
+`AuraProfileCatalog.chat(model:)`, `.agent(model:tools:)` and `.securityReview(model:)` build the
+common profiles.
+
+### Structured output
+
+With `outputSchema` set, `AuraSession` enforces the schema by **validation and repair**, not
+constrained decoding, so the model can still write anything and the session checks what comes
+back. The pinned llama.cpp client accepts a GBNF grammar only when a context is created, and
+`ModelManager` caches one instance per model; AuraLocal has no JSON-Schema-to-GBNF converter, and
+MLX exposes only a raw `LogitProcessor` hook.
+
+1. `init` and `switchProfile` compile the schema before building an engine. A schema that does not
+   compile throws `OutputSchemaError` and leaves the current profile and engine untouched. A
+   `switchProfile` that fails to build the new engine has already torn the old one down; the
+   session recovers on the next successful `switchProfile`.
+2. `stream` appends the schema to the system prompt with an instruction to reply with a single
+   JSON value, buffers the whole reply, and looks for a conforming JSON value in it (see below).
+3. A reply that breaks the schema is sent back with the original prompt and the list of
+   violations, up to `maxRepairAttempts` times. Each repair is a full extra generation.
+4. The stream yields **one** element, the conforming JSON text, or finishes throwing
+   `OutputSchemaError.violations(output:violations:)` for the last reply.
+
+Without a schema, `stream` yields deltas as they are generated.
+
+```swift
+let profile = AuraProfile(
+    id: "extract", displayName: "Extract",
+    instructions: "Extract the person mentioned in the text.",
+    model: .qwen3_1_7b,
+    sampling: .precise,
+    outputSchema: .json(#"""
+        {"type": "object",
+         "properties": {"name": {"type": "string"}, "age": {"type": "integer", "minimum": 0}},
+         "required": ["name", "age"], "additionalProperties": false}
+        """#))
+
+let session = try await AuraSession(profile: profile)
+for try await json in session.stream("Ana turned 30 last week.") {
+    print(json)   // e.g. {"name": "Ana", "age": 30}
+}
+```
+
+`AuraLocal.chat` and `AuraLocal.stream` do not read profiles. To check their output, use the
+validator directly:
+
+```swift
+public struct OutputSchemaValidator: Sendable {
+    init(_ schema: OutputSchema) throws(OutputSchemaError)
+    func validate(_ json: String) -> [OutputSchemaViolation]                     // empty = conforms
+    func conformingJSON(in output: String) throws(OutputSchemaError) -> String  // first candidate that conforms
+    static func extractJSON(from output: String) -> String?                      // first candidate that parses
+}
+
+public struct OutputSchemaViolation: Sendable, Equatable, CustomStringConvertible {
+    let path: String       // JSON pointer (RFC 6901); "" is the whole value
+    let message: String
+}
+
+public enum OutputSchemaError: Error, LocalizedError, Sendable, Equatable {
+    case invalidSchema(String)            // not JSON (a GBNF grammar, say), or a malformed keyword value
+    case unsupportedKeywords([String])    // JSON pointers into the schema
+    case violations(output: String, violations: [OutputSchemaViolation])
+}
+```
+
+Supported keywords:
+
+| Keywords | Notes |
+|----------|-------|
+| `type` | A name or an array of names. `integer` accepts whole numbers, including `3.0` |
+| `properties`, `required`, `additionalProperties` | `additionalProperties` is a boolean or a schema |
+| `items`, `minItems`, `maxItems` | `items` is one schema; the tuple (array) form is rejected |
+| `enum`, `const` | |
+| `minLength`, `maxLength` | Counted in Unicode scalars |
+| `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` | The exclusive bounds are numbers, not booleans |
+| `anyOf`, `oneOf`, `allOf` | |
+| `description`, `title`, `$schema`, `examples`, `default`, `$comment` | Accepted and ignored |
+
+Any other keyword (`$ref`, `$defs`, `pattern`, `format`, `patternProperties`, `if`/`then`/`else`,
+`not`, …) makes compilation throw `unsupportedKeywords`, so no constraint is skipped silently.
+`true` and `false` work as schemas anywhere a schema does.
+
+Candidates, in order: the whole reply; then, with reasoning removed (`<think>…</think>` spans, a
+leading block closed by a lone `</think>`, an unclosed `<think>` to the end), the whole reply again,
+each ```` ```json ```` (or unlabelled) fenced block, and each top-level balanced `{…}` or `[…]`.
+Brackets inside strings are skipped, and values nested in one that parsed are not candidates.
+`extractJSON` returns the first candidate that parses. `conformingJSON` and `AuraSession` take the
+first that conforms and, when none does, report the violations of the first that parsed, so a
+citation such as `[1]` or a draft inside a reasoning block does not hide the answer.
+
+Parsing is strict RFC 8259: trailing commas, comments, single quotes, `NaN` and duplicate member
+names make a candidate not JSON, so the text `conformingJSON` returns reads the same in any
+conforming parser. Nesting deeper than 512 levels is rejected. Numbers compare as exact decimals:
+`9007199254740993` does not equal `9007199254740992`, and `1e400` is a valid number.
+
+{: .warning }
+> Validation checks shape, not truth: a conforming reply can still hold wrong values. A small model
+> that keeps breaking the schema costs up to `1 + maxRepairAttempts` generations per `stream` call.
+
+---
+
 ## HardwareAnalyzer
 
 Assesses whether a catalog `Model` fits this device's memory. All methods are synchronous.
@@ -696,6 +846,8 @@ public struct LocalProviderModel: Sendable, Codable, Identifiable, Hashable {
 ```swift
 @MainActor
 public final class HybridEscalator {
+    init(ledger: CostLedger = .shared)   // prices and session spend come from this ledger
+
     // Route by policy: stays local, escalates, or asks consent per rules R1–R7.
     func routeAndEscalate(
         policy: EscalationPolicy,
@@ -705,11 +857,12 @@ public final class HybridEscalator {
         domain: Model.Domain? = nil,
         localContextWindow: Int = 8192,
         localAnswer: String? = nil,        // enables the low-confidence trigger
-        consent: any ConsentGate = DenyingConsentGate(),
+        consent: any ConsentGate = DenyingConsentGate(),   // asked via requestConsent(target:preview:offer:)
         maxTokens: Int = 1024,
         targets: [RemoteTarget]? = nil,    // nil = candidateTargets(policy:)
         onToken: @escaping @MainActor (String) -> Void = { _ in }
     ) async throws -> Result?              // nil = the router kept it local; never redacts PII
+                                           // throws AuraError.escalationDeclined when the gate declines
 
     // Direct escalation to a chosen target.
     func escalate(
@@ -751,8 +904,10 @@ public final class HybridEscalator {
 public struct EscalationPolicy: Sendable, Equatable, Codable {
     var mode: Mode                     // .off / .askEachTime / .autoWithConsentMemory
     var allowCloud: Bool
-    // Default 1.0. Compared with each request's projected cost (rule R7), not with a running
-    // session total. Over the cap the router offers the escalation instead of escalating silently.
+    // Default 1.0. Rule R7: when the request's projection is above $0 (a LAN target never trips it)
+    // and CostLedger.sessionCostUSD plus that projection exceeds the cap, the router offers
+    // .costCapped, which the default ConsentGate.requestConsent(target:preview:offer:) declines.
+    // An unpriced cloud model, or a session with unpriced calls, is offered as .costUnknown.
     var costCapUSDPerSession: Decimal
     // Default 0.5. Sizes only the consent preview; escalate() always budgets 50% of the
     // target's context window minus maxTokens.
@@ -760,6 +915,39 @@ public struct EscalationPolicy: Sendable, Equatable, Codable {
 
     init(mode: Mode = .off, allowCloud: Bool = false, costCapUSDPerSession: Decimal = 1.0, keepRatio: Double = 0.5)
     static let off: EscalationPolicy   // the default — never leaves the device
+}
+```
+
+### EscalationRouter
+
+The pure decision behind `routeAndEscalate`, which fills `RoutingInput` from its target and its
+`CostLedger`. Call it yourself to test a policy.
+
+```swift
+public enum EscalationRouter {
+    static func decide(_ input: RoutingInput) -> RoutingDecision   // rules R1–R7, no I/O
+}
+
+public struct RoutingInput: Sendable {
+    init(policy: EscalationPolicy, hasCandidateTarget: Bool, candidateIsCloud: Bool,
+         online: Bool = true, promptTokens: Int = 0, localContextWindow: Int = 8192,
+         localAnswer: String? = nil, domain: Model.Domain? = nil,
+         projectedCostUSD: Decimal? = nil,   // nil = unknown; a cloud target is then offered, never free
+         sessionSpentUSD: Decimal = 0,       // priced spend already recorded this session
+         unpricedRecordCount: Int = 0)       // session calls of unknown cost; > 0 makes the spend a lower bound
+}
+
+public enum RoutingDecision: Sendable, Equatable {
+    case stayLocal
+    case escalate(reason: EscalationReason)
+    case offer(reason: EscalationReason)
+}
+
+public enum EscalationReason: String, Sendable, Equatable {
+    case sizeOverflow, lowConfidence, domainSensitive, userRequested
+    case costCapped    // a trigger fired, but sessionSpentUSD + a non-zero projection exceeds the cap
+    case costUnknown   // a trigger fired for a cloud target whose projection is nil, or with a
+                       // non-zero projection under the cap while unpricedRecordCount > 0
 }
 ```
 
@@ -851,23 +1039,96 @@ public enum KeychainStore {
     static func hasKey(for account: String) -> Bool
 }
 
+// USD per 1M tokens.
+public struct TokenPrice: Sendable, Hashable {
+    var inputUSDPerMillion: Decimal
+    var outputUSDPerMillion: Decimal
+    init(inputUSDPerMillion: Decimal, outputUSDPerMillion: Decimal)
+}
+
 @MainActor
 public final class CostLedger: ObservableObject {
-    static let shared: CostLedger
-    @Published private(set) var records: [Record]   // per-escalation token + $ accounting
+    static let shared: CostLedger      // HybridEscalator's default ledger
+    init()                             // starts with the built-in prices
+
+    @Published private(set) var records: [Record]   // per-escalation token + $ accounting, all sessions
+    // The totals below cover the records since the last startNewSession().
     var sessionTokens: Int
-    var sessionCostUSD: Decimal
+    var sessionCostUSD: Decimal        // priced records only
+    var unpricedRecordCount: Int       // records whose costUSD is nil
+    var sessionRecordCount: Int        // priced and unpriced
+    func startNewSession()             // keeps records, restarts the totals
+
+    // model nil = every model of the provider; a nil price removes the entry.
+    func setPrice(_ price: TokenPrice?, provider: String, model: String? = nil)
+    // The model-specific price, else the provider-wide one, else nil.
+    func price(provider: String, model: String? = nil) -> TokenPrice?
+    // 0 for local-network targets, nil for an unpriced cloud model.
+    func projectedCost(target: RemoteTarget, inputTokens: Int, maxOutput: Int) -> Decimal?
+    // Deprecated: the static form reads CostLedger.shared's prices.
+    static func projectedCost(target: RemoteTarget, inputTokens: Int, maxOutput: Int) -> Decimal?
+
+    func record(provider: String, model: String? = nil, usage: TokenUsage?,
+                origin: RemoteTarget.Origin, compressionRatio: Double?)
+
+    struct Record: Identifiable, Sendable {
+        let id: UUID
+        let provider: String
+        let model: String?
+        let isLocalNetwork: Bool
+        let usage: TokenUsage?
+        let costUSD: Decimal?          // nil: a cloud call with no price, or without both token counts
+        let compressionRatio: Double?
+    }
+}
+
+@MainActor
+public protocol ConsentGate: Sendable {
+    // projectedCostUSD is nil when the target's price is unknown.
+    func requestConsent(target: RemoteTarget, preview: CompressionResult,
+                        projectedCostUSD: Decimal?) async -> Bool
+    // What routeAndEscalate calls. Default: declines .costCapped, passes any other offer to the method above.
+    func requestConsent(target: RemoteTarget, preview: CompressionResult,
+                        offer: EscalationOffer) async -> Bool
+}
+
+public struct EscalationOffer: Sendable, Equatable {
+    init(reason: EscalationReason, projectedCostUSD: Decimal?, sessionSpentUSD: Decimal,
+         unpricedRecordCount: Int, costCapUSD: Decimal)
+    let reason: EscalationReason
+    let projectedCostUSD: Decimal?     // nil when the target is unpriced
+    let sessionSpentUSD: Decimal       // CostLedger.sessionCostUSD; a lower bound while unpricedRecordCount > 0
+    let unpricedRecordCount: Int
+    let costCapUSD: Decimal            // policy.costCapUSDPerSession
 }
 ```
 
+A call that throws after it streamed text (a cancel, a dropped stream) is still recorded, with the
+usage the provider reported before failing, if any; a cloud call recorded without usage has an
+unknown cost. A call that fails before any output is not recorded. A provider response that carries
+only one of the two token counts is treated as no usage.
+
+Built-in prices, approximate list prices to override with your plan's: `claude-sonnet-4-5` on
+`"cloud.anthropic"` ($3 in / $15 out per 1M tokens) and `gpt-4o` on `"cloud.openai"` ($2.50 / $10).
+No provider-wide defaults exist, so any other model starts unpriced.
+
+```swift
+let ledger = CostLedger.shared
+ledger.setPrice(TokenPrice(inputUSDPerMillion: 0.5, outputUSDPerMillion: 1.5), provider: "my-gateway")
+let projected = ledger.projectedCost(target: target, inputTokens: 2_000, maxOutput: 1_024)   // Decimal?
+```
+
 Also available: `ContextCompressor` (token-saving compression), `PIIRedactor`,
-`ResponseCache`, `ConsentGate`, and `NetworkMonitor`.
+`ResponseCache`, and `NetworkMonitor`.
 
 ### Limitations
 
-- `CostLedger` prices only `"cloud.anthropic"` and `"cloud.openai"`. For local-network targets and
-  any other provider the projected cost is $0, so the cost cap (R7) never fires for them. A call
-  whose provider reports no token usage is also recorded at $0.
+- `CostLedger` prices only the two default cloud models out of the box. Any other cloud model is
+  unknown (`nil`), not free, until you call `setPrice`, and until then the router offers each
+  escalation to it with `.costUnknown` rather than checking the cap. Unpriced records add nothing to
+  `sessionCostUSD`, so while `unpricedRecordCount > 0` a priced request under the cap is offered as
+  `.costUnknown` too.
+- Only `routeAndEscalate` applies the cap. `escalate(to:)` sends without checking it.
 - `ResponseCache.shared` is in memory only (64 entries by default, cleared on relaunch). Its key is
   the provider, the model and the user message (compressed context plus question); the system
   prompt is not part of it.

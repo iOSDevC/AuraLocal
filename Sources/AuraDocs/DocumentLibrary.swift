@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import AuraCore
 
 // MARK: - IndexedDocument
@@ -132,6 +133,7 @@ public actor DocumentLibrary {
     // MARK: - Lifecycle
     
     /// Open the underlying SQLite vector store. Must be called once before any indexing or querying.
+    /// Also removes the duplicate entries older versions stored for one file, keeping the newest one with chunks.
     public func open() async throws {
         try await vectorStore.open()
     }
@@ -143,7 +145,11 @@ public actor DocumentLibrary {
     
     // MARK: - Indexing
     
-    /// Index a document from a file URL. Safe to call multiple times — skips if already indexed.
+    /// Index a document from a file URL, or return its existing entry without parsing it again. A file is already
+    /// indexed when an entry exists under the ID derived from its location (the same in every launch and for
+    /// `./`, `..` or symlinked spellings of its path) or, for entries older versions wrote, with the same
+    /// `url.absoluteString`. An entry whose chunks are missing (an older version was interrupted while indexing)
+    /// is deleted and the file indexed again.
     @discardableResult
     public func add(
         url: URL,
@@ -153,13 +159,11 @@ public actor DocumentLibrary {
             throw DocumentError.libraryNotReady
         }
         
-        let docID = deterministicID(for: url)
+        let docID = Self.stableDocumentID(for: url)
         
-        // Skip if already indexed
-        if try await vectorStore.documentExists(id: docID) {
+        if let existing = try await indexedDocument(id: docID, url: url) {
             await onProgress("'\(url.lastPathComponent)' already indexed.")
-            let docs = try await allDocuments()
-            if let existing = docs.first(where: { $0.id == docID }) { return existing }
+            return existing
         }
         
         // Parse
@@ -172,15 +176,22 @@ public actor DocumentLibrary {
         var chunks = chunker.chunk(document: parsed, documentID: docID)
         
         // Embed and persist; again if the provider changed while embedding
-        var truncated: Int?
-        for _ in 0..<Self.maxProviderSwitches where truncated == nil {
-            truncated = try await embedAndInsert(&chunks, title: parsed.title, documentID: docID, url: url,
-                                                 onProgress: onProgress)
+        var outcome: StoreOutcome?
+        for _ in 0..<Self.maxProviderSwitches where outcome == nil {
+            outcome = try await embedAndInsert(&chunks, title: parsed.title, documentID: docID, url: url,
+                                               onProgress: onProgress)
         }
-        guard let truncated else {
+        let truncated: Int
+        switch outcome {
+        case nil:
             throw DocumentError.embeddingFailed("The embedding provider kept changing while '\(parsed.title)' was indexed")
+        case .alreadyIndexed(let existing):
+            await onProgress("'\(url.lastPathComponent)' already indexed.")
+            return existing
+        case .stored(let truncatedInputs):
+            truncated = truncatedInputs
         }
-        
+
         let truncationNote = truncated > 0 ? ", \(truncated) cut at the model's token limit" : ""
         await onProgress("'\(parsed.title)' indexed ✓ (\(chunks.count) chunks\(truncationNote))")
         
@@ -193,16 +204,23 @@ public actor DocumentLibrary {
         )
     }
     
-    /// Embeds `chunks` with the configured provider and stores them with their document, returning how many
-    /// inputs were truncated. Returns `nil`, storing nothing, when the stored vectors stopped matching that
-    /// provider meanwhile (``configure(embeddingProvider:llm:visionLLM:)`` ran during an `await`).
+    private enum StoreOutcome: Sendable {
+        /// Stored; the count is how many inputs the provider truncated.
+        case stored(truncatedInputs: Int)
+        /// A concurrent add of the same file stored it first.
+        case alreadyIndexed(IndexedDocument)
+    }
+
+    /// Embeds `chunks` with the configured provider and stores them with their document. Returns `nil`, storing
+    /// nothing, when the stored vectors stopped matching that provider meanwhile
+    /// (``configure(embeddingProvider:llm:visionLLM:)`` ran during an `await`).
     private func embedAndInsert(
         _ chunks: inout [DocumentChunk],
         title: String,
         documentID: UUID,
         url: URL,
         onProgress: @escaping @MainActor (String) -> Void
-    ) async throws -> Int? {
+    ) async throws -> StoreOutcome? {
         let embedder = try await preparedEmbedder(onProgress: onProgress)
         await onProgress("Embedding \(chunks.count) chunks…")
         let truncatedBefore = await truncatedInputCount(of: embedder)
@@ -222,14 +240,15 @@ public actor DocumentLibrary {
         let identity = Self.identity(of: embedder)
         let embedded = chunks
         let address = url.absoluteString
-        let stored = try await serialized { library -> Bool in
-            guard library.matchedIdentity == identity else { return false }
-            try await library.vectorStore.insertDocument(
-                id: documentID, title: title, url: address, chunkCount: embedded.count)
-            try await library.vectorStore.insertChunks(embedded)
-            return true
+        return try await serialized { library -> StoreOutcome? in
+            guard library.matchedIdentity == identity else { return nil }
+            // Checked again here because add(url:) checked before its awaits, where another add could interleave.
+            if let stored = try await library.vectorStore.document(id: documentID) {
+                return .alreadyIndexed(Self.indexedDocument(from: stored))
+            }
+            try await library.vectorStore.insertDocument(id: documentID, title: title, url: address, chunks: embedded)
+            return .stored(truncatedInputs: truncated)
         }
-        return stored ? truncated : nil
     }
 
     // MARK: - Query
@@ -313,15 +332,7 @@ public actor DocumentLibrary {
     
     /// List all documents currently indexed in the library.
     public func allDocuments() async throws -> [IndexedDocument] {
-        try await vectorStore.allDocuments().map { row in
-            IndexedDocument(
-                id:         row.id,
-                title:      row.title,
-                url:        URL(string: row.url) ?? URL(fileURLWithPath: row.url),
-                chunkCount: row.chunkCount,
-                indexedAt:  row.indexedAt
-            )
-        }
+        try await vectorStore.allDocuments().map(Self.indexedDocument(from:))
     }
     
     /// Remove a document and all its chunks from the library.
@@ -382,17 +393,29 @@ public actor DocumentLibrary {
     
     // MARK: - Helpers
     
-    private func deterministicID(for url: URL) -> UUID {
-        // UUID v5-style: hash the canonical path
-        let path = url.standardizedFileURL.path
-        let hash = abs(path.hashValue)
-        return UUID(uuid: (
-            UInt8((hash >> 56) & 0xFF), UInt8((hash >> 48) & 0xFF),
-            UInt8((hash >> 40) & 0xFF), UInt8((hash >> 32) & 0xFF),
-            UInt8((hash >> 24) & 0xFF), UInt8((hash >> 16) & 0xFF),
-            UInt8((hash >> 8)  & 0xFF), UInt8(hash & 0xFF),
-            0x40, 0, 0, 0, 0, 0, 0, 0
-        ))
+    /// The entry stored under `id`, else the one an older version stored with this `url`, newest with chunks
+    /// first. An entry whose chunks are missing is deleted and `nil` returned, so the file is indexed again.
+    private func indexedDocument(id: UUID, url: URL) async throws -> IndexedDocument? {
+        var found = try await vectorStore.document(id: id)
+        if found == nil {
+            found = try await vectorStore.newestDocument(url: url.absoluteString)
+        }
+        guard let row = found else { return nil }
+        guard try await !vectorStore.chunksAreMissing(for: row) else {
+            try await vectorStore.deleteDocument(id: row.id)
+            return nil
+        }
+        return Self.indexedDocument(from: row)
+    }
+    
+    private static func indexedDocument(from row: VectorStore.DocumentRow) -> IndexedDocument {
+        IndexedDocument(
+            id:         row.id,
+            title:      row.title,
+            url:        URL(string: row.url) ?? URL(fileURLWithPath: row.url),
+            chunkCount: row.chunkCount,
+            indexedAt:  row.indexedAt
+        )
     }
     
     private func buildContext(from results: [VectorStore.SearchResult], maxTokens: Int) -> String {
@@ -412,6 +435,49 @@ public actor DocumentLibrary {
         }
         
         return lines.joined(separator: "\n\n---\n\n")
+    }
+}
+
+// MARK: - DocumentLibrary: document identity
+
+extension DocumentLibrary {
+
+    // 4114F646-1613-4B76-84A1-4BE95F74C9E0. Every stored document ID derives from it: never change it.
+    private static let documentIDNamespace = UUID(uuid: (
+        0x41, 0x14, 0xF6, 0x46, 0x16, 0x13, 0x4B, 0x76,
+        0x84, 0xA1, 0x4B, 0xE9, 0x5F, 0x74, 0xC9, 0xE0
+    ))
+
+    /// The ID a file is stored under: an RFC 9562 UUID version 5 of ``documentIDName(for:homeDirectory:)``,
+    /// so the same file gets the same ID in every launch.
+    static func stableDocumentID(for url: URL, homeDirectory: String = NSHomeDirectory()) -> UUID {
+        uuidVersion5(namespace: documentIDNamespace, name: documentIDName(for: url, homeDirectory: homeDirectory))
+    }
+
+    /// `"home:"` plus the canonical path relative to `homeDirectory` when the file is inside it, else `"path:"`
+    /// plus the absolute canonical path. Relative because an iOS app container's path changes across updates.
+    static func documentIDName(for url: URL, homeDirectory: String) -> String {
+        let path = canonicalPath(of: url)
+        let home = canonicalPath(of: URL(fileURLWithPath: homeDirectory, isDirectory: true))
+        if home != "/", path.hasPrefix(home + "/") {
+            return "home:\(path.dropFirst(home.count + 1))"
+        }
+        return "path:\(path)"
+    }
+
+    /// Resolving symlinks also folds /private/var into /var, which system APIs return interchangeably.
+    private static func canonicalPath(of url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    private static func uuidVersion5(namespace: UUID, name: String) -> UUID {
+        var sha1 = Insecure.SHA1()
+        withUnsafeBytes(of: namespace.uuid) { sha1.update(bufferPointer: $0) }
+        sha1.update(data: Data(name.utf8))
+        var bytes = Array(sha1.finalize().prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x50
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return bytes.withUnsafeBytes { UUID(uuid: $0.load(as: uuid_t.self)) }
     }
 }
 
