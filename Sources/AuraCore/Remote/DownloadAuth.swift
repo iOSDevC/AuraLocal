@@ -59,8 +59,8 @@ public struct KeychainDownloadAuth: DownloadAuthorizing {
 }
 
 public extension KeychainDownloadAuth {
-    /// Stores the Hugging Face read token that `ModelDownloads`, `GGUFModelDownloader`, `ChunkedDownloader`, the
-    /// MLX load path and `ModelCompatibilityChecker` send to `huggingface.co`; the AuraUI Models tab does not.
+    /// Stores the Hugging Face read token that `ModelDownloads`, `GGUFModelDownloader`, `ChunkedDownloader` and
+    /// `ModelCompatibilityChecker` send to `huggingface.co`; the MLX load path and the AuraUI Models tab do not.
     /// Surrounding whitespace is trimmed; an empty token throws `errSecParam` instead of storing a blank credential.
     static func saveHuggingFaceToken(_ token: String) throws {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)

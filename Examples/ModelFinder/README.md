@@ -48,8 +48,8 @@ load/reply times, and always unloads it — also on cancel, on Done and on a mem
 complete downloads whose `HardwareAnalyzer` fit on this device is not *Too large* (MLX also not *Streaming*).
 
 **Gated repos.** Accept the license on the repo page, create a read token, and save it in the **Settings** tab. It
-goes to the Keychain item that AuraLocal's downloaders (`ModelDownloads`, `GGUFModelDownloader`, `ChunkedDownloader`,
-the MLX load path) and the checker read — not the AuraUI Models tab (service `dev.auralocal.remote`,
+goes to the Keychain item that AuraLocal's downloaders (`ModelDownloads`, `GGUFModelDownloader`, `ChunkedDownloader`)
+and the checker read — not the MLX load path or the AuraUI Models tab (service `dev.auralocal.remote`,
 account `download.huggingface`) and is sent to `huggingface.co` only. On iOS that item belongs to this app; other
 AuraLocal apps don't see it. Search stays anonymous, so private repos don't appear in results. No OAuth sign-in
 (it would need a registered Hugging Face OAuth app and URL scheme).

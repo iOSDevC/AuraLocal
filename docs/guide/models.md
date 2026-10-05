@@ -407,7 +407,8 @@ try ModelDownloads.delete(model)                                // file + .parti
 
 - **Where files land**: GGUF at `<Caches>/models/<org>/<repo>/<file>.gguf`; MLX at
   `<Caches>/huggingface/hub/models--<org>--<repo>/snapshots/main/` with a `.complete` marker written after the
-  last file. The MLX load path (`MLXBackend`) downloads through the same code, so both agree by construction.
+  last file. The MLX load path (`MLXBackend`) has its own downloader that uses the same folder and marker, so a
+  snapshot downloaded here loads without a second download.
 - **What MLX fetches**: top-level `*.safetensors`, `*.json` and `*.jinja` files of `main` only (mlx-swift-lm's
   patterns). Weights in a subfolder, or no `config.json`, throw `ModelDownloadError.incompleteRepo`.
 - **What GGUF fetches**: one single-file quant at the top level of the repo. Split (`-00001-of-0000N`) and
@@ -428,7 +429,7 @@ try ModelDownloads.delete(model)                                // file + .parti
   `unsupported`.
   An error response never becomes a model file.
 - **Token**: gated repos need a read token in the Keychain item that `ModelDownloads`, `GGUFModelDownloader`,
-  `ChunkedDownloader`, the MLX load path and `ModelCompatibilityChecker` read (the AuraUI Models tab does not; service
+  `ChunkedDownloader` and `ModelCompatibilityChecker` read (the MLX load path and the AuraUI Models tab do not; service
   `dev.auralocal.remote`, account `download.huggingface`): `KeychainDownloadAuth.saveHuggingFaceToken(_:)`,
   `deleteHuggingFaceToken()`, `hasHuggingFaceToken`. It is sent to `huggingface.co` / `hf.co` only, never to the
   CDN a file redirects to. On iOS the item belongs to the app that saved it.
