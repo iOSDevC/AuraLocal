@@ -1,7 +1,32 @@
 import SwiftUI
 import AuraCore
 
+enum AppTab: Hashable {
+    case search, downloads, settings
+}
+
 struct ContentView: View {
+    @State private var transfers = DownloadCenter()
+    @State private var selectedTab = AppTab.search
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            Tab("Search", systemImage: "magnifyingglass", value: AppTab.search) {
+                SearchView(transfers: transfers) { selectedTab = .settings }
+            }
+            Tab("Downloads", systemImage: "arrow.down.circle", value: AppTab.downloads) {
+                DownloadsView(transfers: transfers)
+            }
+            Tab("Settings", systemImage: "key", value: AppTab.settings) {
+                TokenSettingsView()
+            }
+        }
+    }
+}
+
+struct SearchView: View {
+    let transfers: DownloadCenter
+    let openSettings: () -> Void
     @State private var finder = SearchSession()
     @State private var selection: String?
 
@@ -22,7 +47,7 @@ struct ContentView: View {
         if let selection {
             Group {
                 if let result = finder.reports[selection] {
-                    ReportDetailView(result: result)
+                    ReportDetailView(result: result, transfers: transfers, openSettings: openSettings)
                 } else {
                     ProgressView("Checking \(selection)…")
                 }
@@ -97,7 +122,8 @@ struct SearchControls: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
-        Toggle("Hide models that won't run", isOn: $finder.onlyRunnable)
+        Toggle("Compatible only", isOn: $finder.compatibleOnly)
+            .accessibilityHint("Hides results rated Won't run; unchecked results stay visible")
     }
 }
 
