@@ -122,3 +122,20 @@ public struct CatalogEntry: Sendable, Equatable {
         return "\"\(escaped)\""
     }
 }
+
+public extension CatalogEntry {
+    /// The same entry pointing at another quant of the same GGUF repo, sized from it. `nil` for an MLX entry, a
+    /// split quant, or a quant in a subfolder (the downloaders only create the repo folder).
+    func replacingQuant(_ quant: GGUFQuantGroup) -> CatalogEntry? {
+        guard weightFormat == .gguf, !quant.isSplit, !quant.firstPath.isEmpty, !quant.firstPath.contains("/") else {
+            return nil
+        }
+        return CatalogEntry(
+            id: Self.identifier(repoID: repoID, quant: quant.label ?? "gguf"), repoID: repoID,
+            displayName: Self.displayName(repoID: repoID, format: .gguf, quant: quant.label, bits: nil),
+            modelCategory: modelCategory, weightFormat: .gguf,
+            approximateSizeMB: CompatibilityEvaluator.megabytes(quant.totalBytes), isUncensored: isUncensored,
+            ggufFilename: quant.firstPath, numLayers: numLayers, kvHeads: kvHeads, headDim: headDim,
+            maxContextLength: maxContextLength)
+    }
+}

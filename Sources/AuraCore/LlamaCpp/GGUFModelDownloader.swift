@@ -33,6 +33,8 @@ public final class GGUFModelDownloader: ObservableObject {
     /// Bumped on every `pause()`. The resume-data callback captures its generation and drops if a newer
     /// pause/resume has since happened — so a late callback from an old pause can't clobber current state.
     private var pauseGeneration = 0
+    /// Adds the Keychain Hugging Face token to requests for `huggingface.co` only.
+    private let auth: any DownloadAuthorizing = KeychainDownloadAuth()
 
     private struct DownloadContext {
         let url: URL
@@ -97,7 +99,8 @@ public final class GGUFModelDownloader: ObservableObject {
 
         do {
             let localURL = try await performDownload(
-                from: hfURL, to: destinationURL, modelName: model.displayName, onProgress: onProgress)
+                from: hfURL, to: destinationURL, modelName: model.displayName, repoID: model.repoID,
+                onProgress: onProgress)
             isDownloading = false
             onProgress("\(model.displayName) download complete")
             return localURL
@@ -139,7 +142,7 @@ public final class GGUFModelDownloader: ObservableObject {
             task = session.downloadTask(withResumeData: data)
             resumeData = nil
         } else {
-            task = session.downloadTask(with: context.url)   // fresh start (resume data not yet/ever available)
+            task = session.downloadTask(with: auth.request(for: context.url))   // fresh start (no resume data)
         }
         downloadTask = task
         context.onProgress("Resuming \(context.modelName)...")
@@ -169,6 +172,7 @@ public final class GGUFModelDownloader: ObservableObject {
         from url: URL,
         to destination: URL,
         modelName: String,
+        repoID: String,
         onProgress: @escaping @MainActor (String) -> Void
     ) async throws -> URL {
         context = DownloadContext(url: url, destination: destination, modelName: modelName, onProgress: onProgress)
@@ -176,6 +180,8 @@ public final class GGUFModelDownloader: ObservableObject {
             self.continuation = continuation
             let delegate = DownloadDelegate(
                 destination: destination,
+                repoID: repoID,
+                auth: auth,
                 onProgress: { [weak self] _, totalWritten, totalExpected in
                     Task { @MainActor [weak self] in
                         guard let self else { return }
@@ -200,7 +206,7 @@ public final class GGUFModelDownloader: ObservableObject {
             )
             let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
             self.delegateSession = session
-            let task = session.downloadTask(with: url)
+            let task = session.downloadTask(with: auth.request(for: url))
             self.downloadTask = task
             task.resume()
         }
@@ -220,12 +226,25 @@ public final class GGUFModelDownloader: ObservableObject {
     private func huggingFaceURL(repo: String, filename: String) -> URL? {
         URL(string: "https://huggingface.co/\(repo)/resolve/main/\(filename)")
     }
+
+    /// Throws for a non-2xx download: URLSession saves an error body like any file, and moving it into place
+    /// would leave a `.gguf` that is really an HTML or JSON error page.
+    nonisolated static func validateDownloadResponse(_ response: URLResponse?, request: URLRequest? = nil,
+                                                     repoID: String, path: String) throws {
+        guard let http = response as? HTTPURLResponse else { throw ModelDownloadError.http(status: 0) }
+        let sentToken = request?.value(forHTTPHeaderField: "Authorization") != nil
+        if let failure = ModelDownloadError(response: http, repoID: repoID, path: path, sentToken: sentToken) {
+            throw failure
+        }
+    }
 }
 
 // MARK: - DownloadDelegate
 
 private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     let destination: URL
+    let repoID: String
+    let redirects: AuthRedirectDelegate
     let onProgress: @Sendable (Int64, Int64, Int64) -> Void
     let onFinished: @Sendable (URL) -> Void
     let onError: @Sendable (Error) -> Void
@@ -233,12 +252,16 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
 
     init(
         destination: URL,
+        repoID: String,
+        auth: any DownloadAuthorizing,
         onProgress: @escaping @Sendable (Int64, Int64, Int64) -> Void,
         onFinished: @escaping @Sendable (URL) -> Void,
         onError: @escaping @Sendable (Error) -> Void,
         onCancelled: @escaping @Sendable (Data?) -> Void
     ) {
         self.destination = destination
+        self.repoID = repoID
+        self.redirects = AuthRedirectDelegate(auth: auth)
         self.onProgress = onProgress
         self.onFinished = onFinished
         self.onError = onError
@@ -261,14 +284,28 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
         didFinishDownloadingTo location: URL
     ) {
         do {
+            try GGUFModelDownloader.validateDownloadResponse(
+                downloadTask.response, request: downloadTask.originalRequest, repoID: repoID,
+                path: destination.lastPathComponent)
             if FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.removeItem(at: destination)
             }
             try FileManager.default.moveItem(at: location, to: destination)
             onFinished(destination)
         } catch {
+            try? FileManager.default.removeItem(at: location)
             onError(error)
         }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        completionHandler(redirects.redirected(request))
     }
 
     func urlSession(
