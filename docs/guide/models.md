@@ -370,11 +370,71 @@ per-quant fit table and the `models.json` entry; `--entry` prints only the entry
 
 ### The example app
 
-`Examples/ModelFinder` is a SwiftUI app for iOS 18 and macOS 15 built on the same checker: search with format,
-sort and device filters, a verdict badge per result (checked lazily as rows appear), and a detail view with the
-findings, the per-quant fit table, **Copy catalog entry** and **Open on Hugging Face**. Its
+`Examples/ModelFinder` is a SwiftUI app for iOS 18 and macOS 15 built on the same checker and on
+[`ModelDownloads`](#downloading-without-loading): search with format, sort and device filters (default: this
+device) and a **Compatible only** toggle, a verdict badge per result (checked lazily as rows appear), and a detail
+view with the findings, the per-quant fit table, **Copy catalog entry**, **Open on Hugging Face** and, for repos
+rated runnable, a **Download** section (quant picker, size and free space, progress, Cancel/Resume). A Downloads
+tab lists what is on disk, finished or paused, with Delete and **Try it** (load, one prompt, unload), and a
+Settings tab stores the Hugging Face token. Its
 [README](https://github.com/iOSDevC/AuraLocal/blob/main/Examples/ModelFinder/README.md) explains how to generate
-and open the project.
+and open the project and what the downloads can and cannot do.
+
+---
+
+## Downloading without loading
+
+`ModelDownloads` fetches a model to the exact path its backend loads from, without loading it, so a model
+downloaded ahead of time is one `ModelManager.shared.load(_:)` finds on disk:
+
+```swift
+// A sized Model for a search result: the checker's suggested entry, or another single-file quant of it.
+let report = await ModelCompatibilityChecker().check("Qwen/Qwen2.5-0.5B-Instruct-GGUF", on: .thisDevice())
+guard let entry = report.suggestedEntry, let model = entry.decodedModel() else { return }
+// let other = entry.replacingQuant(report.quantFits[0].option)?.decodedModel()
+
+let plan = try await ModelDownloads.plan(for: model)          // files and sizes, nothing written
+print(plan.totalBytes, plan.bytesOnDisk, ModelDownloads.availableDiskBytes() ?? -1)
+
+let location = try await ModelDownloads.download(model) { done, total in
+    print("\(done) / \(total)")                                 // @Sendable, off the main actor
+}
+// GGUF: location == model.resolvedFileURL; MLX: the snapshots/main folder, and model.isDownloaded is true.
+
+ModelManager.shared.evict(model)                                // unload before deleting
+try ModelDownloads.delete(model)                                // file + .partial, or the whole MLX repo folder
+```
+
+- **Where files land**: GGUF at `<Caches>/models/<org>/<repo>/<file>.gguf`; MLX at
+  `<Caches>/huggingface/hub/models--<org>--<repo>/snapshots/main/` with a `.complete` marker written after the
+  last file. The MLX load path (`MLXBackend`) downloads through the same code, so both agree by construction.
+- **What MLX fetches**: top-level `*.safetensors`, `*.json` and `*.jinja` files of `main` only (mlx-swift-lm's
+  patterns). Weights in a subfolder, or no `config.json`, throw `ModelDownloadError.incompleteRepo`.
+- **What GGUF fetches**: one single-file quant at the top level of the repo. Split (`-00001-of-0000N`) and
+  subfolder quants throw `ModelDownloadError.unsupported`.
+- **Resume**: each file is fetched in 32 MB `Range` chunks into `<file>.partial`, which survives a cancel, a
+  network cut and a relaunch; the next `download` continues from it. The partial records the ETag of its bytes
+  (an extended attribute); when a chunk comes back with another ETag — the file was re-uploaded under the same
+  name — or the partial is longer than the file, it restarts from zero instead of splicing two revisions. A
+  server that sends no ETag cannot be checked. The file is moved into place only when its size matches.
+  `ModelDownloads.bytesOnDisk(for:)` reports partial bytes; `DownloadedModels.partialFiles()` lists the `.partial`
+  files; `DownloadedModels.scanSnapshots()` lists MLX snapshots, complete or not.
+- **Free space**: `download` throws `ModelDownloadError.insufficientSpace` before writing when the remaining bytes
+  plus 20 % do not fit.
+- **Errors** (`ModelDownloadError`): `unauthorized` (`X-Error-Code: GatedRepo`, or 401/403 with a token sent:
+  invalid token, no access, license not accepted), `notFound` (404, or `RepoNotFound` / `EntryNotFound` /
+  `RevisionNotFound`), `notFoundOrPrivate` (an anonymous 401 with no error code: Hugging Face answers a missing,
+  renamed or private repo the same way), `insufficientSpace`, `http`, `incompleteRepo`, `sizeMismatch`,
+  `unsupported`.
+  An error response never becomes a model file.
+- **Token**: gated repos need a read token in the Keychain item that `ModelDownloads`, `GGUFModelDownloader`,
+  `ChunkedDownloader`, the MLX load path and `ModelCompatibilityChecker` read (the AuraUI Models tab does not; service
+  `dev.auralocal.remote`, account `download.huggingface`): `KeychainDownloadAuth.saveHuggingFaceToken(_:)`,
+  `deleteHuggingFaceToken()`, `hasHuggingFaceToken`. It is sent to `huggingface.co` / `hf.co` only, never to the
+  CDN a file redirects to. On iOS the item belongs to the app that saved it.
+- **Limits**: one download at a time per model (do not run it and `GGUFModelDownloader` on the same model at
+  once); no background `URLSession`, so a transfer stops when the app is suspended and resumes from the partial
+  file later; files live in Caches, which iOS may purge when storage is low.
 
 ---
 
@@ -486,8 +546,11 @@ Models are cached after download and reused across app launches:
 
 | Format | Cache path (`<Caches>` is the app's Caches directory) |
 |--------|-----------|
-| MLX | `<Caches>/huggingface/hub/models--<sanitized>/snapshots/main/` |
+| MLX | `<Caches>/huggingface/hub/models--<sanitized>/snapshots/main/` (loadable once `.complete` exists) |
 | GGUF | `<Caches>/models/<repoID>/<filename>.gguf` |
+
+An unfinished file sits next to its destination as `<file>.partial` until its size matches; see
+[Downloading without loading](#downloading-without-loading).
 
 ```swift
 // Check if a model is already downloaded
