@@ -6,6 +6,7 @@ import AuraAgents
 
 // MARK: - PipelineTab
 
+@available(iOS 26, macOS 26, *)
 struct PipelineTab: View {
     @EnvironmentObject var appState: AppState
     @State private var topic        = ""

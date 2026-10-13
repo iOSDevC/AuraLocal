@@ -25,7 +25,9 @@ final class AppState: ObservableObject {
 
     let store   = ConversationStore.shared
     let library = DocumentLibrary.shared
-    private(set) var crew: AgentCrew?
+    private var crewStorage: AnyObject?
+    @available(iOS 26, macOS 26, *)
+    var crew: AgentCrew? { crewStorage as? AgentCrew }
 
     // MARK: - Setup
 
@@ -74,7 +76,7 @@ final class AppState: ObservableObject {
             // 5. Build AgentCrew
             setupProgress = "Initializing agents…"
             if #available(iOS 26, macOS 26, *) {
-                crew = AgentCrew(store: store, library: library)
+                crewStorage = AgentCrew(store: store, library: library)
             }
 
             setupProgress = "Ready"
