@@ -368,17 +368,30 @@ per-quant fit table and the `models.json` entry; `--entry` prints only the entry
 `--device` defaults to `this-device`; `--limit` defaults to 15 (1–100). See also the
 [CLI reference]({{ '/guide/cli' | relative_url }}#model-compatibility-aura-models).
 
-### The example app
+### The example apps
 
-`Examples/ModelFinder` is a SwiftUI app for iOS 18 and macOS 15 built on the same checker and on
-[`ModelDownloads`](#downloading-without-loading): search with format, sort and device filters (default: this
-device) and a **Compatible only** toggle, a verdict badge per result (checked lazily as rows appear), and a detail
+Both example apps use AuraUI's Hugging Face browser (`HFModelSearchList`, `HFRepoDetailView`,
+`DownloadedModelsList`, `HuggingFaceTokenSection`; see the [UI API]({{ '/api/ui' | relative_url }}#hugging-face-browser)),
+built on the same checker and on [`ModelDownloads`](#downloading-without-loading): search with format and sort
+filters, a verdict badge per result (checked lazily as rows appear), a **Compatible only** toggle, and a detail
 view with the findings, the per-quant fit table, **Copy catalog entry**, **Open on Hugging Face** and, for repos
-rated runnable, a **Download** section (quant picker, size and free space, progress, Cancel/Resume). A Downloads
-tab lists what is on disk, finished or paused, with Delete and **Try it** (load, one prompt, unload), and a
-Settings tab stores the Hugging Face token. Its
-[README](https://github.com/iOSDevC/AuraLocal/blob/main/Examples/ModelFinder/README.md) explains how to generate
-and open the project and what the downloads can and cannot do.
+rated runnable, a **Download** section (quant picker, size and free space, progress, Cancel/Resume, **Try it** once
+finished). A gated repo shows **Add a token**, which opens the token form in place.
+
+- **AuraExample** (iOS 18.6+ and macOS): **Models → Search Hugging Face** and **Models → Downloads**, plus
+  **Find on Hugging Face…** at the top of the Text tab's model menu (on iPhone, Models sits under More). Search
+  judges repos against this device only and starts with **Compatible only** on. A finished download is listed
+  under **Downloaded** in the Text menu (and in the Vision picker for an MLX vision model) without a relaunch,
+  and again after one. In the Text menu's **Downloaded** section a model that can't load now is disabled with the
+  reason; the Vision picker leaves out downloaded models rated *Too Large*. Nothing loads until you send a
+  message.
+- **[ModelFinder](https://github.com/iOSDevC/AuraLocal/blob/main/Examples/ModelFinder/README.md)** (iOS 18 and
+  macOS 15): the same views in a split view with a device picker (this device, iPhone classes, Macs), a Downloads
+  tab and a Settings tab. Its README explains how to generate and open the project.
+
+On the Simulator the format filter starts on GGUF, MLX models are disabled in the Text menu's **Downloaded**
+section and in Try it (MLX can't run there; picked anywhere else, they fail to load with an error), and "this
+device" reports the Mac's memory, not an iPhone's.
 
 ---
 
@@ -436,6 +449,47 @@ try ModelDownloads.delete(model)                                // file + .parti
 - **Limits**: one download at a time per model (do not run it and `GGUFModelDownloader` on the same model at
   once); no background `URLSession`, so a transfer stops when the app is suspended and resumes from the partial
   file later; files live in Caches, which iOS may purge when storage is low.
+
+### Keeping downloads across launches
+
+A model built from a search result (`CatalogEntry.decodedModel()`) is not in the catalog, so the pickers
+(`Model.textModels`, `Model.visionModels`, `Model.ggufModels`) list it only after `ModelRegistry.shared.register(_:)`.
+`DownloadRecords` keeps the sized `Model` in `UserDefaults` (key `dev.auralocal.downloadRecords`) so it can be
+registered again at launch:
+
+```swift
+DownloadRecords.standard.remember(model)          // when the download starts, so a partial resumes sized
+_ = try await ModelDownloads.download(model) { _, _ in }
+DownloadRecords.standard.registerIfDownloaded(model)
+
+// At launch, before the first view reads the pickers:
+DownloadRecords.standard.registerDownloaded()
+
+// Delete: unload, remove the files, then forget the record and unregister.
+ModelManager.shared.evict(model)
+try ModelDownloads.delete(model)
+DownloadRecords.standard.remove(model)
+```
+
+- Records are keyed by file (`gguf:<repo>/<file>`, `mlx:<repo>`), not by id: recording the same file under
+  another id replaces the old record.
+- `registerDownloaded()` registers only what is fully on disk. It drops a record when neither the file nor a
+  `.partial` is left (Caches purged) and keeps it while a partial exists, so Resume stays sized.
+- A record for a file a registry entry already points at (same repo, format and GGUF filename) is not registered:
+  that entry loads the same file, and a second id would list it twice.
+- `ModelRegistry.unregister(id:)` removes only models added with `register(_:)`; bundled and remote catalog
+  entries stay. `DownloadRecords.remove(_:)` calls it.
+- Record only sized models. A `Model.fromURL(_:displayName:)` model has size 0, which the load-time memory guard
+  always rates as fitting.
+- AuraUI's `ModelDownloadCenter` does all of this for the browser views: it records downloads started from a
+  search result and recorded files it resumes, never a catalog or unsized model. The Model Finder's old
+  `downloadRecords` key is copied over once.
+
+Limits: weights live in Caches, which iOS may purge (the record is then dropped at the next launch); no background
+`URLSession`; MLX can't run on the Simulator; on the Simulator "this device" is the Mac's memory; the extra EOS
+tokens some MLX catalog entries get (`MLXBackend.configuration(for:)`) are keyed by catalog id, so an MLX repo
+added from search does not get them; a GGUF repo's `mmproj` projector is ignored, so GGUF repos always load as
+text.
 
 ---
 

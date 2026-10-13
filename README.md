@@ -439,11 +439,16 @@ development-signed (runs on this Mac); to distribute it, re-sign with a Develope
 identity and notarize (`xcrun notarytool submit … && xcrun stapler staple …`).
 Requires macOS 26 (AgentCrew).
 
+AuraExample also runs on iPhone (iOS 18.6+; the Agents tab needs iOS 26). It searches Hugging Face for models
+that run on the phone, downloads one and chats with it: **Find on Hugging Face…** in the Text tab's model menu,
+or **Models → Search Hugging Face**. See [The example apps](docs/guide/models.md#the-example-apps).
+
 ### Model Finder (`Examples/ModelFinder`)
 
 A small iOS 18 / macOS 15 app that searches Hugging Face and shows, per repo, whether AuraLocal's pinned
 runtimes can run it on a chosen device (this one, iPhone classes, Macs) and why not — with the exact
-`models.json` entry for the ones that run. See [its README](Examples/ModelFinder/README.md) and
+`models.json` entry for the ones that run, and downloads them. It hosts AuraUI's Hugging Face browser
+([AuraUI](docs/api/ui.md#hugging-face-browser)). See [its README](Examples/ModelFinder/README.md) and
 [Finding compatible models](docs/guide/models.md#finding-compatible-models).
 
 The same check from code:
@@ -1015,10 +1020,11 @@ For voice, add `AuraVoice` and place `VoiceChatView(llm:)` in a tab (it needs an
 
 | Tab | Module | Description |
 |-----|--------|-------------|
-| **Text** | `AuraUI` | Multi-conversation chat; MLX + GGUF model picker with backend badges |
+| **Text** | `AuraUI` | Multi-conversation chat; model picker with downloaded models first, then MLX and GGUF sections |
 | **Vision** | `AuraUI` | Image analysis with standard and streaming modes |
 | **OCR** | `AuraUI` | Document and receipt extraction |
 | **Models** (`ModelSection`) | `AuraUI` | A `List` section, not a tab: download status, backend badge, fit badge per model |
+| **Hugging Face browser** | `AuraUI` | Views, not a tab: search, per-device verdicts, download, Downloads list and Try it ([AuraUI](docs/api/ui.md#hugging-face-browser)) |
 | **Voice** | `AuraVoice` | Turn-based voice chat; TTS voice picked per sentence |
 | **Docs** | `AuraDocs` | Document library and RAG chat |
 
@@ -1145,10 +1151,12 @@ AuraCore
 
 AuraUI (optional) — composable views; you supply the TabView
 ├── TextChatTab   →  TextChatViewModel  →  ConversationStore
-│                    Model picker: MLX section + GGUF section
+│                    Model picker: Downloaded, then MLX and GGUF sections
 ├── VisionTab     →  VisionViewModel
 ├── OCRTab        →  OCRViewModel
-└── ModelSection  →  ModelRow · BackendBadge · FitBadge  (a component, not a full tab)
+├── ModelSection  →  ModelRow · BackendBadge · FitBadge  (a component, not a full tab)
+└── HuggingFace/  →  HFModelSearchList · HFRepoDetailView · DownloadedModelsList
+                     ModelDownloadCenter · HuggingFaceTokenSection  (docs/api/ui.md#hugging-face-browser)
 
 AuraVoice (optional)
 ├── VoiceSession          →  SFSpeechRecognizer (on-device STT)

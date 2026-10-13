@@ -676,6 +676,48 @@ var isDownloaded: Bool
 var cacheDirectory: URL
 ```
 
+### ModelRegistry
+
+The collections above read `ModelRegistry.shared.models`: the bundled catalog, any remote catalog, and models
+added at runtime.
+
+```swift
+public final class ModelRegistry: @unchecked Sendable
+static let shared: ModelRegistry
+var models: [Model]                                   // read under the registry's lock
+func model(id: String) -> Model?
+func model(repoID: String) -> Model?
+func register(_ model: Model)                         // adds, or replaces the model with the same id
+@discardableResult func unregister(id: String) -> Bool  // only ids register(_:) added; catalog ids stay
+func refreshFromRemote(url: URL) async throws
+func loadCachedRemote(maxAge: TimeInterval = 86_400)
+```
+
+### DownloadRecords
+
+The sized `Model` behind each download from a search result, stored in `UserDefaults` under
+`dev.auralocal.downloadRecords`, so the model can be registered again after a relaunch. Files on disk stay the
+source of truth. See [Keeping downloads across launches]({{ '/guide/models' | relative_url }}#keeping-downloads-across-launches).
+
+```swift
+public struct DownloadRecords: @unchecked Sendable
+static let standard: DownloadRecords
+init(defaults: UserDefaults = .standard)
+static func key(for model: Model) -> String            // "gguf:<repo>/<file>" or "mlx:<repo>"
+func remember(_ model: Model)                           // replaces any record for the same file
+func forget(_ model: Model)
+var models: [Model]
+func model(repoID: String, ggufFilename: String?) -> Model?   // nil filename = the MLX snapshot
+func contains(_ model: Model) -> Bool                   // by id
+@discardableResult func registerDownloaded() -> [Model] // at launch; drops records with nothing on disk
+@discardableResult func registerIfDownloaded(_ model: Model) -> Bool
+func remove(_ model: Model)                             // forget + ModelRegistry.shared.unregister(id:)
+```
+
+A record whose file a registry entry already points at is not registered, so one file never shows twice in the
+pickers. Each read-modify-write of the stored dictionary holds a lock, so calls from several threads don't drop
+records.
+
 ---
 
 ## BackgroundLifecycle (iOS)
