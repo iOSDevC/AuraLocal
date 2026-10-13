@@ -42,7 +42,18 @@ public final class ModelRegistry: @unchecked Sendable {
     // MARK: - State
 
     /// The current list of registered models.
-    public private(set) var models: [Model] = []
+    public var models: [Model] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    /// Read and written only while `lock` is held. `NSLock` is not recursive, so code holding it must use this,
+    /// never `models`.
+    private var storage: [Model] = []
+
+    /// Ids added by ``register(_:)`` that no catalog provides; only these can be unregistered.
+    private var runtimeIDs: Set<String> = []
 
     /// Fast lookup by model id.
     private var index: [String: Model] = [:]
@@ -71,7 +82,7 @@ public final class ModelRegistry: @unchecked Sendable {
                 return // future schema — ignore
             }
             lock.lock()
-            models = catalog.models
+            storage = catalog.models
             #if !canImport(MLXLLM)
             // No MLX backend linked — hide MLX entries rather than surface unrunnable ones.
             // Deliberately NOT filtered on the simulator: MLX links there but has no Metal
@@ -80,7 +91,7 @@ public final class ModelRegistry: @unchecked Sendable {
             // with a clear message instead — an honest error beats a quiet substitution.
             // NOTE: this filter runs only here; merge()/register() do not apply it, so a
             // remote catalog refresh can still reintroduce MLX entries.
-            models = models.filter { $0.format != .mlx }
+            storage = storage.filter { $0.format != .mlx }
             #endif
             rebuildIndex()
             lock.unlock()
@@ -146,7 +157,7 @@ public final class ModelRegistry: @unchecked Sendable {
     public func model(repoID: String) -> Model? {
         lock.lock()
         defer { lock.unlock() }
-        return models.first { $0.repoID == repoID }
+        return storage.first { $0.repoID == repoID }
     }
 
     // MARK: - Registration
@@ -154,13 +165,26 @@ public final class ModelRegistry: @unchecked Sendable {
     /// Programmatically register a model at runtime (e.g. user-provided).
     public func register(_ model: Model) {
         lock.lock()
-        if let idx = models.firstIndex(where: { $0.id == model.id }) {
-            models[idx] = model
+        if let idx = storage.firstIndex(where: { $0.id == model.id }) {
+            storage[idx] = model
         } else {
-            models.append(model)
+            storage.append(model)
+            runtimeIDs.insert(model.id)
         }
         index[model.id] = model
         lock.unlock()
+    }
+
+    /// Removes a model that ``register(_:)`` added. Catalog models (bundled or remote) are never removed, even
+    /// when `register` replaced them. Returns whether a model was removed.
+    @discardableResult
+    public func unregister(id: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard runtimeIDs.remove(id) != nil else { return false }
+        storage.removeAll { $0.id == id }
+        index[id] = nil
+        return true
     }
 
     // MARK: - Private
@@ -168,18 +192,20 @@ public final class ModelRegistry: @unchecked Sendable {
     private func merge(_ incoming: [Model]) {
         lock.lock()
         for model in incoming {
-            if let idx = models.firstIndex(where: { $0.id == model.id }) {
-                models[idx] = model
+            if let idx = storage.firstIndex(where: { $0.id == model.id }) {
+                storage[idx] = model
             } else {
-                models.append(model)
+                storage.append(model)
             }
             index[model.id] = model
+            // The catalog now owns this id.
+            runtimeIDs.remove(model.id)
         }
         lock.unlock()
     }
 
     private func rebuildIndex() {
-        index = Dictionary(models.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+        index = Dictionary(storage.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
     }
 
     private var remoteCacheURL: URL? {
