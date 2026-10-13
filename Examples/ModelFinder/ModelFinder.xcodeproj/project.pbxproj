@@ -7,30 +7,17 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0B88C060BE5A9D2585ED0FEA /* DownloadCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 844DCF3BF1D17950F11F6B6F /* DownloadCenter.swift */; };
-		30E51BFF778E3101B96BE7D4 /* TryItView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 571E2970D28282ED6826A199 /* TryItView.swift */; };
-		7C3D5B78365465CAA1F3F5F6 /* TokenSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CA67AFC7DF75D81CD9890E5 /* TokenSettingsView.swift */; };
-		A5231D9702F0BA9C04B034FF /* DownloadSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39ECD5055DF1DDA479134905 /* DownloadSection.swift */; };
-		BBD6A7C53C482A6AEE7F5B62 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FD3B8F56A8D173CC81FD96A /* DownloadsView.swift */; };
+		9DA3023531BEE03AE49BF2FF /* AuraUI in Frameworks */ = {isa = PBXBuildFile; productRef = 09CA190DF47EA724E1E0AB7B /* AuraUI */; };
 		D0D1F4F153CF15125E4BBD24 /* AuraCore in Frameworks */ = {isa = PBXBuildFile; productRef = E0F77101A312956D5BFB7FCB /* AuraCore */; };
-		D637F104589B353D471CD47A /* SearchSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE5DAA7E74D5DD33F4666D3C /* SearchSession.swift */; };
 		D709482B5E40DDA3D75E6F36 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBC9E201BF987B01115731AD /* ContentView.swift */; };
 		E97D1A7E8CF7737DF855AB2B /* ModelFinderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0878B91DE302AD21A2A7084B /* ModelFinderApp.swift */; };
-		F9334C81E4CE51F08BD82662 /* ReportDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD106607FF17BC56AB9E4078 /* ReportDetailView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		0878B91DE302AD21A2A7084B /* ModelFinderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelFinderApp.swift; sourceTree = "<group>"; };
-		39ECD5055DF1DDA479134905 /* DownloadSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadSection.swift; sourceTree = "<group>"; };
-		3CA67AFC7DF75D81CD9890E5 /* TokenSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenSettingsView.swift; sourceTree = "<group>"; };
-		571E2970D28282ED6826A199 /* TryItView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TryItView.swift; sourceTree = "<group>"; };
-		6FD3B8F56A8D173CC81FD96A /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
-		844DCF3BF1D17950F11F6B6F /* DownloadCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadCenter.swift; sourceTree = "<group>"; };
-		B42A865D4856312279A90336 /* mf-downloads */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "mf-downloads"; path = ../..; sourceTree = SOURCE_ROOT; };
+		38E0FE4B98E0F867C04D1A67 /* AuraLocal */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AuraLocal; path = ../..; sourceTree = SOURCE_ROOT; };
 		C3CC9CF08C4E1FFB1BC8CF5F /* ModelFinder.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ModelFinder.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		DBC9E201BF987B01115731AD /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
-		DD106607FF17BC56AB9E4078 /* ReportDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReportDetailView.swift; sourceTree = "<group>"; };
-		DE5DAA7E74D5DD33F4666D3C /* SearchSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchSession.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -39,6 +26,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D0D1F4F153CF15125E4BBD24 /* AuraCore in Frameworks */,
+				9DA3023531BEE03AE49BF2FF /* AuraUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -49,14 +37,7 @@
 			isa = PBXGroup;
 			children = (
 				DBC9E201BF987B01115731AD /* ContentView.swift */,
-				844DCF3BF1D17950F11F6B6F /* DownloadCenter.swift */,
-				39ECD5055DF1DDA479134905 /* DownloadSection.swift */,
-				6FD3B8F56A8D173CC81FD96A /* DownloadsView.swift */,
 				0878B91DE302AD21A2A7084B /* ModelFinderApp.swift */,
-				DD106607FF17BC56AB9E4078 /* ReportDetailView.swift */,
-				DE5DAA7E74D5DD33F4666D3C /* SearchSession.swift */,
-				3CA67AFC7DF75D81CD9890E5 /* TokenSettingsView.swift */,
-				571E2970D28282ED6826A199 /* TryItView.swift */,
 			);
 			path = ModelFinder;
 			sourceTree = "<group>";
@@ -64,7 +45,7 @@
 		AA6394E2D2A0653D37BB6F09 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				B42A865D4856312279A90336 /* mf-downloads */,
+				38E0FE4B98E0F867C04D1A67 /* AuraLocal */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -103,6 +84,7 @@
 			name = ModelFinder;
 			packageProductDependencies = (
 				E0F77101A312956D5BFB7FCB /* AuraCore */,
+				09CA190DF47EA724E1E0AB7B /* AuraUI */,
 			);
 			productName = ModelFinder;
 			productReference = C3CC9CF08C4E1FFB1BC8CF5F /* ModelFinder.app */;
@@ -150,14 +132,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D709482B5E40DDA3D75E6F36 /* ContentView.swift in Sources */,
-				0B88C060BE5A9D2585ED0FEA /* DownloadCenter.swift in Sources */,
-				A5231D9702F0BA9C04B034FF /* DownloadSection.swift in Sources */,
-				BBD6A7C53C482A6AEE7F5B62 /* DownloadsView.swift in Sources */,
 				E97D1A7E8CF7737DF855AB2B /* ModelFinderApp.swift in Sources */,
-				F9334C81E4CE51F08BD82662 /* ReportDetailView.swift in Sources */,
-				D637F104589B353D471CD47A /* SearchSession.swift in Sources */,
-				7C3D5B78365465CAA1F3F5F6 /* TokenSettingsView.swift in Sources */,
-				30E51BFF778E3101B96BE7D4 /* TryItView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -390,6 +365,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		09CA190DF47EA724E1E0AB7B /* AuraUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AuraUI;
+		};
 		E0F77101A312956D5BFB7FCB /* AuraCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AuraCore;

@@ -18,6 +18,8 @@ targets:
     dependencies:
       - package: AuraLocal
         product: AuraCore
+      - package: AuraLocal
+        product: AuraUI
     scheme: {}
     settings:
       base:
