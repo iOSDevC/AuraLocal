@@ -20,7 +20,8 @@ struct ContentView: View {
         TabView {
             // MARK: - AI Chat section
             Tab("Text", systemImage: "text.bubble") {
-                TextChatTab()
+                // Models sits under More on iPhone; this is the one-tap way to search.
+                TextChatTab(offersHuggingFaceSearch: true)
             }
 
             Tab("Voice", systemImage: "mic.fill") {
@@ -131,20 +132,20 @@ struct AgentCrewInlineView: View {
 struct ModelsTab: View {
     private let profile = HardwareProfile.current()
     @State private var testTarget: DomainTestTarget?
+    @State private var showsSearch = false
+    @State private var showsDownloads = false
 
     /// Only show models that can actually run on this device.
-    private var runnableText: [Model] {
-        Model.textModels.filter { HardwareAnalyzer.assess($0, profile: profile).fitLevel.isRunnable }
-    }
-    private var runnableVision: [Model] {
-        Model.visionModels.filter { HardwareAnalyzer.assess($0, profile: profile).fitLevel.isRunnable }
-    }
-    private var runnableOCR: [Model] {
-        Model.specializedModels.filter { HardwareAnalyzer.assess($0, profile: profile).fitLevel.isRunnable }
-    }
+    private var runnableText: [Model] { runnable(Model.textModels) }
+    private var runnableVision: [Model] { runnable(Model.visionModels) }
+    private var runnableOCR: [Model] { runnable(Model.specializedModels) }
 
+    /// Models added from Hugging Face are managed under Downloads, not in the catalog sections.
     private func runnable(_ models: [Model]) -> [Model] {
-        models.filter { HardwareAnalyzer.assess($0, profile: profile).fitLevel.isRunnable }
+        let added = Set(DownloadRecords.standard.models.map(\.id))
+        return models.filter {
+            !added.contains($0.id) && HardwareAnalyzer.assess($0, profile: profile).fitLevel.isRunnable
+        }
     }
 
     private func color(for domain: Model.Domain) -> Color {
@@ -157,8 +158,19 @@ struct ModelsTab: View {
     }
 
     var body: some View {
+        // Read so the sections are rebuilt when a download finishes or a model is deleted.
+        let _ = ModelDownloadCenter.shared.revision
         NavigationStack {
             List {
+                Section {
+                    Button("Search Hugging Face", systemImage: "magnifyingglass") { showsSearch = true }
+                    Button("Downloads", systemImage: "arrow.down.circle") { showsDownloads = true }
+                } header: {
+                    Text("Hugging Face")
+                } footer: {
+                    Text("Search shows what runs on this device. Downloaded models come first in the Text and Vision pickers.")
+                }
+
                 // Domain-specialized picks (code / security / finance / medicine).
                 ForEach(Model.Domain.allCases) { domain in
                     let models = runnable(Model.models(in: domain))
@@ -213,6 +225,8 @@ struct ModelsTab: View {
             .sheet(item: $testTarget) { target in
                 DomainTestView(model: target.model, domain: target.domain)
             }
+            .sheet(isPresented: $showsSearch) { HFSearchScreen() }
+            .sheet(isPresented: $showsDownloads) { DownloadsScreen() }
         }
     }
 }

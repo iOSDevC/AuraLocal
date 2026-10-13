@@ -6,6 +6,11 @@ struct AuraExampleApp: App {
     @StateObject private var appState = AppState()
     @Environment(\.scenePhase) private var scenePhase
 
+    init() {
+        // Before the first body, so the Text menu already lists models downloaded from Hugging Face.
+        DownloadRecords.standard.registerDownloaded()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

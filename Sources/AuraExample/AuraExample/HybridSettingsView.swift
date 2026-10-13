@@ -1,5 +1,6 @@
 import SwiftUI
 import AuraCore
+import AuraUI
 
 // MARK: - Settings
 
@@ -15,7 +16,6 @@ struct HybridSettingsView: View {
 
     @State private var anthropicKey = ""
     @State private var openAIKey = ""
-    @State private var hfDownloadKey = ""
     @State private var hasRetiredGitHubToken = false
 
     /// GitHub Models was retired on 2026-07-30; AuraLocal no longer reads this account.
@@ -59,15 +59,7 @@ struct HybridSettingsView: View {
                     Text("Keys are stored in the Keychain (this device only) — never in code, files, or logs.")
                 }
 
-                Section {
-                    keyRow(title: "Hugging Face token",
-                           account: KeychainDownloadAuth.huggingFaceAccount,
-                           field: $hfDownloadKey)
-                } header: {
-                    Text("Model download tokens")
-                } footer: {
-                    Text("A Hugging Face access token lets AuraLocal download gated or private GGUF repos. Stored in the Keychain.")
-                }
+                HuggingFaceTokenSection()
 
                 Section {
                     LabeledContent("Remote tokens", value: "\(ledger.sessionTokens)")
