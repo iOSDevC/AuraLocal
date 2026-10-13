@@ -37,7 +37,8 @@ public struct ModelSection: View {
 // MARK: - ModelRow
 
 /// A row with download, cancel and delete actions. Downloads go through ``ModelDownloads`` so files land where the
-/// backends load them from, with the Hugging Face token, a free-space check and resume from `.partial`.
+/// backends load them from, with the Hugging Face token, a free-space check and resume from `.partial`. The row
+/// claims its file in ``ModelDownloadCenter`` so the Hugging Face browser never writes the same `.partial`.
 struct ModelRow: View {
     let model: Model
     let compatibility: ModelCompatibility?
@@ -48,6 +49,8 @@ struct ModelRow: View {
     @State private var errorMessage: String?
     @State private var isDownloaded: Bool = false
     @State private var downloadTask: Task<Void, Never>?
+
+    private var center: ModelDownloadCenter { .shared }
 
     private enum DownloadState {
         case idle
@@ -110,6 +113,7 @@ struct ModelRow: View {
         .padding(.vertical, 2)
         .opacity(compatibility?.fitLevel == .tooLarge ? 0.5 : 1.0)
         .onAppear { isDownloaded = model.isDownloaded }
+        .onChange(of: center.revision) { isDownloaded = model.isDownloaded }
     }
 
     // MARK: - Action View
@@ -137,6 +141,10 @@ struct ModelRow: View {
                 Label("Too Large", systemImage: "xmark.circle")
                     .font(.caption2)
                     .foregroundStyle(.red)
+            } else if center.isWritingElsewhere(model) {
+                Label("Downloading elsewhere", systemImage: "arrow.down.circle.dotted")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             } else {
                 Button { startDownload() } label: {
                     Text("Download")
@@ -177,6 +185,11 @@ struct ModelRow: View {
     // MARK: - Download
 
     private func startDownload() {
+        let key = DownloadRecords.key(for: model)
+        guard center.claim(key) else {
+            errorMessage = "This file is downloading elsewhere in the app."
+            return
+        }
         downloadState = .downloading
         downloadPercent = 0
         errorMessage = nil
@@ -200,15 +213,16 @@ struct ModelRow: View {
                 }
             }
             downloadTask = nil
+            center.release(key)
+            center.noteDiskChange()
         }
     }
 
     // MARK: - Delete
 
     private func deleteModel() {
-        ModelManager.shared.evict(model)
         do {
-            try ModelDownloads.delete(model)
+            try center.delete(model)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

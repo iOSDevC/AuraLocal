@@ -17,6 +17,8 @@ public struct VisionTab: View {
     public init() {}
 
     public var body: some View {
+        // Read so the picker is rebuilt when a download finishes or a model is deleted.
+        let revision = ModelDownloadCenter.shared.revision
         NavigationStack {
             ScrollView {
                 // §3.4: ViewThatFits — wide layout shows image + controls side by side;
@@ -31,6 +33,7 @@ public struct VisionTab: View {
             .navigationTitle("Vision")
             .background(Color.groupedBackground)
         }
+        .onChange(of: revision) { resetSelectionIfRemoved() }
     }
 
     // MARK: - Wide Layout (iPad landscape, macOS, visionOS wide window)
@@ -84,7 +87,7 @@ public struct VisionTab: View {
     private var controlsSection: some View {
         GroupBox {
             VStack(spacing: 12) {
-                LabeledPicker("Model", selection: $selectedModel, items: Model.visionModels)
+                modelPicker
 
                 Picker("Mode", selection: $runMode) {
                     ForEach(AuraLocal.VisionRunMode.allCases) { mode in
@@ -103,6 +106,37 @@ public struct VisionTab: View {
             Label("Settings", systemImage: "slider.horizontal.3")
                 .font(.subheadline.weight(.semibold))
         }
+    }
+
+    /// Downloaded models that fit now first; downloaded ones too large for free memory are left out.
+    private var modelPicker: some View {
+        let all = Model.visionModels
+        let downloaded = all.filter { $0.isDownloaded && HardwareAnalyzer.assess($0).fitLevel != .tooLarge }
+        let available = all.filter { !$0.isDownloaded }
+        return HStack {
+            Text("Model")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Picker("Model", selection: $selectedModel) {
+                if !downloaded.isEmpty {
+                    Section("Downloaded") {
+                        ForEach(downloaded, id: \.self) { Text($0.displayName).tag($0) }
+                    }
+                }
+                Section("Available") {
+                    ForEach(available, id: \.self) { Text($0.displayName).tag($0) }
+                }
+            }
+        }
+    }
+
+    /// A deleted model leaves the registry; running with it would silently download it again.
+    private func resetSelectionIfRemoved() {
+        guard ModelRegistry.shared.model(id: selectedModel.id) == nil else { return }
+        selectedModel = Model.visionModels.first {
+            $0.isDownloaded && HardwareAnalyzer.assess($0).fitLevel != .tooLarge
+        } ?? .qwen35_0_8b
     }
 
     private var runButtonSection: some View {
