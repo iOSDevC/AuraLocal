@@ -6,23 +6,87 @@ import UniformTypeIdentifiers
 
 // MARK: - ImageGenTab
 //
-// Visual harness for text-to-image + lora.safetensors, driven by AuraImageGen/MFluxEngine.
-// macOS-only: mflux (FLUX on MLX) is a Python CLI we exec as a subprocess. On iOS the tab
-// shows why it can't run instead of pretending. Two assisted steps, because FLUX has two
-// real prerequisites the way LM Studio / Bionic surface them:
-//   1. Install mflux (button runs `uv tool install mflux`, output visible).
-//   2. Pick a model — default to an UNGATED pre-quantized repo so nothing needs an HF login.
+// Text-to-image engines, one segment each:
+//   • On device (iOS + macOS): Core ML Stable Diffusion, OnDeviceImageGenView.
+//   • Apple (iOS): Apple's Image Playground sheet behind a consent prompt, ApplePlaygroundView.
+//   • FLUX (macOS, the default there): mflux as a subprocess, ImageGenContent below. Two assisted steps,
+//     because FLUX has two real prerequisites the way LM Studio / Bionic surface them:
+//       1. Install mflux (button runs `uv tool install mflux`, output visible).
+//       2. Pick a model — default to an UNGATED pre-quantized repo so nothing needs an HF login.
+// All on-device and Apple results share one grid (ImageGenState), so switching segments keeps them.
 
 struct ImageGenTab: View {
+    @State private var state = ImageGenState()
+    @State private var pane = ImageGenPane.available[0]
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
-        #if os(macOS)
-        ImageGenContent()
-        #else
-        ContentUnavailableView(
-            "Image generation is macOS-only",
-            systemImage: "photo.badge.exclamationmark",
-            description: Text("FLUX needs Apple Silicon + mflux (~9 GB models). It can't run on iOS."))
+        // Its own stack, like MLToolsTab: under iPhone's More tab the title shows only inside one.
+        NavigationStack {
+            VStack(spacing: 0) {
+                Picker("Engine", selection: $pane) {
+                    ForEach(ImageGenPane.available) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+
+                switch pane {
+                case .onDevice:
+                    OnDeviceImageGenView(state: state)
+                #if os(iOS)
+                case .apple:
+                    ApplePlaygroundView(state: state)
+                #endif
+                #if os(macOS)
+                case .flux:
+                    ImageGenContent()
+                #endif
+                }
+            }
+            .navigationTitle("Image")
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { state.enterBackground() }
+        }
+    }
+}
+
+enum ImageGenPane: Hashable, Identifiable {
+    case onDevice
+    #if os(iOS)
+    case apple
+    #endif
+    #if os(macOS)
+    case flux
+    #endif
+
+    #if os(macOS)
+    static let available: [ImageGenPane] = [.flux, .onDevice]
+    #else
+    static let available: [ImageGenPane] = [.onDevice, .apple]
+    #endif
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .onDevice:
+            #if os(macOS)
+            return "Stable Diffusion (Core ML)"
+            #else
+            return "On device"
+            #endif
+        #if os(iOS)
+        case .apple:
+            return "Apple"
         #endif
+        #if os(macOS)
+        case .flux:
+            return "FLUX (mflux)"
+        #endif
+        }
     }
 }
 
