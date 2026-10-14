@@ -560,12 +560,13 @@ extension CompatibilityRules {
 extension CompatibilityRules {
 
     static let imageGenerationRule = CompatibilityRule(
-        id: "imagegen", summary: "Diffusion repos run through AuraImageGen on macOS only"
+        id: "imagegen", summary: "Diffusion repos run through AuraImageGen's mflux engine on macOS only"
     ) { input in
         guard input.weightFormat == .imageGeneration else { return [] }
         guard input.target.platform == .macOS else {
-            return [.blocker("Image generation is macOS-only",
-                "AuraImageGen drives mflux as a subprocess; the iOS build has no engine.")]
+            return [.blocker("Only the built-in image model runs here",
+                "AuraImageGen runs only its built-in Core ML preset on iOS (Stable Diffusion 2.1 base); "
+                + "other diffusion repos are not supported.")]
         }
         return [.caveat("mflux support not verified",
             "The checker sizes the pipeline (peak ≈ 2.2× the weights) but does not check that mflux knows it; "

@@ -60,7 +60,7 @@ public struct ImageGenRequest: Sendable {
     }
 }
 
-/// The generated image plus the PNG file mflux wrote.
+/// A generated image plus its PNG file on disk.
 public struct ImageGenResult: Sendable {
     public let image: PlatformImage
     public let fileURL: URL
@@ -69,7 +69,7 @@ public struct ImageGenResult: Sendable {
 // MARK: - Errors
 
 public enum ImageGenError: LocalizedError {
-    /// Image generation is macOS-only; this platform can't run the mflux engine.
+    /// mflux runs on macOS only; on iOS use ``CoreMLDiffusionEngine``.
     case unsupportedPlatform
     /// `mflux-generate` was not found. `installHint` is the exact command to install it.
     case engineNotFound(installHint: String)
@@ -83,7 +83,7 @@ public enum ImageGenError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unsupportedPlatform:
-            return "Image generation runs on macOS only (mflux needs Apple Silicon + Python)."
+            return "mflux runs on macOS only (Apple Silicon + Python)."
         case .engineNotFound(let hint):
             return "mflux is not installed. Install it with: \(hint)"
         case .loraNotFound(let url):
@@ -107,8 +107,9 @@ public enum ImageGenError: LocalizedError {
 /// apps — not App-Store-sandboxed apps. An in-process, sandbox-safe engine (mzbac/flux.swift) is a
 /// separate, dependency-gated path and is intentionally not wired here.
 ///
-/// FLUX is far too large for iPhone (quantized schnell weights alone are ~9 GB), so there is no iOS
-/// path — `isAvailable` is `false` off macOS and `generate` throws `.unsupportedPlatform`.
+/// FLUX is far too large for iPhone (quantized schnell weights are 9.2 GB measured), so off macOS `isAvailable` is
+/// `false` and `generate` throws `.unsupportedPlatform`. On iPhone, use ``CoreMLDiffusionEngine`` (Stable
+/// Diffusion on Core ML) instead.
 public struct MFluxEngine: Sendable {
 
     /// An explicit path to `mflux-generate`, if the caller knows it. Otherwise discovery is used.

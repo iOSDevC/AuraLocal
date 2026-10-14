@@ -40,6 +40,11 @@ let package = Package(
         // conflicting; `from:` (not a branch) is what lets SwiftPM backtrack off the 602 floor.
         .package(url: "https://github.com/ml-explore/mlx-swift-lm",      from: "3.31.3"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
+
+        // Core ML Stable Diffusion for AuraImageGen. `exact:` because upstream main pins
+        // swift-transformers 0.1.8, which conflicts with the 1.3.0 floor above; 1.1.1 depends only on
+        // swift-argument-parser (for its CLI).
+        .package(url: "https://github.com/apple/ml-stable-diffusion", exact: "1.1.1"),
     ],
     targets: [
         // MARK: - Core
@@ -113,13 +118,17 @@ let package = Package(
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
-        // MARK: - Image Generation (macOS-only)
-        // Drives mflux (FLUX on MLX) as a subprocess for text-to-image + lora.safetensors.
-        // The target compiles on every platform (iOS gets non-functional stubs that throw), so
-        // depending on it never breaks an iOS/simulator build; it only *works* on macOS.
+        // MARK: - Image Generation
+        // On device (iOS + macOS): Core ML Stable Diffusion. macOS only: FLUX + LoRA through the
+        // mflux subprocess. The target compiles everywhere; visionOS gets no StableDiffusion
+        // (1.1.1 declares no visionOS), so its engines throw `.unsupportedPlatform` there.
         .target(
             name: "AuraImageGen",
-            dependencies: ["AuraCore"],
+            dependencies: [
+                "AuraCore",
+                .product(name: "StableDiffusion", package: "ml-stable-diffusion",
+                         condition: .when(platforms: [.iOS, .macOS, .macCatalyst])),
+            ],
             path: "Sources/AuraImageGen",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
