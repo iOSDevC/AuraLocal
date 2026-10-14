@@ -259,8 +259,8 @@ struct ResultsSection: View {
     }
 }
 
-/// One image with what produced it, and Share. There is no direct save to Photos: the app has no photo-library
-/// usage description.
+/// One image with what produced it, and Share. Saving goes through the share sheet's "Save Image", which needs
+/// the NSPhotoLibraryAddUsageDescription key set in the project.
 struct GeneratedImageDetail: View {
     let item: GeneratedImage
     @Environment(\.dismiss) private var dismiss
