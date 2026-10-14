@@ -81,17 +81,33 @@ struct HubFileTransfer: Sendable {
         guard let url = Self.treeURL(repoID: repoID, revision: revision) else {
             throw ModelDownloadError.unsupported("Not a Hugging Face repository id: \(repoID)")
         }
+        return try await treeEntries(at: url, repoID: repoID, path: "")
+            .filter { $0.type == "file" && !$0.path.contains("/") }
+            .map { RemoteFile(path: $0.path, size: $0.largeFile?.size ?? $0.size) }
+    }
+
+    /// Every file under `folder` of `repoID` at `revision`, recursively, with repo-relative paths. The paths come
+    /// from the server and are untrusted; callers validate them before writing anything.
+    func listFiles(repoID: String, revision: String, under folder: String) async throws -> [RemoteFile] {
+        guard let url = Self.treeURL(repoID: repoID, revision: revision, path: folder, recursive: true) else {
+            throw ModelDownloadError.unsupported("Not a Hugging Face repository path: \(repoID)/\(folder)")
+        }
+        return try await treeEntries(at: url, repoID: repoID, path: folder)
+            .filter { $0.type == "file" }
+            .map { RemoteFile(path: $0.path, size: $0.largeFile?.size ?? $0.size) }
+    }
+
+    private func treeEntries(at url: URL, repoID: String, path: String) async throws -> [TreeEntry] {
         let request = auth.request(for: url)
         let (data, response) = try await load(request, onBytes: nil)
         guard let http = response as? HTTPURLResponse else { throw ModelDownloadError.http(status: 0) }
-        if let failure = ModelDownloadError(response: http, request: request, repoID: repoID, path: "") {
+        if let failure = ModelDownloadError(response: http, request: request, repoID: repoID, path: path) {
             throw failure
         }
         guard http.statusCode == 200, let entries = try? JSONDecoder().decode([TreeEntry].self, from: data) else {
             throw ModelDownloadError.unsupported("Hugging Face returned an unreadable file list for \(repoID).")
         }
-        return entries.filter { $0.type == "file" && !$0.path.contains("/") }
-            .map { RemoteFile(path: $0.path, size: $0.largeFile?.size ?? $0.size) }
+        return entries
     }
 
     /// Size of a remote file from a HEAD request: `x-linked-size` (LFS) first, then `Content-Length`.
@@ -309,6 +325,18 @@ struct HubFileTransfer: Sendable {
         components.scheme = "https"
         components.host = "huggingface.co"
         components.path = "/api/models/\(repoID)/tree/\(revision)"
+        return components.url
+    }
+
+    /// The tree of `path` inside the repo; `recursive` adds `?recursive=true`. `nil` for an empty, absolute or
+    /// dot-segment path.
+    static func treeURL(repoID: String, revision: String, path: String, recursive: Bool) -> URL? {
+        let segments = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !path.isEmpty, segments.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+              let base = treeURL(repoID: repoID, revision: revision),
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
+        components.path += "/" + path
+        if recursive { components.queryItems = [URLQueryItem(name: "recursive", value: "true")] }
         return components.url
     }
 

@@ -42,6 +42,8 @@ public struct DownloadPlan: Sendable, Equatable {
 ///
 /// Transfers resume from `<file>.partial` after a cancel, a network cut or a relaunch. Only single-file GGUF
 /// quants at the top level of a repo are supported. The Hugging Face token comes from ``KeychainDownloadAuth``.
+/// ``downloadFolder(repoID:revision:folder:include:auth:progress:)`` fetches one folder of a repo instead, such as
+/// a Core ML model, and sends no token by default.
 public enum ModelDownloads {
 
     /// Mirrors mlx-swift-lm's `modelDownloadPatterns` (`ModelFactory.swift`, package-internal there).
@@ -164,8 +166,8 @@ public enum ModelDownloads {
         return planned
     }
 
-    private static func sized(_ file: RemoteFile, repoID: String, revision: String,
-                              transfer: HubFileTransfer) async throws -> PlannedFile {
+    static func sized(_ file: RemoteFile, repoID: String, revision: String,
+                      transfer: HubFileTransfer) async throws -> PlannedFile {
         if let size = file.size, size > 0 { return PlannedFile(path: file.path, sizeBytes: size) }
         guard let url = fileURL(repoID: repoID, revision: revision, path: file.path) else {
             throw ModelDownloadError.unsupported("Not a Hugging Face repository id: \(repoID)")
@@ -298,7 +300,7 @@ public enum ModelDownloads {
         }
     }
 
-    private static func removeIfPresent(_ url: URL, fileManager: FileManager) throws {
+    static func removeIfPresent(_ url: URL, fileManager: FileManager) throws {
         guard fileManager.fileExists(atPath: url.path) else { return }
         try fileManager.removeItem(at: url)
     }
