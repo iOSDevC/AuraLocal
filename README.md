@@ -79,6 +79,7 @@ If your package imports `AuraCore`, add the C++ interop setting:
 | [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) | MLX GPU inference for `.mlx` models |
 | [LocalLLMClient](https://github.com/tattn/LocalLLMClient) | Swift wrapper for llama.cpp — GGUF inference + Metal kernels |
 | [swift-transformers](https://github.com/huggingface/swift-transformers) | `Tokenizers` — tokenization for MLX models |
+| [ml-stable-diffusion](https://github.com/apple/ml-stable-diffusion) | `StableDiffusion` — Core ML text-to-image for `AuraImageGen` (pinned `exact: "1.1.1"`: upstream `main` requires swift-transformers 0.1.8; not linked on visionOS) |
 
 ### Modules
 
@@ -90,7 +91,7 @@ If your package imports `AuraCore`, add the C++ interop setting:
 | `AuraDocs` | RAG document library — PDF, DOCX, text, images · TF-IDF or multilingual-e5-small embeddings |
 | `AuraAppleIntelligence` | Apple FoundationModels agents, tools & structured output (iOS 26 / macOS 26) |
 | `AuraAgents` | Reusable multi-agent orchestration (`AgentCrew`) with hybrid escalation of its Architect step |
-| `AuraImageGen` | FLUX text-to-image + `lora.safetensors` via mflux (**macOS only**) |
+| `AuraImageGen` | Text-to-image: Core ML Stable Diffusion on device (iOS + macOS), FLUX + LoRA via mflux (macOS) |
 
 ---
 
@@ -291,10 +292,32 @@ See the [Hybrid guide](docs/guide/hybrid.md).
 
 ---
 
-## Image Generation (macOS)
+## Image Generation
 
-`AuraImageGen` generates images with **FLUX** and folds in `lora.safetensors` adapters. It drives
-[mflux](https://github.com/filipstrand/mflux) (FLUX on Apple MLX) as a subprocess — so it is **macOS
+**On device (iPhone and Mac).** `CoreMLDiffusionEngine` runs Apple's Core ML Stable Diffusion 2.1 base
+(6-bit, 512×512) in process. The model is a one-time ~1.07 GB download from Hugging Face with no account;
+prompts and images never leave the device. Speed on A19 is not measured yet (Apple measured 7.9 s for 20 steps
+on an iPhone 14 Pro Max), and the first run on a device spends minutes preparing the model for the Neural Engine.
+In the Simulator `generate` throws `.simulatorUnsupported`; test on a device.
+
+```swift
+import AuraImageGen
+
+let model = CoreMLDiffusionModel.stableDiffusion21Base
+if !model.isDownloaded { try await model.download { _, _ in } }   // ~1.07 GB, resumable
+
+let engine = CoreMLDiffusionEngine()                    // Neural Engine, automatic memory mode
+let output = try await engine.generate(DiffusionRequest(prompt: "a lighthouse at dusk", steps: 20))
+output.images.first?.fileURL                            // PNG on disk
+output.seed                                             // reuse it to reproduce the image
+```
+
+The preset has no safety checker and carries the CreativeML Open RAIL++-M license's use restrictions. Apple's
+Image Playground sheet is the other option on iPhone; from iOS 27 Apple runs it on its servers, so
+`ImagePlaygroundPolicy` lists the styles that exclude ChatGPT and the Example asks before every use.
+
+**FLUX + LoRA (macOS).** `MFluxEngine` generates images with **FLUX** and folds in `lora.safetensors` adapters.
+It drives [mflux](https://github.com/filipstrand/mflux) (FLUX on Apple MLX) as a subprocess — so it is **macOS
 only** (a Swift package can't embed the Python runtime FLUX needs) and needs mflux installed:
 
 ```bash
@@ -349,8 +372,8 @@ measured — so a 6.8 GB FLUX reads *too large* with 13 GB free, *good* with ~20
 **Measured** on an M1 Pro (32 GB), schnell 4-bit, 1024×1024, 4 steps: **peak memory footprint ≈ 20 GB**
 (the *runtime* peak — not the ~9 GB on-disk size), **~25 s/step ≈ 100 s** of diffusion (≈2–3 min/image
 with model load). It fits a 32 GB Mac but runs best **exclusively** (it presses the ~21.5 GB Metal wired
-limit) — don't co-load an LLM. FLUX does **not** run on iPhone (far too large) or the iOS Simulator
-(no Metal GPU); the mflux subprocess is also blocked by the macOS **App Sandbox**, so it serves the
+limit) — don't co-load an LLM. FLUX does **not** run on iPhone (far too large; use `CoreMLDiffusionEngine`);
+the mflux subprocess is also blocked by the macOS **App Sandbox**, so it serves the
 `aura` CLI and non-sandboxed apps (like the Example), not App-Store-sandboxed apps.
 
 See the [Image generation guide](docs/guide/imagegen.md).
@@ -442,6 +465,8 @@ Requires macOS 26 (AgentCrew).
 AuraExample also runs on iPhone (iOS 18.6+; the Agents tab needs iOS 26). It searches Hugging Face for models
 that run on the phone, downloads one and chats with it: **Find on Hugging Face…** in the Text tab's model menu,
 or **Models → Search Hugging Face**. See [The example apps](docs/guide/models.md#the-example-apps).
+**More → Image** generates images on the phone with Core ML Stable Diffusion after a one-time ~1.07 GB download,
+and offers Apple's Image Playground behind a consent prompt.
 
 ### Model Finder (`Examples/ModelFinder`)
 

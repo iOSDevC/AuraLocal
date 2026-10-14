@@ -162,7 +162,7 @@ import AuraDocs   // RAG document library
 
 import AuraAgents             // AgentCrew multi-agent pipeline (iOS 26 / macOS 26)
 import AuraAppleIntelligence  // FoundationModels agents; no AuraCore dependency (iOS 26 / macOS 26)
-import AuraImageGen           // FLUX text-to-image via mflux (works on macOS only)
+import AuraImageGen           // text-to-image: Core ML Stable Diffusion on device; FLUX via mflux on macOS
 ```
 
 The `aura` command-line tool is a separate executable product. See [CLI]({{ '/guide/cli' | relative_url }}).
