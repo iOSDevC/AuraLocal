@@ -280,7 +280,8 @@ repos. The 256-token allocation step of `KVCacheSimple` is ignored.
 sliding or hybrid model earns a longer window than its layer count suggests.
 
 **Decode range for a mixture of experts.** `ModelCompatibility.estimatedDecodeTokensPerSecondRange` (and
-`FitEstimate.tokensPerSecondRange`) is the bandwidth bound on `activeSizeMB` at its top and half of it at its bottom
+`FitEstimate.tokensPerSecondRange`) is the decode estimate ([Benchmarks › Speed estimate]({{ '/guide/benchmarks' | relative_url }}#speed-estimate))
+on `activeSizeMB` at its top and half of it at its bottom
 (`uncalibratedMoEFloor` in `HardwareAnalyzer.swift`): MLX MoE decode also pays for routing and expert gathers, and no MoE has been
 measured on this hardware yet. `estimatedDecodeTokensPerSecond` and `speedLevel` use the low end; `verdict` says
 "uncalibrated MoE". Dense models keep a single figure and a `nil` range.
@@ -385,7 +386,7 @@ Verified on 2026-09-29 with `aura models check <repo> --device mac-32gb` (M1 Pro
 | `mlx-community/MiniCPM5-1B-4bit` | Runs | `model_type` `llama`; 0.57 GB — fits the iPhone 4 GB class |
 | `mlx-community/MiniCPM4.1-8B-4bit` | Runs | `minicpm`; its `longrope` carries the fields RoPEUtils needs |
 | `mlx-community/MiniCPM3-4B-4bit` | Won't run | `minicpm3` is not registered ("v3 uses a different architecture", MLXLLM README) |
-| `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | Runs, with caveats | `qwen3_5_moe`, Marginal · 18.8 of 20.0 GB; no license declared (2026-10-14: 18.7 GB with the per-layer KV; decode ~41–82 tok/s, uncalibrated MoE range) |
+| `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | Runs, with caveats | `qwen3_5_moe`, Marginal · 18.8 of 20.0 GB; no license declared (2026-10-14: 18.7 GB with the per-layer KV; decode ~29–58 tok/s, uncalibrated MoE range) |
 | `Qwen/Qwen2.5-7B-Instruct-GGUF` | Runs, with caveats | Q4_K_M and 6 other quants are split; Q2_K and Q3_K_M are single files |
 | `Qwen/Qwen3.8-Flash-Next` | Won't run | unconverted safetensors (335 GB); `qwen4_exp` is not registered |
 | `mlx-community/gemma-3-4b-it-qat-4bit` | Runs, with caveats | vision; its index names two shards the repo no longer ships, so the checker reads `model.safetensors` itself |
@@ -396,10 +397,10 @@ Re-checked on 2026-10-14 with the per-layer KV and the MoE estimate (`--device m
 
 | Repository | KV layers | KV at 8192 tokens | Decode |
 |------------|-----------|-------------------|--------|
-| `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | 10 of 40 full, 30 Gated DeltaNet (31.4 MB state) | 191 MB (640 MB if every layer kept it) | ~41–82 tok/s, uncalibrated MoE range: a token reads ≈1.82 of 18.17 GB |
-| `mlx-community/Qwen3.5-2B-4bit` | 6 of 24 full, 18 Gated DeltaNet (9.6 MB state) | 106 MB (384 MB) | ~94 tok/s |
+| `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | 10 of 40 full, 30 Gated DeltaNet (31.4 MB state) | 191 MB (640 MB if every layer kept it) | ~29–58 tok/s, uncalibrated MoE range: a token reads ≈1.82 of 18.17 GB |
+| `mlx-community/Qwen3.5-2B-4bit` | 6 of 24 full, 18 Gated DeltaNet (9.6 MB state) | 106 MB (384 MB) | ~63 tok/s |
 | `mlx-community/gemma-3-12b-it-qat-4bit` | 8 of 48 full, 40 sliding (1024 tokens) | 832 MB (3072 MB) | ~20 tok/s |
-| `mlx-community/gemma-3-4b-it-4bit` | 5 of 34 full, 29 sliding (1024 tokens); heads from the runtime defaults | 276 MB (1088 MB) | ~47 tok/s |
+| `mlx-community/gemma-3-4b-it-4bit` | 5 of 34 full, 29 sliding (1024 tokens); heads from the runtime defaults | 276 MB (1088 MB) | ~40 tok/s |
 
 ### Device presets
 

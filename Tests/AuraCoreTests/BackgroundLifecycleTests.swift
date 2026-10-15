@@ -8,6 +8,7 @@ final class SlowFakeBackend: InferenceBackend {
     private(set) var generations = 0
     private(set) var producedTokens = 0
     private(set) var isGenerating = false
+    private(set) var lastGenerationStats: GenerationStats?
 
     func load(onProgress: @escaping @MainActor (String) -> Void) async throws {
         isLoaded = true
@@ -25,6 +26,9 @@ final class SlowFakeBackend: InferenceBackend {
             onToken(text)
             try? await Task.sleep(for: .milliseconds(2))
         }
+        lastGenerationStats = GenerationStats(backend: .llamaCpp, source: .measured, promptTokens: 1,
+                                              generatedTokens: producedTokens, promptTime: 0, timeToFirstToken: 0,
+                                              decodeTime: 0)
         return text
     }
 
@@ -95,6 +99,26 @@ final class BackgroundLifecycleTests: XCTestCase {
         XCTAssertLessThan(backend.producedTokens, 100_000)
         XCTAssertTrue(lifecycle.isPaused)
         XCTAssertEqual(lifecycle.runningGenerations, 0)
+    }
+
+    func testInterruptedGenerationLeavesNoStats() async throws {
+        let lifecycle = makeLifecycle()
+        let backend = SlowFakeBackend()
+        let engine = AuraEngine(model: model, backend: backend, lifecycle: lifecycle)
+        try await engine.load { _ in }
+        _ = try await engine.generate(prompt: "x", maxTokens: 2) { _ in }
+        XCTAssertNotNil(engine.lastGenerationStats)
+
+        let pending = Task { @MainActor in
+            try await engine.generate(prompt: "x", maxTokens: 100_000) { _ in }
+        }
+        try await waitUntil { backend.producedTokens >= 5 }
+        notifications.post(name: background, object: nil)
+
+        let result = await pending.result
+        XCTAssertThrowsError(try result.get()) { XCTAssertTrue($0 is GenerationInterrupted, "\($0)") }
+        XCTAssertNotNil(backend.lastGenerationStats, "the backend returned normally after the cancel")
+        XCTAssertNil(engine.lastGenerationStats, "an interrupted call must not report the cut-off decode as finished")
     }
 
     func testGenerationIsRefusedInTheBackgroundAndAllowedAfterReturning() async throws {

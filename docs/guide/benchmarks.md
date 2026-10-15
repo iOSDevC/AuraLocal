@@ -57,6 +57,10 @@ Known misses on our own Mac: Qwen3-0.6B is predicted at 119 tok/s (measured 218)
 those chips yet, so the estimate is `nil` there. Those rows, measured with a newer build (c1d0e7a), show a smaller
 per-token cost: the formula underestimates M5 Max and Ultra by up to 44 % (median 31 %).
 
+The gate sizes every point without `experts`, so it covers the dense path only. A mixture of experts with an
+`experts` entry is charged only the bytes a token reads, and its estimate is an uncalibrated range (see
+[Models › KV cache per layer type]({{ '/guide/models' | relative_url }}#kv-cache-per-layer-type-and-mixtures-of-experts)).
+
 ---
 
 ## Text Generation — Tokens/Second
