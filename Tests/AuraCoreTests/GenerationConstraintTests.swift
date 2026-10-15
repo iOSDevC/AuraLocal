@@ -39,11 +39,6 @@ final class GenerationConstraintTests: XCTestCase {
         XCTAssertEqual(LlamaCppBackend.constrainedContextWindow(forPrompt: "hi", maxTokens: .max, cap: 8192), 8192)
     }
 
-    func testDedicatedClientSeesTheSamePromptAsTheMainSession() {
-        XCTAssertEqual(LlamaCppBackend.flattenedPrompt("hi", systemPrompt: nil), "hi")
-        XCTAssertEqual(LlamaCppBackend.flattenedPrompt("hi", systemPrompt: "be brief"), "System: be brief\n\nUser: hi")
-    }
-
     // MARK: - Mapping onto LocalLLMClient
 
     func testJSONMapsToTheBundledGrammar() {

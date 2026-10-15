@@ -1,7 +1,6 @@
 import Foundation
 import LocalLLMClient
 import LocalLLMClientLlama
-import Synchronization
 
 // MARK: - LlamaCppBackend
 
@@ -16,25 +15,24 @@ final class LlamaCppBackend: InferenceBackend {
 
     // MARK: - State
 
-    private var session: LLMSession?
-    /// The session's client. LocalLLMClient also holds it in its own decode tasks, so `unload()` hands it to
-    /// ``releasingClient`` and drops it only once those tasks have let go.
-    private var sessionClient: LlamaClient?
-    /// A client `unload()` dropped while a LocalLLMClient task may still hold it; see ``awaitRelease(timeout:)``.
-    private var releasingClient: LlamaClient?
-    /// The GGUF the session loaded; dedicated constrained clients map the same file.
+    private var engine: (any GGUFTurnEngine)?
+    /// An engine `unload()` dropped while a decode may still hold its model; see ``awaitRelease(timeout:)``.
+    private var releasingEngine: (any GGUFTurnEngine)?
+    /// The GGUF the engine loaded; dedicated constrained clients map the same file.
     private var loadedFileURL: URL?
-    /// Orders calls into the session and dedicated clients. It cannot wait for decodes LocalLLMClient keeps
-    /// running in its own tasks after a call returns (cancelled prefill, tools cut by maxTokens).
+    /// Orders turns and dedicated constrained clients. A turn cut short can leave its decode finishing in the
+    /// background; the engine waits for it before the next turn touches the context.
     private let decodeLock = DecodeGate()
     private let model: Model
     private let temperature: Float
     private let tools: [any LLMTool]
     private(set) var lastGenerationStats: GenerationStats?
 
-    var isLoaded: Bool { session != nil }
+    var isLoaded: Bool { engine != nil }
     /// Tool names registered for function-calling — a testable view of what was threaded in (empty = none).
     var registeredToolNames: [String] { tools.map(\.name) }
+    /// The loaded engine, for tests.
+    var turnEngine: (any GGUFTurnEngine)? { engine }
 
     // MARK: - Init
 
@@ -47,7 +45,7 @@ final class LlamaCppBackend: InferenceBackend {
     // MARK: - InferenceBackend
 
     func load(onProgress: @escaping @MainActor (String) -> Void) async throws {
-        guard session == nil else { return }
+        guard engine == nil else { return }
 
         guard let filename = model.ggufFilename else {
             throw AuraError.invalidResponse("Model \(model.displayName) has no GGUF filename")
@@ -72,15 +70,9 @@ final class LlamaCppBackend: InferenceBackend {
             topP: 0.95
         )
 
-        let built = ClientSlot()
-        let localModel = RetainingLlamaModel(fileURL: ggufURL, configuration: parameter, built: built)
-
-        // Passing `tools` enables automatic function-calling: `session.streamResponse` routes through the
-        // tool-calling path, so the existing generate loop transparently invokes tools and feeds results back.
-        let newSession = LLMSession(model: localModel, tools: tools)
-        try await newSession.prewarm()
-        session = newSession
-        sessionClient = built.take()
+        // With `tools` the engine runs LocalLLMClient's tool-calling loop, so the generate calls below invoke tools
+        // and feed their results back transparently.
+        engine = try await GGUFTurnEngines.load(url: ggufURL, parameter: parameter, tools: tools)
         loadedFileURL = ggufURL
 
         onProgress("\(model.displayName) ready")
@@ -92,35 +84,8 @@ final class LlamaCppBackend: InferenceBackend {
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        guard session != nil else { throw AuraError.modelNotLoaded }
-        let fullPrompt = Self.flattenedPrompt(prompt, systemPrompt: systemPrompt)
-
-        return try await decodeLock.run {
-            // A stream started from a cancelled task returns at once but leaves its prefill running on the context.
-            try Task.checkCancellation()
-            guard let session else { throw AuraError.modelNotLoaded }
-
-            // Stateless per call: callers (e.g. AuraLocal's `AIProvider` contract) pass the full conversation
-            // as `prompt`, so clear any accumulated session history first — otherwise the model re-ingests
-            // prior turns on top of the transcript (O(N²) growth → context overflow → truncated/empty replies).
-            session.messages = []
-            lastGenerationStats = nil
-
-            var fullText = ""
-            var tokenCount = 0
-            var meter = StreamMeter()
-            try await session.streamReply(to: fullPrompt) { partial in
-                meter.recordPiece()
-                fullText += partial
-                tokenCount += 1
-                onToken(fullText)
-                return tokenCount < maxTokens   // honor the caller's token budget
-            }
-
-            lastGenerationStats = meter.stats(backend: .llamaCpp, source: .llamaStream(toolsRegistered: !tools.isEmpty),
-                                              prompt: fullPrompt, output: fullText)
-            return fullText
-        }
+        try await turn(LlamaChatMessage.list(prompt: prompt, systemPrompt: systemPrompt), maxTokens: maxTokens,
+                       onToken: onToken)
     }
 
     // Pinned LocalLLMClient never resets its sampler (contrib/localllmclient/0003): each call gets its own client.
@@ -135,9 +100,11 @@ final class LlamaCppBackend: InferenceBackend {
            gbnf.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw GenerationConstraintError.invalidGrammar(root: root)
         }
-        guard session != nil, loadedFileURL != nil else { throw AuraError.modelNotLoaded }
+        guard let engine, loadedFileURL != nil else { throw AuraError.modelNotLoaded }
 
-        let fullPrompt = Self.flattenedPrompt(prompt, systemPrompt: systemPrompt)
+        let fullPrompt = try engine.renderer.withoutTools.render(
+            LlamaChatMessage.list(prompt: prompt, systemPrompt: systemPrompt)
+        )
         let window = Self.constrainedContextWindow(forPrompt: fullPrompt, maxTokens: maxTokens, cap: contextSize())
         let parameter = LlamaClient.Parameter(
             context: window,
@@ -151,7 +118,7 @@ final class LlamaCppBackend: InferenceBackend {
         return try await decodeLock.run {
             try Task.checkCancellation()
             // unload() (e.g. ModelManager.evict) may have run while this call was queued.
-            guard session != nil, let loadedFileURL else { throw AuraError.modelNotLoaded }
+            guard self.engine != nil, let loadedFileURL else { throw AuraError.modelNotLoaded }
             lastGenerationStats = nil
             let reply = try await Self.generateOnDedicatedClient(
                 url: loadedFileURL,
@@ -186,55 +153,59 @@ final class LlamaCppBackend: InferenceBackend {
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        var systemPrompt: String?
-        var userMessages: [String] = []
+        try await turn(LlamaChatMessage.list(from: messages), maxTokens: maxTokens, onToken: onToken)
+    }
 
-        for msg in messages {
-            let role = msg["role"] ?? "user"
-            let content = msg["content"] ?? ""
-            if role == "system" {
-                systemPrompt = content
-            } else {
-                userMessages.append(content)
-            }
+    /// One turn over the whole conversation, with its roles.
+    private func turn(
+        _ conversation: [LlamaChatMessage],
+        maxTokens: Int,
+        onToken: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        guard engine != nil else { throw AuraError.modelNotLoaded }
+        return try await decodeLock.run {
+            try Task.checkCancellation()
+            guard let engine else { throw AuraError.modelNotLoaded }
+            lastGenerationStats = nil
+            let reply = try await engine.measuredTurn(
+                conversation,
+                maxTokens: maxTokens,
+                backend: .llamaCpp,
+                source: .llamaStream(toolsRegistered: !tools.isEmpty),
+                onToken: onToken
+            )
+            lastGenerationStats = reply.stats
+            return reply.text
         }
-
-        let prompt = userMessages.joined(separator: "\n")
-        return try await generate(
-            prompt: prompt,
-            systemPrompt: systemPrompt,
-            maxTokens: maxTokens,
-            onToken: onToken
-        )
     }
 
     func unload() {
-        session = nil
         loadedFileURL = nil
-        guard let sessionClient else { return }
-        releasingClient = sessionClient
-        self.sessionClient = nil
+        guard let engine else { return }
+        self.engine = nil
+        releasingEngine = engine
         Task { [weak self] in await self?.awaitRelease() }
     }
 
-    /// Frees the context `unload()` dropped once no LocalLLMClient task holds it (a decode cut short by the token
-    /// budget finishes its token first), waiting at most `timeout`. The free then happens here, on the main actor,
-    /// before this returns: a process that exits with a context alive aborts in `ggml_metal_device_free`.
+    /// Frees the model `unload()` dropped once no decode holds it (a turn cut short finishes its token first; with
+    /// tools, its decode runs to the end of generation), waiting at most `timeout`. The free then happens here, on
+    /// the main actor, before this returns: a process that exits with a context alive aborts in
+    /// `ggml_metal_device_free`.
     func awaitRelease(timeout: Duration = .seconds(5)) async {
         let deadline = ContinuousClock.now + timeout
-        while releasingClient != nil, !isKnownUniquelyReferenced(&releasingClient), ContinuousClock.now < deadline {
+        while let releasingEngine, !releasingEngine.isIdle, ContinuousClock.now < deadline {
             do {
                 try await Task.sleep(for: .milliseconds(1))
             } catch {
                 break
             }
         }
-        releasingClient = nil
+        releasingEngine = nil
     }
 
     // MARK: - Constrained generation
 
-    /// Tokens reserved for the chat template around the prompt (role markers, a default system prompt).
+    /// Headroom on top of the rendered prompt and the budget.
     static let templateTokenAllowance = 256
 
     /// KV window for a dedicated constrained client. A token never covers less than one UTF-8 byte, so the
@@ -244,11 +215,6 @@ final class LlamaCppBackend: InferenceBackend {
         let needed = min(prompt.utf8.count, cap) + min(max(maxTokens, 0), cap) + templateTokenAllowance
         let padded = (needed + 255) / 256 * 256   // llama.cpp pads n_ctx to 256 anyway
         return min(padded, cap)
-    }
-
-    static func flattenedPrompt(_ prompt: String, systemPrompt: String?) -> String {
-        guard let systemPrompt else { return prompt }
-        return "System: \(systemPrompt)\n\nUser: \(prompt)"
     }
 
     /// The generator runs in its own task because LocalLLMClient parks it on `willResignActive` until the app is
@@ -270,9 +236,10 @@ final class LlamaCppBackend: InferenceBackend {
 
         var fullText = ""
         var tokenCount = 0
-        // Started after the client loads: `textStream` renders, tokenizes and prefills before it returns.
+        // Started after the client loads: `textStream` tokenizes and prefills before it returns.
         var meter = StreamMeter()
-        let pieces = try client.textStream(from: .chat([.user(prompt)]))
+        // A fresh client, so `.plain` (which clears only the KV cache) also starts from an empty batch.
+        let pieces = try client.textStream(from: .plain(prompt))
         let (stream, continuation) = AsyncThrowingStream<String, any Error>.makeStream()
         let decoder = Task {
             do {
@@ -332,79 +299,6 @@ final class LlamaCppBackend: InferenceBackend {
         #else
         return min(ProcessInfo.processInfo.activeProcessorCount, 4)
         #endif
-    }
-}
-
-// MARK: - Session model
-
-/// `LLMSession.LocalModel.llama(url:parameter:)` that also hands the client it builds to the backend.
-private struct RetainingLlamaModel: LLMSession.Model {
-    let fileURL: URL
-    let configuration: LlamaClient.Parameter
-    let built: ClientSlot
-
-    var makeClient: @Sendable ([AnyLLMTool]) async throws -> AnyLLMClient {
-        { [fileURL, configuration, built] tools in
-            let client = try await LocalLLMClient.llama(url: fileURL, parameter: configuration,
-                                                        tools: tools.map(\.underlyingTool))
-            built.store(client)
-            return AnyLLMClient(client)
-        }
-    }
-
-    func prewarm() async throws {}
-}
-
-/// Carries the client out of LocalLLMClient's loading task.
-private final class ClientSlot: Sendable {
-    private let stored = Mutex<LlamaClient?>(nil)
-
-    func store(_ client: LlamaClient) {
-        stored.withLock { $0 = client }
-    }
-
-    func take() -> LlamaClient? {
-        stored.withLock { slot in
-            defer { slot = nil }
-            return slot
-        }
-    }
-}
-
-// MARK: - Streaming a reply
-
-extension LLMSession {
-    /// Streams the reply to `prompt`, passing each piece to `onPiece` until it returns `false`, the reply ends or
-    /// the task is cancelled.
-    ///
-    /// LocalLLMClient decodes in its own tasks and cancels them only when the stream is released, not when the loop
-    /// breaks; the outer task then appends the reply to `messages`. So the stream lives only in
-    /// ``read(_:onPiece:)``, and an early stop waits for that append, so it cannot land in the next call's
-    /// `messages`. The wait is bounded, because a failed decode appends nothing, and a cancelled caller does not
-    /// wait. The inner task can still be finishing its token; `unload()` waits for that before freeing.
-    @MainActor
-    func streamReply(to prompt: String, onPiece: (String) -> Bool) async throws {
-        let stoppedEarly = try await Self.read(streamResponse(to: prompt), onPiece: onPiece)
-        guard stoppedEarly else { return }
-        let deadline = ContinuousClock.now + .seconds(2)
-        while messages.last?.role != .assistant, ContinuousClock.now < deadline {
-            do {
-                try await Task.sleep(for: .milliseconds(2))
-            } catch {
-                return
-            }
-        }
-    }
-
-    /// `true` when `onPiece` stopped the stream.
-    @MainActor
-    private static func read(_ stream: AsyncThrowingStream<String, any Error>,
-                             onPiece: (String) -> Bool) async throws -> Bool {
-        for try await piece in stream {
-            guard !Task.isCancelled else { return false }
-            if !onPiece(piece) { return true }
-        }
-        return false
     }
 }
 

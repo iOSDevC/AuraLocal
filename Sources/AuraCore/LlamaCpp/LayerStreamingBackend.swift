@@ -19,14 +19,18 @@ final class LayerStreamingBackend: InferenceBackend {
 
     // MARK: - State
 
-    private var session: LLMSession?
+    private var engine: (any GGUFTurnEngine)?
+    /// An engine `unload()` dropped while a decode may still hold its model; see ``awaitRelease(timeout:)``.
+    private var releasingEngine: (any GGUFTurnEngine)?
+    /// Turns would otherwise overlap on the one context.
+    private let decodeLock = DecodeGate()
     private let model: Model
     private let temperature: Float
     private let memoryManager: MemoryBudgetManager
     private let tools: [any LLMTool]
     private(set) var lastGenerationStats: GenerationStats?
 
-    var isLoaded: Bool { session != nil }
+    var isLoaded: Bool { engine != nil }
     /// Tool names registered for function-calling — a testable view of what was threaded in (empty = none).
     var registeredToolNames: [String] { tools.map(\.name) }
 
@@ -42,7 +46,7 @@ final class LayerStreamingBackend: InferenceBackend {
     // MARK: - InferenceBackend
 
     func load(onProgress: @escaping @MainActor (String) -> Void) async throws {
-        guard session == nil else { return }
+        guard engine == nil else { return }
 
         guard let filename = model.ggufFilename else {
             throw AuraError.invalidResponse("Model \(model.displayName) has no GGUF filename")
@@ -71,14 +75,7 @@ final class LayerStreamingBackend: InferenceBackend {
             topP: 0.95
         )
 
-        let localModel = LLMSession.LocalModel.llama(
-            url: ggufURL,
-            parameter: parameter
-        )
-
-        let newSession = LLMSession(model: localModel, tools: tools)
-        try await newSession.prewarm()
-        session = newSession
+        engine = try await GGUFTurnEngines.load(url: ggufURL, parameter: parameter, tools: tools)
 
         onProgress("\(model.displayName) ready (streaming mode)")
     }
@@ -89,49 +86,8 @@ final class LayerStreamingBackend: InferenceBackend {
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        guard let session else { throw AuraError.modelNotLoaded }
-
-        memoryManager.refresh()
-
-        // Adapt max tokens based on memory pressure
-        let safeMaxTokens: Int
-        if memoryManager.isUnderPressure {
-            safeMaxTokens = min(maxTokens, 256)
-        } else {
-            safeMaxTokens = maxTokens
-        }
-
-        let fullPrompt: String
-        if let sys = systemPrompt {
-            fullPrompt = "System: \(sys)\n\nUser: \(prompt)"
-        } else {
-            fullPrompt = prompt
-        }
-
-        // Stateless per call: the prompt already carries the full conversation, so clear accumulated
-        // history to avoid re-ingesting prior turns (O(N²) growth → context overflow).
-        session.messages = []
-        lastGenerationStats = nil
-
-        var fullText = ""
-        var tokenCount = 0
-        var meter = StreamMeter()
-        try await session.streamReply(to: fullPrompt) { partial in
-            meter.recordPiece()
-            fullText += partial
-            tokenCount += 1
-            onToken(fullText)
-
-            // Stop early if memory becomes critical
-            if tokenCount % 32 == 0 && memoryManager.isUnderPressure {
-                return false
-            }
-            return tokenCount < safeMaxTokens
-        }
-
-        lastGenerationStats = meter.stats(backend: .layerStreaming, source: .llamaStream(toolsRegistered: !tools.isEmpty),
-                                          prompt: fullPrompt, output: fullText)
-        return fullText
+        try await turn(LlamaChatMessage.list(prompt: prompt, systemPrompt: systemPrompt), maxTokens: maxTokens,
+                       onToken: onToken)
     }
 
     /// A dedicated second context is exactly what a streaming-sized device cannot afford.
@@ -164,30 +120,58 @@ final class LayerStreamingBackend: InferenceBackend {
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        var systemPrompt: String?
-        var userMessages: [String] = []
+        try await turn(LlamaChatMessage.list(from: messages), maxTokens: maxTokens, onToken: onToken)
+    }
 
-        for msg in messages {
-            let role = msg["role"] ?? "user"
-            let content = msg["content"] ?? ""
-            if role == "system" {
-                systemPrompt = content
-            } else {
-                userMessages.append(content)
-            }
+    private func turn(
+        _ conversation: [LlamaChatMessage],
+        maxTokens: Int,
+        onToken: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        guard engine != nil else { throw AuraError.modelNotLoaded }
+        return try await decodeLock.run {
+            try Task.checkCancellation()
+            guard let engine else { throw AuraError.modelNotLoaded }
+
+            memoryManager.refresh()
+            // Adapt max tokens based on memory pressure
+            let safeMaxTokens = memoryManager.isUnderPressure ? min(maxTokens, 256) : maxTokens
+            let memoryManager = memoryManager
+
+            lastGenerationStats = nil
+            let reply = try await engine.measuredTurn(
+                conversation,
+                maxTokens: safeMaxTokens,
+                backend: .layerStreaming,
+                source: .llamaStream(toolsRegistered: !tools.isEmpty),
+                // Stop early if memory becomes critical
+                shouldStop: { produced in produced % 32 == 0 && memoryManager.isUnderPressure },
+                onToken: onToken
+            )
+            lastGenerationStats = reply.stats
+            return reply.text
         }
-
-        let prompt = userMessages.joined(separator: "\n")
-        return try await generate(
-            prompt: prompt,
-            systemPrompt: systemPrompt,
-            maxTokens: maxTokens,
-            onToken: onToken
-        )
     }
 
     func unload() {
-        session = nil
+        guard let engine else { return }
+        self.engine = nil
+        releasingEngine = engine
+        Task { [weak self] in await self?.awaitRelease() }
+    }
+
+    /// Frees the model `unload()` dropped once no decode holds it, waiting at most `timeout`; see
+    /// ``LlamaCppBackend/awaitRelease(timeout:)``.
+    func awaitRelease(timeout: Duration = .seconds(5)) async {
+        let deadline = ContinuousClock.now + timeout
+        while let releasingEngine, !releasingEngine.isIdle, ContinuousClock.now < deadline {
+            do {
+                try await Task.sleep(for: .milliseconds(1))
+            } catch {
+                break
+            }
+        }
+        releasingEngine = nil
     }
 
     // MARK: - Adaptive Configuration
