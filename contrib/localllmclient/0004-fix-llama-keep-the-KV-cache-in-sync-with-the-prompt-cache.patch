@@ -1,0 +1,283 @@
+From 1f9943cbebc0f4a9ec123eea9911918a094335ae Mon Sep 17 00:00:00 2001
+From: Cristopher Bautista <cristopher.abg@icloud.com>
+Date: Mon, 5 Oct 2026 14:56:01 -0600
+Subject: [PATCH] fix(llama): keep the KV cache in sync with the prompt cache
+
+Context reuses the KV cache across generations by matching the new prompt chunks against
+promptCaches. Several paths let the two drift apart, so a prompt is decoded on top of tokens
+that are no longer part of the conversation:
+
+- No cached prefix matches (an unrelated chat, or history stored differently from how it was
+  generated, e.g. a trimmed reply): removeCachedChunks returned without touching the KV cache,
+  so the whole new prompt was decoded after the previous conversation. Multi-turn chats grow
+  until they hit "context size exceeded". It now clears the KV cache and promptCaches and
+  prefills the whole prompt.
+- The cached prefix matches but the KV cache holds a longer tail (a generation the caller
+  stopped early): llama_memory_seq_rm was the argument of assert(), so release builds never
+  removed the tail. It now runs unconditionally; when it fails (recurrent and hybrid memories
+  cannot drop a partial range, which crashed debug builds on the assert) the context is cleared
+  and the prompt prefilled in full.
+- clear() emptied the KV cache but kept promptCaches, so the next prompt could "match" tokens
+  that were gone. It now empties both. Public behaviour change: after clear() nothing is reused.
+- lastCacheIndex returned a later image or video chunk as a match even when an earlier text
+  chunk differed, and appended the uncached remainder of a text chunk after the chunks that
+  follow it. It now stops at the first diverging chunk, keeps matching across identical chunks,
+  and places the remainder first.
+
+Tests (PromptCacheTests, real models through the existing test-model helper): an unrelated chat
+and an edited history both prefill to the same position as on a fresh context; a generation
+stopped early leaves no stale tail; prefix reuse drops only the uncached tail, on the general
+model and on the hybrid tool model (Qwen3.5-2B, full-prefill fallback); clear() forgets the
+prompt cache; matching stops at the first diverging chunk and orders the remainder first.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ Sources/LocalLLMClientLlama/Context.swift     |  44 ++---
+ .../PromptCacheTests.swift                    | 160 ++++++++++++++++++
+ 2 files changed, 184 insertions(+), 20 deletions(-)
+ create mode 100644 Tests/LocalLLMClientLlamaTests/PromptCacheTests.swift
+
+diff --git a/Sources/LocalLLMClientLlama/Context.swift b/Sources/LocalLLMClientLlama/Context.swift
+index 756dfd6..a424b34 100644
+--- a/Sources/LocalLLMClientLlama/Context.swift
++++ b/Sources/LocalLLMClientLlama/Context.swift
+@@ -100,6 +100,7 @@ public final class Context: @unchecked Sendable {
+ 
+     public func clear() {
+         discardPendingTokens()
++        promptCaches.removeAll()
+ 
+         guard let kv = llama_get_memory(context) else {
+             return
+@@ -129,39 +130,42 @@ public final class Context: @unchecked Sendable {
+     }
+ 
+     func removeCachedChunks(_ chunks: inout [MessageChunk]) {
+-        guard let (lastCacheIndex, newChunk) = lastCacheIndex(of: chunks) else {
++        guard let (lastCacheIndex, remaining) = lastCacheIndex(of: chunks) else {
++            // No cached prefix: the prompt must not be decoded after whatever the KV cache still holds.
++            clear()
+             return
+         }
+-        chunks = Array(chunks[(lastCacheIndex + 1)...])
+-        if let newChunk {
+-            chunks.append(newChunk)
+-        }
+-        if promptCaches[lastCacheIndex].lastPosition < position,
+-           let kv = llama_get_memory(context) {
+-            assert(llama_memory_seq_rm(kv, 0, promptCaches[lastCacheIndex].lastPosition, position))
+-        }
+-        if promptCaches.count > lastCacheIndex {
+-            promptCaches.removeSubrange((lastCacheIndex + 1)...)
++        let cachedPosition = promptCaches[lastCacheIndex].lastPosition
++        if cachedPosition < position, let kv = llama_get_memory(context) {
++            // Outside assert() so it also runs in release builds. Recurrent and hybrid
++            // memories cannot drop a partial range; fall back to a full prefill.
++            guard llama_memory_seq_rm(kv, 0, cachedPosition, -1) else {
++                clear()
++                return
++            }
+         }
++        chunks = (remaining.map { [$0] } ?? []) + chunks[(lastCacheIndex + 1)...]
++        promptCaches.removeSubrange((lastCacheIndex + 1)...)
+     }
+ 
++    /// Returns the last cached chunk the new chunks reuse, stopping at the first one that diverges,
++    /// plus the uncached tail of a text chunk that extends the cached text.
+     func lastCacheIndex(of chunks: [MessageChunk]) -> (index: Int, remaining: MessageChunk?)? {
++        var lastMatch: (index: Int, remaining: MessageChunk?)?
+         for (index, (chunk, cache)) in zip(chunks, promptCaches).enumerated() {
+             switch (chunk, cache.chunk) {
++            case let (.text(chunkText), .text(cacheText)) where chunkText == cacheText:
++                lastMatch = (index, nil)
+             case let (.text(chunkText), .text(cacheText)) where chunkText.hasPrefix(cacheText):
+-                if chunkText == cacheText {
+-                    return (index, nil)
+-                } else {
+-                    return (index, .text(String(chunkText.dropFirst(cacheText.count))))
+-                }
++                return (index, .text(String(chunkText.dropFirst(cacheText.count))))
+             case let (.image(chunkImages), .image(cacheImages)) where chunkImages == cacheImages:
+-                return (index, nil)
++                lastMatch = (index, nil)
+             case let (.video(chunkVideos), .video(cacheVideos)) where chunkVideos == cacheVideos:
+-                return (index, nil)
++                lastMatch = (index, nil)
+             default:
+-                break
++                return lastMatch
+             }
+         }
+-        return nil
++        return lastMatch
+     }
+ }
+diff --git a/Tests/LocalLLMClientLlamaTests/PromptCacheTests.swift b/Tests/LocalLLMClientLlamaTests/PromptCacheTests.swift
+new file mode 100644
+index 0000000..6678766
+--- /dev/null
++++ b/Tests/LocalLLMClientLlamaTests/PromptCacheTests.swift
+@@ -0,0 +1,160 @@
++import Testing
++import Foundation
++import LocalLLMClientCore
++@testable import LocalLLMClientLlama
++
++extension ModelTests {
++    struct PromptCacheTests {}
++}
++
++extension ModelTests.PromptCacheTests {
++
++    // MARK: - Chat input
++
++    @Test
++    func unrelatedChatStartsFromAnEmptyCache() async throws {
++        let client = try await LocalLLMClient.llama()
++        let first = LLMInput.chat([.user("What is the capital of France?")])
++        let second = LLMInput.chat([.user("Name three prime numbers.")])
++
++        try await consume(client.textStream(from: first), maxTokens: 8)
++        _ = try await client.textStream(from: second)
++        let reused = client._context.position
++
++        #expect(reused == (try await freshPrefillPosition(of: second, on: client)))
++    }
++
++    @Test
++    func editedHistoryDoesNotKeepTheOldReplyInTheCache() async throws {
++        let client = try await LocalLLMClient.llama()
++        let question = "What is the answer to one plus two?"
++        let reply = try await consume(client.textStream(from: .chat([.user(question)])), maxTokens: 64)
++
++        // Stored differently from how it was generated, e.g. trimmed or post-processed.
++        let next = LLMInput.chat([
++            .user(question),
++            .assistant("Edited: " + reply),
++            .user("And two plus two?"),
++        ])
++        _ = try await client.textStream(from: next)
++        let reused = client._context.position
++
++        #expect(reused == (try await freshPrefillPosition(of: next, on: client)))
++    }
++
++    @Test
++    func generationStoppedEarlyLeavesNoStaleTail() async throws {
++        let client = try await LocalLLMClient.llama()
++        let question = "Count from one to twenty."
++        let first = LLMInput.chat([.user(question)])
++        let next = LLMInput.chat([
++            .user(question),
++            .assistant("One, two"),
++            .user("Continue."),
++        ])
++
++        try await consume(client.textStream(from: first), maxTokens: 8)
++        _ = try await client.textStream(from: next)
++        let afterStoppedGeneration = client._context.position
++
++        // Same two prompts without the generated tokens in between: the reference for prefix reuse.
++        client._context.clear()
++        _ = try await client.textStream(from: first)
++        _ = try await client.textStream(from: next)
++
++        #expect(afterStoppedGeneration == client._context.position)
++    }
++
++    // MARK: - Context
++
++    @Test
++    func cachedPrefixIsReusedAndTheTailRemoved() async throws {
++        let context = try await LocalLLMClient.llama()._context
++        try expectPrefixReuseDropsTail(on: context)
++    }
++
++    @Test
++    func hybridModelFallsBackToAFullPrefill() async throws {
++        let context = try await LocalLLMClient.llama(testType: .tool)._context
++        try expectPrefixReuseDropsTail(on: context)
++    }
++
++    @Test
++    func clearAlsoForgetsThePromptCache() async throws {
++        let context = try await LocalLLMClient.llama()._context
++        try context.decode(text: "Hello")
++        context.addCache(for: .text("Hello"), position: context.position)
++
++        context.clear()
++
++        #expect(context.position == 0)
++        #expect(context.lastCacheIndex(of: [.text("Hello, world")]) == nil)
++    }
++
++    @Test
++    func cacheMatchStopsAtTheFirstDivergingChunk() async throws {
++        let context = try await LocalLLMClient.llama()._context
++        let image = makeImage()
++        context.addCache(for: .text("a"), position: 1)
++        context.addCache(for: .image([image]), position: 2)
++
++        #expect(context.lastCacheIndex(of: [.text("b"), .image([image])]) == nil)
++        #expect(context.lastCacheIndex(of: [.text("a"), .image([image]), .text("c")])?.index == 1)
++
++        var chunks: [MessageChunk] = [.text("ab"), .image([image])]
++        context.removeCachedChunks(&chunks)
++        #expect(chunks == [.text("b"), .image([image])])
++    }
++}
++
++private extension ModelTests.PromptCacheTests {
++    @discardableResult
++    func consume(_ generator: Generator, maxTokens: Int) async throws -> String {
++        var result = ""
++        var count = 0
++        for try await text in generator {
++            result += text
++            count += 1
++            if count >= maxTokens {
++                break
++            }
++        }
++        return result
++    }
++
++    func freshPrefillPosition(of input: LLMInput, on client: LlamaClient) async throws -> Int32 {
++        client._context.clear()
++        _ = try await client.textStream(from: input)
++        return client._context.position
++    }
++
++    /// Either the cached prefix is kept and only the uncached text remains, or (when the memory
++    /// cannot drop a partial range) everything is cleared and the whole text remains.
++    func expectPrefixReuseDropsTail(on context: Context) throws {
++        let prefix = "The quick brown fox"
++        let rest = " jumps over the lazy dog."
++        try context.decode(text: prefix)
++        let prefixPosition = context.position
++        context.addCache(for: .text(prefix), position: prefixPosition)
++        try context.decode(text: " generated tokens the caller never stored")
++        #expect(context.position > prefixPosition)
++
++        var chunks: [MessageChunk] = [.text(prefix + rest)]
++        context.removeCachedChunks(&chunks)
++
++        if chunks == [.text(rest)] {
++            #expect(context.position == prefixPosition)
++        } else {
++            #expect(chunks == [.text(prefix + rest)])
++            #expect(context.position == 0)
++        }
++    }
++
++    func makeImage() -> LLMInputImage {
++        #if os(macOS)
++        LLMInputImage(size: .init(width: 1, height: 1))
++        #else
++        LLMInputImage()
++        #endif
++    }
++}
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,19 +1,22 @@
 # Upstream patches for LocalLLMClient
 
-Three patches against [tattn/LocalLLMClient](https://github.com/tattn/LocalLLMClient), the package
+Four patches against [tattn/LocalLLMClient](https://github.com/tattn/LocalLLMClient), the package
 that gives AuraLocal its GGUF/llama.cpp backend on **every** Apple platform (the xcframework ships
 `ios-arm64`, `ios-simulator`, `macos`, `xros`, `tvos` slices — this is not a Mac-only dependency).
 
 **Status: prepared, verified, NOT submitted.** They live here so they don't get lost, and so the
 work is reviewable before anything is pushed anywhere public.
 
-| | `0001`, `0002` | `0003` |
-|---|---|---|
-| Base | `main @ d92cb1f` (2026-08-25) | `main @ b68f712` (2026-08-26) |
-| Size | 2 commits · 292 insertions · **0 deletions** | 1 commit · 52 insertions · **0 deletions** |
-| Verified | built against upstream with llama.cpp from source; 7 tests in 4 suites pass, including upstream's own pre-existing `ContextTests` | built the same way; all 45 Llama tests pass with both upstream test models (SmolVLM-256M as on CI, gemma-4-E4B locally); its 3 new tests fail without the fix |
+| | `0001`, `0002` | `0003` | `0004` |
+|---|---|---|---|
+| Base | `main @ d92cb1f` (2026-08-25) | `main @ b68f712` (2026-08-26) | `main @ b68f712` (llama.cpp submodule `e365e658`) |
+| Size | 2 commits · 292 insertions · **0 deletions** | 1 commit · 52 insertions · **0 deletions** | 1 commit · 184 insertions · 20 deletions (`Context.swift` + a new `PromptCacheTests.swift`) |
+| Verified | built against upstream with llama.cpp from source; 7 tests in 4 suites pass, including upstream's own pre-existing `ContextTests` | built the same way; all 45 Llama tests pass with both upstream test models (SmolVLM-256M as on CI, gemma-4-E4B locally); its 3 new tests fail without the fix | upstream's CI setup (`xcodebuild`, `TEST_RUNNER_GITHUB_ACTIONS_TEST=Llama`): 49/49 in Debug (42 + 7 new); 47/49 in Release, where the 2 failures are image tests that fail the same way on unpatched `main`; without the fix its new tests fail (and the hybrid-model one crashes on the `assert` in Debug) |
 
-All three apply cleanly, in order, on `main @ b68f712`.
+All four apply cleanly, in order, on `main @ b68f712`, and `0004` also applies on its own (re-checked with
+`git apply --check` on 2026-10-14). **`0004` does not apply to `edc39ef` (0.5.0), the revision AuraLocal
+pins:** its `clear()` hunk sits on `discardPendingTokens()`, which upstream added after 0.5.0 in #101
+(`d92cb1f`).
 
 ## Why these exist
 
@@ -105,13 +108,41 @@ constrained call. Unconstrained sessions also stop carrying penalty history betw
 the same client now gives the same output on every call (before, repeated calls drew different
 samples). With the default seed (`nil`) each generation gets a new random seed, as before in effect.
 
-Found while doing this, **not** fixed by `0003` (candidates for separate patches):
+### `0004` — keep the KV cache in sync with the prompt cache
 
-- **KV contamination between unrelated chats.** When no cached prefix matches the new `.chat`
-  input, `removeCachedChunks` returns without clearing the KV cache, so the new prompt is decoded
-  *after* the previous conversation. Measured: position 57 on a used client versus 26 on a fresh
-  one for the same prompt. Only multi-turn chats whose history matches the cache byte for byte
-  reuse it correctly. `.plain` input clears first and is not affected.
+`Context` reuses the KV cache across generations by matching the new prompt against its prompt cache
+(`promptCaches`). Several paths let the two drift apart, so a prompt is decoded on top of tokens that are
+no longer part of the conversation:
+
+- **No cached prefix matches** (an unrelated chat, or a history stored differently from how it was
+  generated): `removeCachedChunks` returned without touching the KV cache, so the whole prompt was decoded
+  after the previous conversation. It now clears the KV cache and the prompt cache and prefills in full.
+- **The cached prefix matches but the KV cache holds a longer tail** (a generation stopped early):
+  `llama_memory_seq_rm` was the argument of `assert()`, so release builds kept the stale tail. It now runs
+  unconditionally; when it fails (recurrent and hybrid memories cannot drop a partial range, which crashed
+  debug builds on the `assert`) the context is cleared and the prompt prefilled in full.
+- **`clear()`** emptied the KV cache but kept the prompt cache, so the next prompt could "match" tokens
+  that were gone. It now empties both. Behaviour change to flag when submitting: after `clear()` nothing
+  is reused.
+- **`lastCacheIndex`** stops at the first chunk that diverges (it could report a later image as a match
+  after a different text chunk) and puts the uncached rest of a text chunk before the chunks after it.
+
+Reproduced with Qwen2.5-0.5B-Instruct Q4_K_M, the flattened-transcript pattern AuraLocal used, at a
+2048 context: KV position after turn 10 was 1586 before the fix and 270 (fresh prompt + reply) after; at a
+1024 context turn 8 failed with `context size exceeded[1024 < 1082]` before the fix and ran clean after.
+A stopped generation left 19 stale positions in Release before the fix and none after.
+
+What it unlocks: `LLMSession` and `.chat` input become safe for multi-turn chat, unrelated prompts and cut
+replies on one client, in release builds too. That is what AuraLocal would need to go back to
+`LLMSession` and reuse the cached prefix across turns. Two more things stand in the way of that reuse: the
+pin has to move past 0.5.0 (to `d92cb1f` or later, which also makes `clear()` drop tokens a cut generation
+left queued in the batch), and `JinjaChatTemplateRenderer` sets `lstripBlocks`/`trimBlocks` on the
+`Environment`, which swift-jinja ignores (it reads them only from `Template(_:with:)`), so Qwen-style
+templates end the generation prompt with an extra newline and the prefix never matches (candidate
+`0005`; fixing it changes the rendered prompt for every model). Until all three land, AuraLocal's GGUF
+backends own the context, clear the KV cache and batch before every turn, and prefill the whole history.
+
+Found while doing this, **not** fixed by `0003` or `0004` (candidates for separate patches):
 - **Invalid GBNF crashes.** `llama_sampler_init_grammar` returns `NULL`, which is chained anyway and
   dereferenced on the first token. `0003` neither causes nor fixes it: `llama_sampler_reset` skips
   `NULL`.
@@ -122,7 +153,9 @@ Found while doing this, **not** fixed by `0003` (candidates for separate patches
   returns, so a cancelled `LLMSession.streamResponse` keeps prefilling in its detached task. Either
   way the next generation on the same context overlaps a running decode. A candidate patch:
   `onTermination { task.cancel() }` in `responseStream`, plus a cancellation check between prefill
-  batches.
+  batches. AuraLocal's tool turns wait for that decode before the next turn, which is why a cut tool turn
+  delays the one after it.
+- **With `extraEOSTokens`,** the stop token's text is added to the prompt cache but never decoded.
 - **Sampler order** (read, not measured): penalties run after temperature and top-k/top-p, so at
   temperature 0 they do nothing, and above 0 they only touch the survivors. llama.cpp's default runs
   them first. The grammar is also applied twice per token (on its own, then again inside the chain).
@@ -139,9 +172,13 @@ git checkout -b feature/session-state-persistence
 git am /path/to/AuraLocal/contrib/localllmclient/0001-*.patch
 git am /path/to/AuraLocal/contrib/localllmclient/0002-*.patch
 git am /path/to/AuraLocal/contrib/localllmclient/0003-*.patch
+git am /path/to/AuraLocal/contrib/localllmclient/0004-*.patch
 ```
 
-`0003` does not depend on the other two and applies on its own as well.
+`0003` and `0004` do not depend on the others and apply on their own as well.
+
+Running `0004`'s tests in Release needs `ENABLE_TESTABILITY=YES 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG'`
+(the test target uses `#if DEBUG` helpers); `assert` is still compiled out that way.
 
 Building upstream from source needs its submodule (llama.cpp):
 
