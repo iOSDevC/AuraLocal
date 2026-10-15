@@ -15,9 +15,9 @@ public struct HardwareProfile: Sendable {
     /// Total physical RAM in gigabytes.
     public let totalMemoryGB: Double
 
-    /// Memory currently available to the process, in gigabytes.
-    /// On iOS this uses `os_proc_available_memory()`; on macOS it reads real
-    /// reclaimable memory from the kernel (see ``HardwareProfile/current()``).
+    /// Memory a model may fill, in gigabytes. On iOS ``HardwareProfile/current()`` puts the app's memory limit
+    /// here (``HardwareProfile/memoryLimitBytes()``), so verdicts and load guards do not shrink while a model is
+    /// loaded; on macOS it reads real reclaimable memory from the kernel.
     public let availableMemoryGB: Double
 
     /// A human-readable device or chip identifier (e.g. "iPhone", "Apple M2 Pro").
@@ -53,7 +53,12 @@ public struct HardwareProfile: Sendable {
         // reads (fit badges, sizing) where a rough number beats no number. Anything that decides
         // whether it is safe to allocate must use `availableMemoryBytes()` directly and treat
         // `nil` as danger, not fall back to this.
-        let availableGB = availableMemoryBytes().map { Double($0) / 1_073_741_824 }
+        #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+        let measuredBytes = memoryLimitBytes()
+        #else
+        let measuredBytes = availableMemoryBytes()
+        #endif
+        let availableGB = measuredBytes.map { Double($0) / 1_073_741_824 }
             ?? (totalGB * 0.6)
 
         let name: String
@@ -485,7 +490,9 @@ public enum HardwareAnalyzer {
         // No KV metadata — can't do the math honestly; keep the old tier.
         guard model.kvHeads > 0, model.numLayers > 0, model.headDim > 0 else { return fallback }
 
+        // Memory left now, not the iOS limit: the KV cache is allocated on top of what the app already holds.
         let available = availableGB
+            ?? HardwareProfile.availableMemoryBytes().map { Double($0) / 1_073_741_824 }
             ?? HardwareProfile.current().availableMemoryGB
         let weightsGB = Double(model.approximateSizeMB) / 1024.0
         let reserveGB = 0.4                       // framework overhead + safety margin
