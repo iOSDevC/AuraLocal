@@ -128,7 +128,10 @@ final class GGUFConstrainedGenerationTests: XCTestCase {
         let llm = AuraLocal(model: model)
         XCTAssertTrue(llm.engine.backend is LlamaCppBackend, "a constraint needs the llama.cpp backend")
         try await llm.engine.load { _ in }
-        addTeardownBlock { @MainActor in llm.engine.unload() }
+        addTeardownBlock { @MainActor in
+            llm.engine.unload()
+            await (llm.engine.backend as? LlamaCppBackend)?.awaitRelease()
+        }
         return llm
     }
 

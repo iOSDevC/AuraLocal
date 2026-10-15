@@ -181,10 +181,10 @@ BackgroundLifecycle.shared.aggressiveMemorySaving = true
 When each engine actually stops:
 
 - **MLX:** at the next token.
-- **llama.cpp** (full load and streaming): the call returns at once. LocalLLMClient has already paused
-  the decode on `willResignActive`; per its source, that decode runs one more token after the app becomes
-  active and then stops, so a generation started right after returning can overlap that token. A prompt
-  being prefilled cannot be interrupted.
+- **llama.cpp** (full load and streaming, constrained JSON / GBNF calls included): the call returns at once.
+  LocalLLMClient has already paused the decode on `willResignActive`; per its source, that decode runs one
+  more token after the app becomes active and then stops, so a generation started right after returning can
+  overlap that token. A prompt being prefilled cannot be interrupted.
 - **Core ML Stable Diffusion:** at the next denoising step. Loading the model and the final decode cannot
   be interrupted.
 

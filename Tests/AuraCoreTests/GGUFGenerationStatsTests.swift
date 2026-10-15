@@ -58,7 +58,10 @@ final class GGUFGenerationStatsTests: XCTestCase {
         let llm = AuraLocal(model: model)
         XCTAssertTrue(llm.engine.backend is LlamaCppBackend)
         try await llm.engine.load { _ in }
-        addTeardownBlock { @MainActor in llm.engine.unload() }
+        addTeardownBlock { @MainActor in
+            llm.engine.unload()
+            await (llm.engine.backend as? LlamaCppBackend)?.awaitRelease()
+        }
         return llm
     }
 }

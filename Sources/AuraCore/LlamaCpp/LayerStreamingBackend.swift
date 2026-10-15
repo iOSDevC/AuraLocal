@@ -116,11 +116,7 @@ final class LayerStreamingBackend: InferenceBackend {
         var fullText = ""
         var tokenCount = 0
         var meter = StreamMeter()
-        let responseStream = session.streamResponse(to: fullPrompt)
-
-        for try await partial in responseStream {
-            guard !Task.isCancelled else { break }
-
+        try await session.streamReply(to: fullPrompt) { partial in
             meter.recordPiece()
             fullText += partial
             tokenCount += 1
@@ -128,10 +124,9 @@ final class LayerStreamingBackend: InferenceBackend {
 
             // Stop early if memory becomes critical
             if tokenCount % 32 == 0 && memoryManager.isUnderPressure {
-                break
+                return false
             }
-
-            if tokenCount >= safeMaxTokens { break }
+            return tokenCount < safeMaxTokens
         }
 
         lastGenerationStats = meter.stats(backend: .layerStreaming, source: .llamaStream(toolsRegistered: !tools.isEmpty),
