@@ -649,6 +649,33 @@ final class ModelCompatibilityCheckerTests: XCTestCase {
         XCTAssertEqual(report.overview.layers, 65)
     }
 
+    func testGGUFHeaderSkipsSubfolderDraftHeads() async throws {
+        let repo = "stub/gemma4-mtp-gguf"
+        stubs.serve("api/models/\(repo)?blobs=true", StubHub.listing(repo, files: [
+            ("MTP/m-MTP-Q8_0.gguf", 465_000_000), ("m-Q4_K_M.gguf", 7_000_000_000), ("m-Q8_0.gguf", 12_000_000_000),
+        ], tags: ["gguf"]))
+        stubs.serve("\(repo)/resolve/main/m-Q4_K_M.gguf", GGUFBytes.qwen35(nextn: 0).encoded)
+
+        let report = await stubbedChecker.check(repo, on: .mac32GB)
+
+        XCTAssertTrue(stubs.requests(for: "MTP").isEmpty)
+        XCTAssertEqual(stubs.requests(for: "m-Q4_K_M.gguf").count, 1)
+        XCTAssertEqual(report.overview.layers, 65)
+    }
+
+    func testGGUFFileChoosesTheHeaderRead() async throws {
+        let repo = "stub/two-quants-gguf"
+        stubs.serve("api/models/\(repo)?blobs=true", StubHub.listing(repo, files: [
+            ("m-Q4_K_M.gguf", 5_000_000_000), ("m-Q8_0.gguf", 8_500_000_000),
+        ], tags: ["gguf"]))
+        stubs.serve("\(repo)/resolve/main/m-Q8_0.gguf", GGUFBytes.qwen35(nextn: 0).encoded)
+
+        let report = await stubbedChecker.check(repo, on: .mac32GB, ggufFile: "m-Q8_0.gguf")
+
+        XCTAssertTrue(stubs.requests(for: "m-Q4_K_M.gguf").isEmpty)
+        XCTAssertEqual(report.overview.layers, 65)
+    }
+
     func testStaleIndexReadsTheShippedFileHeader() async throws {
         let repo = "stub/gemma3-qat"
         stubs.serve("api/models/\(repo)?blobs=true", StubHub.listing(repo, files: [

@@ -25,10 +25,11 @@ extension AuraCLI {
         llama.cpp \(PinnedRuntimes.llamaCppBuild))
 
           aura models search "<query>" [--format mlx|gguf] [--device <preset>] [--limit N]
-          aura models check <owner/repo | URL> [--device <preset>] [--json] [--entry]
+          aura models check <owner/repo | URL> [--device <preset>] [--gguf <file>] [--json] [--entry]
           aura models devices                     List device presets and where their budgets come from
 
-        --device defaults to this-device. --entry prints only the models.json entry.
+        --device defaults to this-device. --gguf names the GGUF whose header is read (default: the smallest
+        whole top-level quant). --entry prints only the models.json entry.
         """)
     }
 
@@ -44,13 +45,13 @@ extension AuraCLI {
     // MARK: - check
 
     static func runModelsCheck(_ args: [String]) async throws {
-        let usage = "usage: aura models check <owner/repo> [--device <preset>] [--json] [--entry]"
-        let parsed = try CLIArguments(args, options: ["--device"], flags: ["--json", "--entry"])
+        let usage = "usage: aura models check <owner/repo> [--device <preset>] [--gguf <file>] [--json] [--entry]"
+        let parsed = try CLIArguments(args, options: ["--device", "--gguf"], flags: ["--json", "--entry"])
         guard parsed.positionals.count == 1, let repo = parsed.positionals.first else { throw CLIUsageError(usage) }
         let device = try devicePreset(parsed.value("--device"))
 
         err("Checking \(repo) for \(device.displayName)…\n")
-        let report = await ModelCompatibilityChecker().check(repo, on: device)
+        let report = await ModelCompatibilityChecker().check(repo, on: device, ggufFile: parsed.value("--gguf"))
 
         if parsed.has("--entry") {
             guard let entry = report.suggestedEntry else {
@@ -127,6 +128,8 @@ extension AuraCLI {
             "verdict": report.status.rawValue,
             "category": report.modelCategory?.rawValue ?? NSNull(),
             "headline": report.headline,
+            "gated": report.gatedMode ?? NSNull(),
+            "architecture": architectureObject(report.overview),
             "weightsBytes": report.weightsBytes ?? NSNull(),
             "weightsFit": fit(report.weightsFit),
             "findings": report.findings.map {
@@ -142,6 +145,21 @@ extension AuraCLI {
         let data = try JSONSerialization.data(withJSONObject: object,
                                               options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The facts behind the entry, present even when a blocker withholds `entry` (scripts/verify_catalog.py reads them).
+    static func architectureObject(_ facts: ArchitectureFacts) -> [String: Any] {
+        func object<T: Encodable>(_ value: T?) -> Any {
+            guard let value, let data = try? JSONEncoder().encode(value),
+                  let decoded = try? JSONSerialization.jsonObject(with: data) else { return NSNull() }
+            return decoded
+        }
+        return [
+            "family": facts.family ?? NSNull(), "layers": facts.layers ?? NSNull(),
+            "trainedContext": facts.trainedContext ?? NSNull(), "kvHeads": facts.kvHeads ?? NSNull(),
+            "headDim": facts.headDim ?? NSNull(), "hasVision": facts.hasVision,
+            "kvLayers": object(facts.kvLayers), "experts": object(facts.experts),
+        ]
     }
 
     // MARK: - search

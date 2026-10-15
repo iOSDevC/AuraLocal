@@ -35,14 +35,16 @@ public struct ModelCompatibilityChecker: Sendable {
         self.requestTimeout = requestTimeout
     }
 
-    /// Fetch and evaluate in one go.
-    public func check(_ repo: String, on target: DevicePreset = .thisDevice()) async -> CompatibilityReport {
-        CompatibilityEvaluator.evaluate(await snapshot(of: repo), on: target)
+    /// Fetch and evaluate in one go. `ggufFile` picks the GGUF whose header is read (see ``snapshot(of:ggufFile:)``).
+    public func check(_ repo: String, on target: DevicePreset = .thisDevice(),
+                      ggufFile: String? = nil) async -> CompatibilityReport {
+        CompatibilityEvaluator.evaluate(await snapshot(of: repo, ggufFile: ggufFile), on: target)
     }
 
     /// Fetch everything the rules need. Cache this and re-run ``CompatibilityEvaluator/evaluate(_:on:)`` to
-    /// judge another device.
-    public func snapshot(of repo: String) async -> RepoSnapshot {
+    /// judge another device. `ggufFile`, when listed, is the GGUF whose header is read; otherwise the smallest
+    /// whole top-level quant.
+    public func snapshot(of repo: String, ggufFile: String? = nil) async -> RepoSnapshot {
         guard let repoID = Self.repoID(from: repo), let listingURL = Self.listingURL(repoID) else {
             return RepoSnapshot(repoID: repo, problems: [
                 FetchProblem(subject: .repository, statusCode: nil, message: "Not a Hugging Face repository id: \(repo)"),
@@ -66,7 +68,8 @@ public struct ModelCompatibilityChecker: Sendable {
 
         let topLevel = Set(listing.files.filter(\.isTopLevel).map(\.path))
         let groups = GGUFQuantGroup.groups(in: listing.files)
-        let sample = (groups.first { !$0.isSplit } ?? groups.first)?.firstPath
+        let sample = ggufFile.flatMap { file in listing.files.contains { $0.path == file } ? file : nil }
+            ?? Self.headerSample(in: groups)
         let shippedSafetensors = listing.files.filter { $0.isSafetensors && $0.isTopLevel }.map(\.path)
 
         async let config = fileIfListed("config.json", in: topLevel, repoID: repoID, subject: .config)
@@ -109,6 +112,13 @@ public struct ModelCompatibilityChecker: Sendable {
         }
         guard case .success(let header)? = await mergedSafetensorsHeader(repoID: repoID, paths: paths) else { return nil }
         return header.tensorBytes
+    }
+
+    /// Subfolders hold auxiliary GGUFs (MTP draft heads, other variants) that the downloader never fetches, so a
+    /// whole top-level quant describes the model first.
+    static func headerSample(in groups: [GGUFQuantGroup]) -> String? {
+        let whole = groups.filter { !$0.isSplit }
+        return (whole.first { !$0.firstPath.contains("/") } ?? whole.first ?? groups.first)?.firstPath
     }
 
     private static func unwrap<T>(_ result: Result<T, FetchProblem>?, into problems: inout [FetchProblem]) -> T? {

@@ -150,7 +150,7 @@ device budget — see [Finding compatible models]({{ '/guide/models' | relative_
 
 ```
 aura models search "<query>" [--format mlx|gguf] [--device <preset>] [--limit N]
-aura models check <owner/repo | URL> [--device <preset>] [--json] [--entry]
+aura models check <owner/repo | URL> [--device <preset>] [--gguf <file>] [--json] [--entry]
 aura models devices                     # presets and where each memory budget comes from
 ```
 
@@ -161,7 +161,10 @@ Device: Mac, 32 GB (M1 Pro) · budget 20.0 GB (measured)
 Model: qwen35 · 65 layers · context 262144 · 22 quants
 ```
 
-`--entry` prints only the `models.json` entry of a runnable model; `--json` prints the whole report.
+`--entry` prints only the `models.json` entry of a runnable model; `--json` prints the whole report, including an
+`architecture` object (layers, KV heads, head width, `kvLayers`, `experts`, trained context) that stays filled when a
+blocker withholds the entry, and HF's `gated` mode. `--gguf <file>` reads that GGUF's header instead of the smallest
+whole top-level quant.
 `--device` defaults to `this-device` (see `aura models devices`); `--limit` defaults to 15 (1–100).
 `search` and `check` query huggingface.co, so they need a network connection.
 

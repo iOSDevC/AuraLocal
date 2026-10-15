@@ -609,8 +609,9 @@ public struct ModelCompatibilityChecker: Sendable {
          ggufHeaderBytes: Int = 4 << 20,
          requestTimeout: TimeInterval = 60)
 
-    func check(_ repo: String, on target: DevicePreset = .thisDevice()) async -> CompatibilityReport
-    func snapshot(of repo: String) async -> RepoSnapshot      // fetch once…
+    // ggufFile: the GGUF whose header is read when the repo lists it; else the smallest whole top-level quant
+    func check(_ repo: String, on target: DevicePreset = .thisDevice(), ggufFile: String? = nil) async -> CompatibilityReport
+    func snapshot(of repo: String, ggufFile: String? = nil) async -> RepoSnapshot      // fetch once…
     static func repoID(from input: String) -> String?         // "owner/repo" from an id or a huggingface.co / hf.co URL
 }
 
