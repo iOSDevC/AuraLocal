@@ -384,23 +384,23 @@ private final class CancellationFlag: Sendable {
         var reason: GenerationInterrupted.Trigger?
     }
 
-    private let status = Mutex(Status())
+    private let stop = Mutex(Status())
 
     /// `reason == nil` is the caller cancelling.
     func set(_ reason: GenerationInterrupted.Trigger? = nil) {
-        status.withLock {
+        stop.withLock {
             guard !$0.isSet else { return }
             $0 = Status(isSet: true, reason: reason)
         }
     }
 
     var isSet: Bool {
-        status.withLock { $0.isSet }
+        stop.withLock { $0.isSet }
     }
 
     /// `GenerationInterrupted` when the lifecycle or the guard stopped the run, `CancellationError` when the caller did.
     func throwIfSet() throws {
-        let current = status.withLock { $0 }
+        let current = stop.withLock { $0 }
         guard current.isSet else { return }
         if let reason = current.reason {
             throw GenerationInterrupted(reason: reason, partialText: "")

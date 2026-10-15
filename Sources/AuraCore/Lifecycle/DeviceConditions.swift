@@ -16,7 +16,7 @@ import UIKit
 /// ``Level/block`` it is cancelled and the call throws ``GenerationInterrupted`` with the text produced so far.
 ///
 /// ```swift
-/// llm.deviceConditions = DeviceConditions(onWarning: { print($0.causes) })
+/// llm.deviceGuard = DeviceConditions(onWarning: { print($0.causes) })
 /// ```
 public struct DeviceConditions: Sendable {
 
@@ -102,8 +102,8 @@ public struct DeviceConditions: Sendable {
     public var blockBelowBatteryLevel: Float?
     /// Tokens or denoising steps between checks. Values below 1 count as 1.
     public var checkInterval: Int
-    /// Called when a check moves the level to ``Level/warn``: on the main actor for text, on the image engine's
-    /// queue for images.
+    /// Called when a check moves the level to ``Level/warn``: on the main actor for text and for the check before
+    /// an image run, then on the image engine's queue for the checks between denoising steps.
     public var onWarning: (@Sendable (Assessment) -> Void)?
 
     /// Replaces the real readings (tests).

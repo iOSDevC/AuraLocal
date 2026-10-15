@@ -236,14 +236,16 @@ struct ModelEvalView: View {
                     text += token
                     results[index].output = text
                 }
-                let elapsed = ContinuousClock.now - start
-                results[index].elapsed = Double(elapsed.components.seconds)
-                    + Double(elapsed.components.attoseconds) / 1e18
+                results[index].elapsed = Self.seconds(ContinuousClock.now - start)
                 results[index].stats = llm.lastGenerationStats
             } catch {
                 results[index].error = error.localizedDescription
             }
         }
+    }
+
+    private static func seconds(_ duration: Duration) -> TimeInterval {
+        TimeInterval(duration.components.seconds) + TimeInterval(duration.components.attoseconds) / 1e18
     }
 }
 
