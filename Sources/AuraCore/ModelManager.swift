@@ -255,15 +255,17 @@ public final class ModelManager: ObservableObject {
     ) async throws -> AuraLocal {
         // Refuse a model that can't fit even with streaming — BEFORE downloading gigabytes or
         // risking a jetsam kill mid-load. HardwareAnalyzer only *flags* .tooLarge; this is where
-        // it's enforced. (assess uses current available memory via .current().)
-        if HardwareAnalyzer.assess(model).fitLevel == .tooLarge {
+        // it's enforced, together with the models already resident.
+        let residents = lruOrder.filter { cache[$0] != nil }
+        guard let evictions = Self.evictionsBeforeLoading(
+            model, residents: residents, budget: memoryBudget, profile: .current(),
+            residentsCountAgainstProfile: Self.profileIsMemoryLimit
+        ) else {
             let msg = "\(model.displayName) needs more memory than this device has, even with streaming."
             states[model] = .failed(msg)
             throw AuraError.modelTooLarge(msg)
         }
-
-        // Evict LRU if over budget
-        while cache.count >= memoryBudget, let lru = lruOrder.last {
+        for lru in residents.suffix(evictions).reversed() {
             evict(lru)
         }
 
@@ -310,6 +312,41 @@ public final class ModelManager: ObservableObject {
     }
 
     // MARK: - Memory detection
+
+    /// On iOS ``HardwareProfile/current()`` reports the app's memory limit, which does not shrink while models are
+    /// loaded; on macOS it reads free memory, which already leaves them out.
+    #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
+    static let profileIsMemoryLimit = true
+    #else
+    static let profileIsMemoryLimit = false
+    #endif
+
+    /// How many of `residents` (most recently used first) to evict before loading `model`, or `nil` when it does
+    /// not fit even alone. The ``memoryBudget`` count leaves room for the new model; when
+    /// `residentsCountAgainstProfile`, the estimated memory of the models that stay is also taken off the profile,
+    /// evicting the least recently used until `model` is no longer ``ModelFitLevel/tooLarge`` beside them.
+    nonisolated static func evictionsBeforeLoading(
+        _ model: Model,
+        residents: [Model],
+        budget: Int,
+        profile: HardwareProfile,
+        residentsCountAgainstProfile: Bool
+    ) -> Int? {
+        func fits(beside kept: ArraySlice<Model>) -> Bool {
+            let used = residentsCountAgainstProfile ? kept.reduce(0) { $0 + $1.estimatedRuntimeMemoryGB } : 0
+            let room = HardwareProfile(totalMemoryGB: profile.totalMemoryGB,
+                                       availableMemoryGB: max(0, profile.availableMemoryGB - used),
+                                       deviceName: profile.deviceName,
+                                       memoryBandwidthGBs: profile.memoryBandwidthGBs)
+            return HardwareAnalyzer.assess(model, profile: room).fitLevel != .tooLarge
+        }
+        guard fits(beside: []) else { return nil }
+        var kept = min(residents.count, max(budget - 1, 0))
+        while kept > 0, !fits(beside: residents.prefix(kept)) {
+            kept -= 1
+        }
+        return residents.count - kept
+    }
 
     private static func detectMemoryBudget() -> Int {
         // Unknown → keep exactly one model resident. The OS reports unknown when the process is at

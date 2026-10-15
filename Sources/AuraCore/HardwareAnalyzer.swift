@@ -52,7 +52,8 @@ public struct HardwareProfile: Sendable {
         // fraction-of-RAM fallback survives ONLY here, because this value drives estimates a user
         // reads (fit badges, sizing) where a rough number beats no number. Anything that decides
         // whether it is safe to allocate must use `availableMemoryBytes()` directly and treat
-        // `nil` as danger, not fall back to this.
+        // `nil` as danger, not fall back to this. On iOS this is a fixed limit, so the load gate
+        // (`ModelManager.evictionsBeforeLoading`) takes the resident models off it.
         #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
         let measuredBytes = memoryLimitBytes()
         #else

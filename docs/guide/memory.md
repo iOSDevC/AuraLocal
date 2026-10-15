@@ -42,6 +42,8 @@ On-device LLMs can consume significant RAM. AuraLocal has multiple layers of pro
 | ~7.9 GB or more | 4 models (the cap) |
 
 When you load a model that would exceed the budget, the LRU model is automatically `unload()`ed before the new one loads.
+On iOS more can go: models are also evicted while the new one would not fit the app's memory limit beside them
+(see [iOS](#ios)).
 
 ---
 
@@ -99,6 +101,9 @@ reported 8142 MiB available.
 - `HardwareProfile.current().availableMemoryGB` carries this figure on iOS, so `DevicePreset.thisDevice()`
   (the Model Finder, `aura models check`), `HardwareAnalyzer.assess` and the refusal in
   `ModelManager.load` agree, and a verdict does not shrink while a model is loaded.
+- Because the limit does not shrink, `ModelManager.load` takes the estimated memory of the models it keeps
+  cached off it: when the new model would be Too Large beside them, the least recently used are evicted
+  first, and the load is refused only when the model is Too Large on its own.
 - What is left right now, `HardwareProfile.availableMemoryBytes()`, still drives the safety checks: the
   layer-streaming pressure check, the `ModelManager` cache size, the Core ML image memory gate, and the
   context window (the KV cache is allocated on top of what the app already holds).

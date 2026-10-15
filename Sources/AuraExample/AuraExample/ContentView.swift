@@ -202,8 +202,8 @@ struct ModelsTab: View {
                         // exactly when the process is at its jetsam limit, and every safety check
                         // treats that as pressure — so a rosy number here without the caveat would
                         // contradict what the engine is actually doing.
-                        if HardwareProfile.availableMemoryBytes() != nil {
-                            Text(String(format: "%.1f GB", profile.availableMemoryGB))
+                        if let available = HardwareProfile.availableMemoryBytes() {
+                            Text(String(format: "%.1f GB", Double(available) / 1_073_741_824))
                         } else {
                             VStack(alignment: .trailing, spacing: 2) {
                                 Text(String(format: "~%.1f GB", profile.availableMemoryGB))
@@ -213,6 +213,14 @@ struct ModelsTab: View {
                         }
                     }
                     .font(.subheadline)
+                    #if os(iOS)
+                    // What fit verdicts are judged against on iOS: it does not shrink while a model is loaded.
+                    if let limit = HardwareProfile.memoryLimitBytes() {
+                        LabeledContent("App memory limit",
+                                       value: String(format: "%.1f GB", Double(limit) / 1_073_741_824))
+                            .font(.subheadline)
+                    }
+                    #endif
                     LabeledContent("Compatible models", value: "\(runnableText.count + runnableVision.count + runnableOCR.count)")
                         .font(.subheadline)
                 } header: {

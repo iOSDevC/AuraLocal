@@ -31,6 +31,49 @@ final class MemoryLimitTests: XCTestCase {
         XCTAssertGreaterThan(footprint, 0)
     }
 
+    // MARK: - Load gate
+
+    private let resident = Model.qwen3_4b
+    private let next = Model.medgemma_1_5_4b
+
+    /// A limit that holds `next` alone, or `resident` alone, but not both.
+    private var limitForOne: HardwareProfile {
+        let gb = next.estimatedRuntimeMemoryGB + resident.estimatedRuntimeMemoryGB * 0.5
+        return HardwareProfile(totalMemoryGB: 8, availableMemoryGB: gb, deviceName: "iPhone")
+    }
+
+    @MainActor
+    func testAResidentModelThatLeavesTooLittleOfTheLimitIsEvictedFirst() throws {
+        XCTAssertEqual(next.format, .mlx, "an MLX model cannot fall back to streaming")
+        let evictions = ModelManager.evictionsBeforeLoading(next, residents: [resident], budget: 2,
+                                                            profile: limitForOne, residentsCountAgainstProfile: true)
+        XCTAssertEqual(evictions, 1)
+    }
+
+    @MainActor
+    func testFreeMemoryReadingsAlreadyLeaveResidentModelsOut() {
+        let evictions = ModelManager.evictionsBeforeLoading(next, residents: [resident], budget: 2,
+                                                            profile: limitForOne, residentsCountAgainstProfile: false)
+        XCTAssertEqual(evictions, 0)
+    }
+
+    @MainActor
+    func testModelsThatFitTogetherStayAndTheBudgetStillEvicts() {
+        let roomy = HardwareProfile(totalMemoryGB: 64, availableMemoryGB: 40, deviceName: "Mac")
+        XCTAssertEqual(ModelManager.evictionsBeforeLoading(next, residents: [resident], budget: 2, profile: roomy,
+                                                           residentsCountAgainstProfile: true), 0)
+        XCTAssertEqual(ModelManager.evictionsBeforeLoading(next, residents: [resident], budget: 1, profile: roomy,
+                                                           residentsCountAgainstProfile: true), 1)
+    }
+
+    @MainActor
+    func testAModelTooLargeAloneIsRefused() {
+        let tiny = HardwareProfile(totalMemoryGB: 4, availableMemoryGB: next.estimatedRuntimeMemoryGB * 0.9,
+                                   deviceName: "iPhone")
+        XCTAssertNil(ModelManager.evictionsBeforeLoading(next, residents: [], budget: 2, profile: tiny,
+                                                         residentsCountAgainstProfile: true))
+    }
+
     #if os(macOS)
     func testMacsHaveNoPerAppLimit() {
         XCTAssertNil(HardwareProfile.memoryLimitBytes())
