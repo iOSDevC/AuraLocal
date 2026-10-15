@@ -174,7 +174,7 @@ if let stats = llm.lastGenerationStats {
 ```swift
 public struct GenerationStats: Sendable, Hashable {
     public enum Provenance: String, Sendable, Hashable, CaseIterable {
-        case runtime    // the runtime's own counters (MLX GenerateResult)
+        case runtime    // the runtime's own counters (MLX GenerateResult); decode timed by AuraLocal
         case measured   // AuraLocal's clock around the stream; output counted per piece; prompt estimated
         case estimated  // counts from text length (UTF-8 bytes ÷ 4)
         var label: String
@@ -193,7 +193,7 @@ public struct GenerationStats: Sendable, Hashable {
 
 | Backend | `source` | Prompt tokens | Output tokens | Durations |
 |---|---|---|---|---|
-| `MLXBackend` | `.runtime` | exact | exact | runtime prefill and decode; TTFT from AuraLocal's clock |
+| `MLXBackend` | `.runtime` | exact | exact | runtime prefill; decode and TTFT from AuraLocal's clock (first token callback to last) |
 | `LlamaCppBackend`, no tools; constrained calls | `.measured` | estimated | one per streamed piece (one per sampled token in LocalLLMClient 0.5.0) | AuraLocal's clock |
 | `LlamaCppBackend` / `LayerStreamingBackend` with tools | `.estimated` | estimated | estimated | AuraLocal's clock |
 | `LayerStreamingBackend`, no tools | `.measured` | estimated | one per streamed piece | AuraLocal's clock |

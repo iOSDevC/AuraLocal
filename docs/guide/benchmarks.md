@@ -44,16 +44,18 @@ fastest chips and overestimates them (M2 Ultra, LLaMA 2 7B Q4_0: 169 predicted, 
 
 The two constants are a least-squares fit to the M1 and M2 rows of
 [llama.cpp discussion #4167](https://github.com/ggml-org/llama.cpp/discussions/4167) (third-party, LLaMA 2 7B,
-build 8e672ef). `EstimatorAccuracyTests` fails when the median relative error exceeds 25 % for any of:
+build 8e672ef). `EstimatorAccuracyTests` fails when a relative error exceeds 25 %:
 
-| Gate | Points | Median error |
+| Gate | Points | Error |
 |---|---|---|
-| Our measurements (table above) | 4 | 21 % |
-| #4167 M3 and M4 rows, not used in the fit, per chip tier | 5–12 per tier | 3–10 % |
-| #4167 M1–M4 rows, per chip tier | 14–24 per tier | 3–7 % |
+| Our measurements (table above), each point | 4, two of them known misses | 10 % and 0.4 %; the known misses 31 % and 45 % |
+| #4167 M3 and M4 rows, not used in the fit, median per chip tier | 5–12 per tier | 3–10 % |
+| #4167 M1–M4 rows, median per chip tier | 14–24 per tier | 3–7 % |
 
-Known misses on our own Mac: Qwen3-0.6B is predicted at 119 tok/s (measured 218) and Qwen3-14B Q4_K_M at
-18.2 (measured 13.9). The #4167 rows for M5 and newer are excluded: `HardwareProfile` has no bandwidth for
+The known misses on our own Mac are expected failures: a third miss fails the test, and so does either of them
+coming within 25 %. Qwen3-0.6B is predicted at 119 tok/s (measured 218): the fixed 6.6 ms per token caps every
+estimate at 1 / 0.0066 ≈ 151 tok/s, while MLX took 4.6 ms per token there. Qwen3-14B Q4_K_M is predicted at 18.2
+(measured 13.9). The #4167 rows for M5 and newer are excluded: `HardwareProfile` has no bandwidth for
 those chips yet, so the estimate is `nil` there. Those rows, measured with a newer build (c1d0e7a), show a smaller
 per-token cost: the formula underestimates M5 Max and Ultra by up to 44 % (median 31 %).
 
@@ -178,5 +180,6 @@ if let stats = llm.lastGenerationStats {
 }
 ```
 
-`lastGenerationStats` reports MLX runtime counters as they are; on llama.cpp, prompt tokens are estimated. See
+`lastGenerationStats` reports MLX's token counts and prefill time as the runtime gives them, and times decode from the
+first token to the last on every backend; on llama.cpp, prompt tokens are estimated. See
 [Generation Stats]({{ '/api/core' | relative_url }}#generation-stats).

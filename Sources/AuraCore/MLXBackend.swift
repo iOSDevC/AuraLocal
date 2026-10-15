@@ -31,7 +31,7 @@ final class MLXBackend: InferenceBackend {
 
     private var modelContainer: ModelContainer?
     private let model: Model
-    let generateParameters: GenerateParameters
+    let parameters: GenerateParameters
     private(set) var lastGenerationStats: GenerationStats?
     private(set) var lastContextOverflow: ContextWindowOverflow?
 
@@ -48,7 +48,7 @@ final class MLXBackend: InferenceBackend {
         case .visionSpecialized: defaultTemp = 0.0
         }
         // Unbounded, the KV cache grows with every token until jetsam; the window makes MLX rotate it instead.
-        self.generateParameters = GenerateParameters(
+        self.parameters = GenerateParameters(
             maxKVSize: HardwareAnalyzer.recommendedContextWindow(for: model),
             temperature: temperature ?? defaultTemp)
     }
@@ -225,18 +225,21 @@ final class MLXBackend: InferenceBackend {
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
         lastGenerationStats = nil
-        let params = self.generateParameters
+        let params = self.parameters
         lastContextOverflow = nil
         let output = try await container.perform { (context: ModelContext) async throws -> Output in
             let start = ContinuousClock.now
             var firstToken: ContinuousClock.Instant?
+            var lastToken: ContinuousClock.Instant?
             let input = try await prepareInput(context)
             let result = try MLXLMCommon.generate(
                 input: input,
                 parameters: params,
                 context: context
             ) { tokens in
-                if firstToken == nil { firstToken = ContinuousClock.now }
+                let now = ContinuousClock.now
+                if firstToken == nil { firstToken = now }
+                lastToken = now
                 guard !Task.isCancelled else { return .stop }
 
                 let partial = context.tokenizer.decode(tokenIds: tokens)
@@ -246,6 +249,9 @@ final class MLXBackend: InferenceBackend {
                 }
                 return tokens.count >= maxTokens ? .stop : .more
             }
+            // `result.generateTime` also covers the step that drew the stop token, which `generationTokenCount`
+            // leaves out; timing the callbacks matches llama.cpp's first-to-last-piece span.
+            let decodeTime = firstToken.flatMap { first in lastToken.map { GenerationStats.seconds($0 - first) } } ?? 0
             let stats = GenerationStats(
                 backend: .mlx,
                 source: .runtime,
@@ -253,7 +259,7 @@ final class MLXBackend: InferenceBackend {
                 generatedTokens: result.generationTokenCount,
                 promptTime: result.promptTime,
                 timeToFirstToken: GenerationStats.seconds((firstToken ?? ContinuousClock.now) - start),
-                decodeTime: result.generateTime
+                decodeTime: decodeTime
             )
             let overflow = params.maxKVSize.flatMap {
                 ContextWindowOverflow.detect(promptTokens: result.promptTokenCount,

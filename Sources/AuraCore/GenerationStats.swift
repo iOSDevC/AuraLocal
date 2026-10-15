@@ -10,8 +10,8 @@ public struct GenerationStats: Sendable, Hashable {
 
     /// Where the counts and durations come from.
     public enum Provenance: String, Sendable, Hashable, CaseIterable {
-        /// The inference runtime's own counters (MLX `GenerateResult`): exact prompt and output token counts,
-        /// runtime prefill and decode durations.
+        /// The inference runtime's own counters (MLX `GenerateResult`): exact prompt and output token counts and
+        /// the runtime's prefill duration. Decode is timed by AuraLocal from the first token callback to the last.
         case runtime
         /// AuraLocal's monotonic clock around the token stream. Output tokens are counted one per streamed piece,
         /// which llama.cpp emits once per sampled token; the prompt count is estimated (UTF-8 bytes ÷ 4, before

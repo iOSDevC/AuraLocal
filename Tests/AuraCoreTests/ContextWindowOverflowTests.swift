@@ -19,7 +19,7 @@ final class ContextWindowOverflowTests: XCTestCase {
     func testMLXBackendBoundsItsKVCacheToTheRecommendedWindow() throws {
         let model = try XCTUnwrap(ModelRegistry.shared.models.first { $0.format == .mlx }, "catalog has no MLX entry")
         let backend = MLXBackend(model: model)
-        XCTAssertEqual(backend.generateParameters.maxKVSize, HardwareAnalyzer.recommendedContextWindow(for: model))
+        XCTAssertEqual(backend.parameters.maxKVSize, HardwareAnalyzer.recommendedContextWindow(for: model))
         XCTAssertNil(backend.lastContextOverflow)
     }
     #endif
