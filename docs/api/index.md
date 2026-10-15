@@ -20,3 +20,4 @@ Other modules are covered elsewhere:
 - AuraAppleIntelligence is not documented on this site.
 
 AuraAgents and AuraAppleIntelligence import `FoundationModels`, so they build only with the Xcode 26 SDK.
+AuraImageGen uses `ImagePlaygroundOptions`, so it builds only with the 26.4 SDKs (Xcode 26.4).

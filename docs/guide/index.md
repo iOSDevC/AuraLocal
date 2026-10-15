@@ -23,6 +23,40 @@ Face repo against the runtimes AuraLocal pins (mlx-swift-lm 3.31.3, llama.cpp b8
 budget without downloading the weights: from Swift (`ModelCompatibilityChecker`), the CLI (`aura models`) or
 the Model Finder example app.
 
+## Images on device
+
+[Image Generation]({{ '/guide/imagegen' | relative_url }}#on-device-iphone-and-mac-core-ml-stable-diffusion) runs Core ML
+Stable Diffusion 2.1 base on iPhone and Mac after a one-time ~1.07 GB download. It also covers Apple's Image
+Playground sheet (Private Cloud Compute from iOS 27) and FLUX + LoRA on macOS.
+
+## Download models and keep them
+
+[Downloading without loading]({{ '/guide/models' | relative_url }}#downloading-without-loading) covers
+`ModelDownloads`: resumable GGUF and MLX downloads, the Hugging Face token, the free-space check, and
+`DownloadRecords` for keeping downloads across launches. AuraUI's
+[Hugging Face browser]({{ '/api/ui' | relative_url }}#hugging-face-browser) puts search, per-device verdicts and
+downloads in your app.
+
+## iOS lifecycle and memory
+
+When an iOS app backgrounds, its running generations stop and throw `GenerationInterrupted` with the text so far
+([Background Lifecycle]({{ '/guide/memory' | relative_url }}#background-lifecycle-ios)).
+[Device conditions]({{ '/guide/memory' | relative_url }}#device-conditions) is the opt-in thermal guard, and
+[iOS]({{ '/guide/memory' | relative_url }}#ios) explains the app-memory-limit budget.
+
+## Constrained and structured output
+
+[Constrained Generation]({{ '/guide/backends' | relative_url }}#constrained-generation-gguf-only) restricts a GGUF
+reply to JSON or a GBNF grammar. `AuraSession` enforces a profile's `OutputSchema` by validation and repair
+([Structured output]({{ '/api/core' | relative_url }}#structured-output)).
+
+## Ask a bigger model
+
+[Hybrid Inference]({{ '/guide/hybrid' | relative_url }}) escalates to your own llama-server/Ollama box or a
+bring-your-own-key Anthropic or OpenAI model; GitHub Models was retired.
+[`aura ask`]({{ '/guide/cli' | relative_url }}#ask-a-bigger-model-aura-ask) uses a local server unless you name a
+cloud provider or pass a `--base-url` (a public host there counts as cloud).
+
 ## Research: distributed inference over USB
 
 [Distributed Inference over USB (research)]({{ '/guide/distributed' | relative_url }}) records an evaluation of
