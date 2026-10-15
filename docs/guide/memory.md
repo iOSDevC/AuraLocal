@@ -143,6 +143,13 @@ The largest model `HardwareAnalyzer.assess` rates as a full load at each [device
 the Metal budget is estimated at ≈2/3 of RAM up to 36 GB and ≈3/4 above, and the 32 GB row uses a measured 20 GB.
 One size down, each preset streams the larger model instead (32B on 16 GB, 70B on 32 GB).
 
+On the running Mac, `HardwareProfile.current()` reports the memory the kernel can hand out now (free +
+inactive + purgeable pages), not the Metal budget. `HardwareAnalyzer.assess`, `BackendRouter` and the
+refusal in `ModelManager.load` therefore judge a model against what is free at that moment, and can rate it
+lower, or stream it, while other apps hold memory. `DevicePreset.thisDevice()` (the Model Finder,
+`aura models check`) uses Metal's `recommendedMaxWorkingSetSize` instead, so on a Mac the two verdicts can
+differ. On iOS both use the app's memory limit.
+
 The context window is derived per model by `HardwareAnalyzer.recommendedContextWindow(for:)` from its
 KV cost and the memory left after the weights (1024–32768 tokens on macOS). For example, Llama 3.1 8B
 reaches the 32768 ceiling with about 9 GB available and falls to the 1024 floor when little memory is
@@ -194,7 +201,8 @@ When each engine actually stops:
 - **Core ML Stable Diffusion:** at the next denoising step. Loading the model and the final decode cannot
   be interrupted.
 
-macOS has no background notifications, so nothing is cancelled there.
+`BackgroundLifecycle` observes UIKit's background notifications on iOS only. On macOS and visionOS nothing is
+cancelled.
 
 ---
 

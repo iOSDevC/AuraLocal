@@ -157,6 +157,10 @@ Models tagged with a `Model.Domain` (`code`, `security`, `finance`, `medicine`).
 | Model case | Display name | Format | Size | Domain | Notes |
 |-----------|-------------|--------|------|--------|-------|
 | `.medgemma_4b` | MedGemma 4B | MLX (vision) | ~2.8 GB | medicine | load with `AuraLocal.vision(_:)`; HAI-DEF license terms apply |
+| `.medgemma_1_5_4b` | MedGemma 1.5 4B | MLX (vision) | ~3.2 GB | medicine | load with `AuraLocal.vision(_:)`; HAI-DEF license terms apply |
+| `.mediphi_3_8b_mlx` | MediPhi Instruct 3.8B | MLX | ~2.0 GB | medicine | English |
+| `.apollo2_1_5b_gguf` | Apollo2 1.5B (GGUF) | GGUF | ~1.0 GB | medicine | |
+| `.medpsy_1_7b_gguf` | MedPsy 1.7B (GGUF) | GGUF | ~1.2 GB | medicine | validated in English by its author |
 | `.fingpt_mt_llama3_8b_gguf` | FinGPT MT 8B (Llama 3) | GGUF | ~4.6 GB | finance | |
 | `.fingpt_sentiment_lfm2_1_2b_gguf` | FinGPT Sentiment 1.2B | GGUF | ~769 MB | finance | sentiment only, tuned for single-token outputs; not for chat |
 | `.security_gemma_e2b_gguf` | Security SLM Gemma 4 E2B (Mobile Sec) | GGUF | ~3.2 GB | security | vulnerability triage, not the sole authority |
@@ -511,7 +515,7 @@ view with the findings, the per-quant fit table, **Copy catalog entry**, **Open 
 rated runnable, a **Download** section (quant picker, size and free space, progress, Cancel/Resume, **Try it** once
 finished). A gated repo shows **Add a token**, which opens the token form in place.
 
-- **AuraExample** (iOS 18.6+ and macOS): **Models → Search Hugging Face** and **Models → Downloads**, plus
+- **AuraExample** (iOS 18.6+ and macOS 26.2+): **Models → Search Hugging Face** and **Models → Downloads**, plus
   **Find on Hugging Face…** at the top of the Text tab's model menu (on iPhone, Models sits under More). Search
   judges repos against this device only and starts with **Compatible only** on. A finished download is listed
   under **Downloaded** in the Text menu (and in the Vision picker for an MLX vision model) without a relaunch,
@@ -525,6 +529,26 @@ finished). A gated repo shows **Add a token**, which opens the token form in pla
 On the Simulator the format filter starts on GGUF, MLX models are disabled in the Text menu's **Downloaded**
 section and in Try it (MLX can't run there; picked anywhere else, they fail to load with an error), and "this
 device" reports the Mac's memory, not an iPhone's.
+
+---
+
+## Bring your own GGUF
+
+`Model.fromURL(_:displayName:)` builds a text GGUF model from a Hugging Face file URL (`resolve` or `blob` form,
+any revision or subfolder), any other `https` URL ending in `.gguf`, or a `file://` path that is loaded in place
+and never copied. `Model.from(_:)` takes the same as a `ModelSource` (`.huggingFace(url:)`, `.directURL(_:)`,
+`.localFile(_:)`).
+
+```swift
+if let model = Model.fromURL("https://huggingface.co/<owner>/<repo>/resolve/main/<file>.gguf") {
+    let llm = try await ModelManager.shared.load(model)   // downloads to <Caches>/models/<owner>/<repo>/
+    print(try await llm.chat("Hello"))
+}
+```
+
+Such a model has size 0 and no KV metadata. The load-time memory guard always rates it as fitting, and its
+context window is the platform fallback (8192 or 4096 on a Mac, 2048 or 1024 on iOS). For a sized entry, use
+the checker's `suggestedEntry` (below).
 
 ---
 
@@ -555,6 +579,12 @@ try ModelDownloads.delete(model)                                // file + .parti
   `<Caches>/huggingface/hub/models--<org>--<repo>/snapshots/main/` with a `.complete` marker written after the
   last file. The MLX load path (`MLXBackend`) has its own downloader that uses the same folder and marker, so a
   snapshot downloaded here loads without a second download.
+- **One folder, pinned**: `ModelDownloads.downloadFolder(repoID:revision:folder:include:auth:progress:)` fetches
+  the files under one folder of a repo at a fixed revision into
+  `<Caches>/huggingface/hub/models--<org>--<repo>/snapshots/main/<folder>`. It resumes `.partial` files, deletes
+  files from any other revision first, and sends no token unless you pass `auth`. `planFolder`, `localFolder`,
+  `isFolderComplete` and `deleteRepo` go with it. AuraImageGen downloads its Core ML Stable Diffusion this way
+  (see [Image generation]({{ '/guide/imagegen' | relative_url }})).
 - **What MLX fetches**: top-level `*.safetensors`, `*.json` and `*.jinja` files of `main` only (mlx-swift-lm's
   patterns). Weights in a subfolder, or no `config.json`, throw `ModelDownloadError.incompleteRepo`.
 - **What GGUF fetches**: one single-file quant at the top level of the repo. Split (`-00001-of-0000N`) and
@@ -660,7 +690,7 @@ AuraLocal ships a curated set of uncensored and abliterated models for use cases
 |-------|-----------|-------|
 | **Abliterated** | Refusal direction subtracted from weights post-training (mlabonne method). No fine-tuning needed. | Fast to produce, widely available for any base model. |
 | **Josiefied** | Abliteration + additional DPO fine-tune by Goekdeniz-Guelmez. | Stronger uncensoring than abliteration alone. |
-| **Dolphin** | Training dataset filtered to remove alignment/bias data (Eric Hartford / cognitivecomputations). | Model follows the system prompt without imposing ethics. User controls the tone. |
+| **Dolphin** | Training dataset filtered to remove alignment/bias data (Eric Hartford; Hugging Face org `dphn`, formerly `cognitivecomputations`). | Model follows the system prompt without imposing ethics. User controls the tone. |
 | **Uncensored fine-tune** | Fine-tuned on a no-refusal dataset. | Behavior depends on the training data quality. |
 
 ---

@@ -29,7 +29,8 @@ AuraLocal uses two inference engines internally, selected automatically by `Back
 
 All three implement the same `InferenceBackend` protocol — your code looks identical regardless of which backend is running.
 After each generation, `AuraLocal.lastGenerationStats` reports token counts and timings: MLX passes on its runtime
-counters, the llama.cpp backends time the stream and estimate the prompt from its rendered text (see
+counters, the llama.cpp backends time the stream and estimate the prompt from its rendered text, and with tools the
+output as well (see
 [Generation Stats]({{ '/api/core' | relative_url }}#generation-stats)).
 
 {: .warning }
@@ -302,7 +303,7 @@ Modern models use Grouped-Query Attention (GQA), which dramatically reduces KV c
 | Mistral 7B | 32 | 8 | ~256 MB |
 | Gemma 2 9B | 16 | 8 | ~672 MB |
 
-`model.estimatedKVCacheGB(contextLength:)` applies this formula (`4 × layers × KV heads × head dim × context` bytes) to the catalog's metadata, not a naive full-attention estimate. The catalog's Gemma 2 9B entry currently declares 4 KV heads, so it returns about half (~336 MB) for that model.
+`model.estimatedKVCacheGB(contextLength:)` applies this formula (`4 × layers × KV heads × head dim × context` bytes) to the catalog's metadata and returns the figures above; an entry with `kvLayers` is summed per layer type (see [Models › KV cache per layer type]({{ '/guide/models' | relative_url }}#kv-cache-per-layer-type-and-mixtures-of-experts)).
 
 ---
 
@@ -337,5 +338,5 @@ To free memory on backgrounding as well:
 BackgroundLifecycle.shared.aggressiveMemorySaving = true
 ```
 
-Nothing is cancelled on macOS. Details and the opt-in `DeviceConditions` guard (heat, Low Power Mode,
+Nothing is cancelled on macOS or visionOS. Details and the opt-in `DeviceConditions` guard (heat, Low Power Mode,
 battery): [Memory]({{ '/guide/memory' | relative_url }}#background-lifecycle-ios).

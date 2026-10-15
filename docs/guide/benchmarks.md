@@ -181,5 +181,6 @@ if let stats = llm.lastGenerationStats {
 ```
 
 `lastGenerationStats` reports MLX's token counts and prefill time as the runtime gives them, and times decode from the
-first token to the last on every backend; on llama.cpp, prompt tokens are estimated. See
+first token to the last on every backend; on llama.cpp, prompt tokens are estimated, and with tools registered the
+generated count is estimated from text length too (`source == .estimated`). See
 [Generation Stats]({{ '/api/core' | relative_url }}#generation-stats).

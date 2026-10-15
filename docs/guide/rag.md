@@ -72,9 +72,11 @@ for source in answer.sources {
 > UUID version 5 of the file's location (relative to the home directory when inside it), so `./`,
 > `..` and symlinked spellings of the same path map to it. Entries indexed by earlier versions,
 > whose IDs changed every launch, are matched by `url` instead, and `open()` removes the duplicates
-> those versions left for one file, keeping the newest one that has chunks. An entry whose chunks
-> are missing (an earlier version was interrupted while indexing) is deleted and the file indexed
-> again. A moved or renamed file counts as a new document.
+> those versions left for one file, keeping the newest one that has chunks. `open()` also replaces the
+> full-text triggers those versions installed, whose deletes never reached the FTS5 index (keyword
+> matches could point at removed chunks), and rebuilds that index once from the stored chunks. An
+> entry whose chunks are missing (an earlier version was interrupted while indexing) is deleted and
+> the file indexed again. A moved or renamed file counts as a new document.
 
 ---
 

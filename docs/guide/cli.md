@@ -22,7 +22,7 @@ description: "The aura command-line tool — a headless integration harness for 
 `aura` is a small **macOS** command-line tool that drives AuraLocal's hybrid and
 native-tool features headlessly — useful as an integration reference and a CI smoke test.
 
-Build it from the package:
+Build it from the package, with Xcode 26.4 or later (it links `AuraImageGen`, which needs the 26.4 SDK):
 
 ```sh
 swift build -c release --product aura
@@ -91,8 +91,9 @@ aura ask "Hello" --base-url http://192.168.1.20:8080/v1 --model qwen3-32b
 
 The answer goes to stdout, so it pipes cleanly. A receipt goes to stderr:
 `— via <provider> · <model>[ · <in> in / <out> out][ · cached]`. Token counts appear when the
-server reports them; a repeated identical request is served from the in-memory response cache
-and ends in `· cached`. `aura ask --help` prints the usage.
+server reports them. The response cache lives in memory, and each `aura ask` is a new process that
+sends one request, so the CLI never answers from it and `· cached` does not appear in practice.
+`aura ask --help` prints the usage.
 
 For a cloud target, obvious secrets and PII in the prompt (emails, API keys, tokens) are redacted
 before sending (`redactPII: true`); a local-network target gets the prompt verbatim. Keychain keys use the

@@ -28,6 +28,7 @@ In Xcode: **File → Add Package Dependencies** → enter `https://github.com/iO
 In `Package.swift`:
 ```swift
 // swift-tools-version: 6.0
+platforms: [.iOS(.v18), .macOS(.v15)],   // AuraLocal's minimums (visionOS: .v2)
 dependencies: [
     .package(url: "https://github.com/iOSDevC/AuraLocal", revision: "<commit SHA from main>"),
 ],
@@ -128,6 +129,11 @@ struct MyApp: App {
     }
 }
 ```
+
+`TextChatTab(offersHuggingFaceSearch: true)` starts the model menu with **Find on Hugging Face…**, which searches,
+checks and downloads models for this device. To list those downloads again after a relaunch, call
+`DownloadRecords.standard.registerDownloaded()` (`import AuraCore`) in your `App`'s `init`, before the first view
+reads the model lists. See [The example apps]({{ '/guide/models' | relative_url }}#the-example-apps).
 
 ---
 

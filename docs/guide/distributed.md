@@ -50,7 +50,9 @@ Four findings change the naive design:
 3. **`iproxy` 2.1.1 listens on all interfaces** by default, despite its help text [Verified], so the
    tunnel is reachable from the LAN unless a firewall blocks it [Inferred].
 4. **usbmux connects only from the Mac to the phone** [Verified]. That rules out MLX distributed over
-   the cable and means a phone cannot call the Mac without a reverse channel.
+   usbmux and means a phone cannot call the Mac through it without a reverse channel. The same cable
+   also carries a USB-NCM IP link that a third-party project uses in the phone-to-Mac direction; that
+   path is unverified on our hardware (see [Transport findings](#transport-findings)).
 
 ## What was evaluated
 
@@ -167,6 +169,20 @@ remote) [Inferred]; the quality of those quantizations was not measured.
   ring backend needs every rank to dial its neighbor, so neither `mlx.distributed` nor mlx-swift's
   `MLXDistributed` runs over USB alone; an IP link needs Local Network permission for the phone's outgoing
   TCP (TN3179) [Verified]. JACCL/RDMA needs Thunderbolt 5, which iPhones lack.
+- **A second path over the same cable, unverified on our hardware [Third-party].** Besides usbmux, the
+  cable carries a USB-NCM network interface with an IPv4 link-local address (169.254/16) on each end.
+  [backburner](https://github.com/StayLameBro/backburner) (MIT) uses it in both directions: its iOS app
+  reads its own 169.254 address, accepts connections only from link-local peers on the cable, and
+  downloads model files from the Mac over plain HTTP at `http://169.254.x.y` (we read its source on
+  2026-10-14 but did not run it). If this works, a phone could reach a llama-server bound to the Mac's
+  link-local address through the existing `OpenAICompatibleProvider` with no reverse channel, since
+  `AskTargetResolver` already counts 169.254/16 as local network. Open questions [Needs device]: whether
+  the interface appears without Developer Mode (backburner's install steps turn it on) and returns after
+  a replug; how the phone learns the Mac's address (backburner's Mac sends it the URL); whether App
+  Transport Security allows plain HTTP to a literal 169.254 address with `NSAllowsLocalNetworking`
+  (backburner sets `NSAllowsArbitraryLoads`); and the link's RTT and throughput. Unlike usbmux, this path
+  needs the phone's Local Network permission, and a listener on it needs a token plus a per-connection
+  check that the peer came over the cable.
 - **Some libimobiledevice 1.4.0 commands trigger pairing**: `idevicepair validate` can show "Trust This
   Computer"; `idevicedevmodectl list` without `-u` handshakes with every device; plain `ideviceinfo` pairs
   (`-s` does not); `idevicepair` exits 1 for every error and `idevicepair list` is empty on macOS [Verified].
@@ -188,8 +204,11 @@ remote) [Inferred]; the quality of those quantizations was not measured.
   connections on background, rebuild on foreground, and have the Mac send heartbeats.
 - **Memory.** `os_proc_available_memory()` is headroom to the process's current limit, not free device
   memory; it returns 0 over the limit, outside an app and in the simulator, where `physicalMemory` is
-  the host's RAM [Verified]. The limit is `phys_footprint + limit_bytes_remaining` from `TASK_VM_INFO`
-  [Inferred]. Size models against measured headroom; per-app budgets are far below device RAM (see above).
+  the host's RAM [Verified]. AuraLocal now computes the limit as `HardwareProfile.memoryLimitBytes()`:
+  `os_proc_available_memory()` plus the process's `phys_footprint` (`TASK_VM_INFO`), capped at 74% of
+  physical RAM because an 8 GB iPad reported 8142 MiB available. It returns `nil` when iOS reports
+  unknown, and on macOS. Size models against measured headroom; per-app budgets are far below device RAM
+  (see above).
 - **Core ML placement.** `MLComputeUnits` has no Neural-Engine-only case, and `.cpuAndNeuralEngine`
   allows CPU fallback [Verified]. `MLComputePlan` (iOS 17.4+) gives the anticipated device per operation:
   for e5 at 128 tokens, the 12-layer encoder (290 ops) runs on the ANE and 28 ops on the CPU, including
@@ -244,7 +263,9 @@ No mesh code exists. Everything below is unimplemented except module 1 and these
 features, which a mesh would reuse (claims about current code were checked on the source tree):
 
 - **Capabilities.** `HardwareProfile.availableMemoryBytes()` reads `os_proc_available_memory()` on iOS
-  and reports *unknown* instead of 0, as a node needs; `HardwareAnalyzer` rates fit and context window.
+  and reports *unknown* instead of 0, as a node needs; `HardwareProfile.memoryLimitBytes()` gives the
+  app's memory limit, which does not shrink while a model is loaded; `HardwareAnalyzer` rates fit and
+  context window.
 - **Node tasks.** The MLX and GGUF backends, and the [on-device ML tools]({{ '/guide/ml-tools' | relative_url }})
   (`SystemTool` conformers, see `SystemToolRegistry`): OCR, image classification, barcodes, faces,
   language, entities, sentiment, sound classification, NaturalLanguage sentence embeddings
@@ -260,6 +281,8 @@ features, which a mesh would reuse (claims about current code were checked on th
    3.31.3 exposes `trimPromptCache` and `SpeculativeTokenIterator`, unused by AuraLocal.
 2. **A reverse channel for phone-to-Mac escalation.** `OpenAICompatibleProvider` opens connections to a
    `baseURL`, which a phone cannot do over usbmux; the Mac would hold a connection open for its requests.
+   If the USB-NCM link above works, a `baseURL` at the Mac's link-local address could make this channel
+   unnecessary (untested).
 3. **Minimum iOS version.** AuraLocal requires iOS 18 and C++ interoperability; the evaluated node
    design (not built) targeted iOS 17, so it did not depend on AuraLocal.
 
@@ -269,8 +292,8 @@ that have not been taken, and there is no commitment or timeline:**
 | # | Module | Scope |
 |---|---|---|
 | 1 | e5 embedding provider for AuraDocs | **Shipped**, independent of any mesh ([Document RAG]({{ '/guide/rag' | relative_url }}#multilingual-e5-small-opt-in)) |
-| 2 | iOS node | Loopback server with a token; memory from `HardwareProfile.availableMemoryBytes()` (not `HardwareProfile.current()`, which substitutes 60% of physical RAM, the host's RAM in the simulator); perception and embedding roles over `SystemTool` conformers |
-| 3 | USB transport for remote escalation | The reverse channel above, with consent and cost receipts; no Wi-Fi and no Local Network prompt [Inferred] |
+| 2 | iOS node | Loopback server with a token; memory from `HardwareProfile.availableMemoryBytes()` (headroom) and `HardwareProfile.memoryLimitBytes()` (the app's limit), not `HardwareProfile.current()`. On iOS that call reports the limit but falls back to 60% of physical RAM when iOS reports unknown, as in the simulator, where that is the host's RAM; perception and embedding roles over `SystemTool` conformers |
+| 3 | USB transport for remote escalation | Test the USB-NCM link first, otherwise build the reverse channel above; consent and cost receipts either way. A usbmux channel needs no Wi-Fi and no Local Network prompt [Inferred]; an NCM link needs the Local Network permission |
 | 4 | macOS orchestrator in the `aura` CLI | A Swift usbmuxd client; the protocol is small and needs no dependencies |
 | 5 | Draft role | Last, and only on a GPU-generation-15+ Mac or with an nvfp4/mxfp4 target |
 
@@ -309,7 +332,8 @@ Risks:
 
 ## Reference projects
 
-Checked on 2026-09-29. None offers per-node role assignment plus a capability endpoint over USB.
+Checked on 2026-09-29; backburner on 2026-10-14. None offers per-node role assignment plus a capability
+endpoint over USB.
 
 | Project | Relevant facts | Taken | Not taken |
 |---|---|---|---|
@@ -319,3 +343,4 @@ Checked on 2026-09-29. None offers per-node role assignment plus a capability en
 | llama.cpp RPC | Embeddable `rpc-server`; the Mac-to-phone direction fits usbmux; the handshake checks only major/minor while op-list changes bump only the patch (a `static_assert` on `GGML_OP_COUNT`), so build client and server from the same commit; automatic layer split uses Metal's working set, not the jetsam limit | A stock alternative to A/B against a custom draft protocol (not run) | Anything relying on its automatic memory split |
 | MLX distributed (ring), `MLXDistributed` | Every rank dials its neighbor | Nothing | Impossible over USB alone |
 | [cake](https://github.com/evilsocket/cake) | Rust/Candle with an iOS worker app; shards layers by VRAM; manual `host:port` topology | The manual-topology idea | Its "FAIR" license restricts commercial use; layer sharding, not role offload |
+| [backburner](https://github.com/StayLameBro/backburner) (MIT) | A llama.cpp fork plus an iOS app: the Mac and an iPhone split a model's layers during prefill (29–44% faster at 16k–48k reported on an M4 Pro with Qwen3.8-27B, not reproduced here); the phone fetches from the Mac over USB-NCM link-local IPv4 | The USB-NCM link, to test before building a reverse channel; a check after `accept` that a connection arrived on the cable interface | Its prefill figures as evidence for an M1 Pro |

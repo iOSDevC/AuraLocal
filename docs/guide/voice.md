@@ -27,7 +27,7 @@ Microphone
         → AVSpeechSynthesizer (on-device TTS)
 ```
 
-Key characteristic: TTS **starts speaking after the first complete sentence** while the LLM is still generating the rest. End-to-end latency feels 2–3× lower than waiting for the full response.
+Key characteristic: TTS **starts speaking after the first complete sentence** while the LLM is still generating the rest, so it is heard before the reply is complete.
 
 Speech is recognized in one locale: `Config.locale`, else the device's first preferred language, else `en-US`. Each sentence of the reply is language-detected with `NLLanguageRecognizer` to pick the TTS voice (enhanced quality first). A code such as `"es"` becomes the first of the user's preferred languages that starts with it (`"es-MX"` only if listed), otherwise it stays `"es"`.
 
@@ -71,7 +71,7 @@ VStack {
 | `.listening` | Recording, live transcript updating |
 | `.thinking(partial:)` | LLM generating, partial response available |
 | `.speaking(sentence:)` | TTS playing current sentence |
-| `.error(String)` | Something went wrong |
+| `.error(String)` | Something went wrong. On iOS, moving the app to the background while the reply is generating stops it with "Generation stopped because the app moved to the background."; the text produced so far is saved as the assistant turn (with none yet, the prompt turn is removed) |
 
 ---
 

@@ -67,7 +67,7 @@ a `GenerationInterrupted` that carries text (the app moved to the background, or
 saves that text as the assistant turn; any other error removes the user turn again.
 
 {: .note }
-> MLX and GGUF models receive the turns with their roles. On GGUF every system turn, a `summarizeAndPrune` summary included, merges into one leading system turn, so the summary is added to your system prompt rather than replacing it. If the window still exceeds the model's context, the GGUF backends drop the oldest exchanges until it fits, keeping the system turn and your new message. See [Multi-turn conversations]({{ '/guide/backends' | relative_url }}#multi-turn-conversations-gguf).
+> MLX and GGUF models receive the turns with their roles. On GGUF every system turn, a `summarizeAndPrune` summary included, merges into one leading system turn, so the summary is added to your system prompt rather than replacing it. If the window still exceeds the model's context, the GGUF backends drop the oldest exchanges until it fits, keeping the system turn and your new message. See [Multi-turn conversations]({{ '/guide/backends' | relative_url }}#multi-turn-conversations-gguf). MLX trims nothing: past its KV window (`maxKVSize`) it overwrites the oldest tokens without an error, and `llm.lastContextOverflow` then says how many no longer fit. Qwen 3.5 text models, Gemma 3 and 4, and LFM2 ignore the window and leave it `nil` (see [Memory › MLX KV window]({{ '/guide/memory' | relative_url }}#mlx-kv-window)).
 
 ---
 

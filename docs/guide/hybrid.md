@@ -53,9 +53,9 @@ formats them as *"via llama-server (local) · &lt;model&gt; · 800 in / 240 out 
 
 ## Detect local providers
 
-Discover a running Ollama (`:11434`) or llama.cpp `llama-server` (`:8080/v1`) and the
-models each exposes — a dependency-free `URLSession` probe that never throws (a down
-server is a normal result).
+Discover a running Ollama (`http://localhost:11434`) or llama.cpp `llama-server`
+(`http://127.0.0.1:8080/v1`) on **this machine** and the models each one exposes. The probe is a
+dependency-free `URLSession` call that never throws (a server that is down is a normal result).
 
 ```swift
 import AuraCore
@@ -66,11 +66,38 @@ for p in providers where p.isAvailable {
 }
 ```
 
+Nothing scans the network: `detectAll()`, `HybridEscalator.bestLocalTarget()` and
+`routeAndEscalate` without `targets:` only find a server on the same machine, and on an iPhone
+those addresses are the phone itself. For a server on another machine, probe its address, or build
+its target with `AskTargetResolver.resolve` and pass it in `routeAndEscalate(targets:)`:
+
+```swift
+let mac = LocalProviderEndpoint(kind: .llamaServer, baseURL: URL(string: "http://192.168.1.20:8080/v1")!)
+let statuses = await LocalProviderDetector.detectAll(endpoints: [mac])
+
+let target = try AskTargetResolver.resolve(
+    .local, model: "qwen3-32b", baseURL: "http://192.168.1.20:8080/v1",
+    environment: ProcessInfo.processInfo.environment,
+    readKey: KeychainStore.read(for:),
+    localProviders: [])                           // ignored when baseURL is set
+let result = try await HybridEscalator().routeAndEscalate(
+    policy: EscalationPolicy(mode: .autoWithConsentMemory),   // a LAN target escalates without asking
+    context: longContext, question: "What's the safest fix?",
+    localAnswer: draftFromLocalModel,
+    targets: [target])
+```
+
 Ollama also lists **cloud models** (`deepseek-v4-pro:cloud`, `gpt-oss:120b-cloud`) that it forwards
 to `ollama.com`. They carry `remoteHost` and `runsLocally == false`. `bestLocalTarget()` and
 `AskTargetResolver.resolve` without a `baseURL` skip them, so the target they pick never forwards
 the prompt to Ollama's cloud. A `baseURL` is classified by its host only: a local URL serving a
 `:cloud` model named with `model:` still counts as `.localNetwork`.
+
+{: .note }
+> On iOS, connecting to a model server on another machine of your network needs the user's Local
+> Network permission. Add `NSLocalNetworkUsageDescription` to the app's Info.plist with the reason.
+> The Example app uses "Connects to a model server on your local network, such as Ollama or
+> llama-server on your Mac."
 
 ## Escalate a request
 
@@ -123,9 +150,10 @@ raises the bar for the latter).
   `.costUnknown` and the offer's `projectedCostUSD` is `nil`. A priced request under the cap gets the
   same reason while the session holds unpriced calls (`unpricedRecordCount > 0`), because the
   session's spend is then unknown.
-- Only the first candidate is tried: the LAN box if one is running, otherwise the first cloud
-  key found (Anthropic, then OpenAI), or the first of the `targets:` you pass. An error from it, such as HTTP 429, is thrown to the caller;
-  there is no fall-through to the next target.
+- Only the first candidate is tried: a llama-server or Ollama on this machine if one is running,
+  otherwise the first cloud key found (Anthropic, then OpenAI), or the first of the `targets:` you
+  pass. An error from it, such as HTTP 429, is thrown to the caller; there is no fall-through to the
+  next target.
 
 ## Cloud targets (BYOK)
 
@@ -174,7 +202,8 @@ Escalation isn't only for the top-level answer. In `AgentCrew`, the Architect st
 draft goes through `routeAndEscalate(localAnswer:)` and escalates only when it looks weak;
 the Extractor, Reviewer and Reporter steps always stay local. It reuses the same compression,
 consent, and cost machinery. Fail-closed: any error or a *stay-local* decision keeps the
-local draft.
+local draft. It passes no `targets:`, so it escalates only to a llama-server or Ollama on the same
+machine, or to a cloud key.
 
 The reusable pipeline lives in the **`AuraAgents`** module (requires iOS 26 / macOS 26 and
 the Xcode 26 SDK):

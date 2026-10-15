@@ -24,11 +24,11 @@ description: "Add AuraLocal to your iOS, macOS, or visionOS project via Swift Pa
 | iOS | 18.0+ |
 | macOS | 15.0+ |
 | visionOS | 2.0+ |
-| Xcode | 16.3+ (Swift 6.1); Xcode 26 for `AuraAppleIntelligence` and `AuraAgents` |
+| Xcode | 16.3+ (Swift 6.1); Xcode 26 for `AuraAppleIntelligence` and `AuraAgents`; Xcode 26.4 for `AuraImageGen` and the `aura` CLI |
 | Swift | 6.1 toolchain (your manifest can stay at tools-version 6.0) |
 
 {: .important }
-> AuraLocal requires a **Swift 6.1** toolchain, because its pinned dependencies declare tools-version 6.1, and **C++ interoperability mode**, because the llama.cpp backend (`LocalLLMClient`) contains C++ headers. Every target that imports `AuraCore`, or a module built on it, must enable C++ interop. `AuraAppleIntelligence` and `AuraAgents` import FoundationModels, so they build only with the iOS 26 / macOS 26 SDK.
+> AuraLocal requires a **Swift 6.1** toolchain, because its pinned dependencies declare tools-version 6.1, and **C++ interoperability mode**, because the llama.cpp backend (`LocalLLMClient`) contains C++ headers. Every target that imports `AuraCore`, or a module built on it, must enable C++ interop. `AuraAppleIntelligence` and `AuraAgents` import FoundationModels, so they build only with the iOS 26 / macOS 26 SDK. `AuraImageGen`, and the `aura` CLI built on it, use `ImagePlaygroundOptions`, which first appears in the 26.4 SDKs (Xcode 26.4).
 
 ---
 
@@ -90,13 +90,15 @@ AuraLocal depends on LocalLLMClient by revision, so SwiftPM rejects a version re
 
 ## Dependencies
 
-AuraLocal pulls in three dependencies automatically — you do not need to add them manually:
+AuraLocal pulls in five dependencies automatically — you do not need to add them manually:
 
 | Package | Purpose |
 |---------|---------|
 | [LocalLLMClient](https://github.com/tattn/LocalLLMClient) 0.5.0, pinned by revision | Swift wrapper for llama.cpp (build b8851): GGUF inference |
 | [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) 3.31.3 or later | MLX GPU inference for `.mlx` models |
 | [swift-transformers](https://github.com/huggingface/swift-transformers) 1.3.0 or later | Tokenizers for MLX models and for the Core ML text-embedding tool (multilingual-e5) |
+| [swift-jinja](https://github.com/huggingface/swift-jinja) 2.3.5 or later | Renders each GGUF model's chat template, so every llama.cpp turn starts from an empty KV cache with real roles |
+| [ml-stable-diffusion](https://github.com/apple/ml-stable-diffusion) 1.1.1 (exact) | Core ML Stable Diffusion for `AuraImageGen` on iOS and macOS (not linked on visionOS) |
 
 ---
 
@@ -133,6 +135,21 @@ If you use `AuraVoice`, add these keys to `Info.plist`:
 
 ---
 
+## Permissions (local network)
+
+On iOS, reaching a model server on another machine (a `LocalProviderEndpoint` whose `baseURL` points at, for
+example, Ollama or `llama-server` on your Mac) shows the Local Network permission prompt with this string.
+AuraExample declares it:
+
+```xml
+<key>NSLocalNetworkUsageDescription</key>
+<string>Connects to a model server on your local network, such as Ollama or llama-server on your Mac.</string>
+```
+
+The default endpoints (`localhost:11434`, `127.0.0.1:8080`) are loopback and do not need it.
+
+---
+
 ## Verify the Install
 
 ```swift
@@ -140,11 +157,12 @@ import AuraCore
 
 // Should print the display name and size of a model
 print(Model.qwen3_1_7b.displayName)       // "Qwen3 1.7B"
-print(Model.qwen3_1_7b.approximateSizeMB) // 1000
+print(Model.qwen3_1_7b.approximateSizeMB) // 923
 
 // Check hardware compatibility
 let fit = HardwareAnalyzer.assess(.llama3_1_8b_gguf)
-print(fit.fitLevel.label) // "Streaming" on 6 GB iPhone, "Good" on Mac
+print(fit.fitLevel.label) // "Streaming" on an entitled 6 GB iPhone; on a Mac it depends on the
+                          // memory free now ("Excellent" above ~8.4 GB)
 ```
 
 ---

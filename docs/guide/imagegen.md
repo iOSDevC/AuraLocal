@@ -13,7 +13,7 @@ description: "Text-to-image on iPhone and Mac with Core ML Stable Diffusion, App
 | Path | Platforms | Where it runs | Notes |
 |------|-----------|---------------|-------|
 | `CoreMLDiffusionEngine` | iOS, macOS | This device | Stable Diffusion 2.1 base, 512×512, ~1.07 GB one-time download |
-| Apple Image Playground (`ImagePlaygroundPolicy`) | iOS 18.4+ | On device before iOS 27; Apple's servers from iOS 27 | Apple's sheet; AuraLocal only sets its styles and options |
+| Apple Image Playground (`ImagePlaygroundPolicy`) | iOS 18.4+, macOS 15.4+, visionOS 2.4+ (the Example uses it on iOS only) | On device before OS 27; Apple's servers from OS 27 | Apple's sheet; AuraLocal only sets its styles and options |
 | `MFluxEngine` | macOS | This Mac | FLUX + `lora.safetensors` through the mflux CLI |
 
 ## On device (iPhone and Mac): Core ML Stable Diffusion
@@ -39,6 +39,12 @@ output.images.first?.fileURL                     // PNG on disk
 output.seed                                      // the seed used (random when the request had none)
 await engine.unload()                            // free the pipeline; the next run reloads it
 ```
+
+The Example app's **Image** tab runs this engine. On iOS its segments are **On device** and **Apple**
+(Image Playground); on macOS they are **FLUX (mflux)** and **Stable Diffusion (Core ML)**. It asks before
+downloading and shows the size and license, offers the compute units and memory mode under **Advanced**, and
+shares each image with **Share**. The share sheet's **Save Image** adds the image to Photos only when the app
+declares `NSPhotoLibraryAddUsageDescription`, which the Example does.
 
 ### The model
 
@@ -131,12 +137,13 @@ content
 
 - **Styles.** `allowedStyles` is animation, illustration and sketch. `.externalProvider` (ChatGPT) is never
   offered.
-- **Where it runs.** `ImagePlaygroundPolicy.processing` follows Apple's statements: on device before iOS 27
-  (for every style except the external provider), Private Cloud Compute from iOS 27, with daily limits. No API
-  reports it per request. When `processing.leavesDevice` is true, ask the user before every presentation; the
-  example does, and declining sends nothing and shows `.consentDeclined`.
-- **Options.** On iOS 26.4+, `.imagePlaygroundOptions(ImagePlaygroundPolicy.options)` turns personalization
-  off.
+- **Where it runs.** `ImagePlaygroundPolicy.processing` follows Apple's statements: on device before OS 27
+  (for every style except the external provider), Private Cloud Compute from OS 27, with daily limits. It
+  reads the OS major version, so the same rule applies on iOS, macOS and visionOS. No API reports it per
+  request. When `processing.leavesDevice` is true, ask the user before every presentation; the example
+  does, and declining sends nothing and shows `.consentDeclined`.
+- **Options.** On iOS, macOS and visionOS 26.4+, `.imagePlaygroundOptions(ImagePlaygroundPolicy.options)`
+  turns personalization off.
 - **Availability.** `supportsImagePlayground` is a single Bool, so the reason it is false (Apple Intelligence
   off, region, language, device, Simulator) cannot be told apart.
 - **Not used: `ImageCreator`.** It is deprecated in iOS 27, its initializer throws `notSupported` there, and
