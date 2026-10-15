@@ -40,7 +40,14 @@ public final class AuraLocal {
     
     let engine: AuraEngine
     public let model: Model
-    
+
+    /// Opt-in ``DeviceConditions`` guard for this instance's generations; `nil` (the default) is off. Instances
+    /// from ``ModelManager`` are shared, so this applies to every caller of the cached instance.
+    public var deviceGuard: DeviceConditions? {
+        get { engine.deviceGuard }
+        set { engine.deviceGuard = newValue }
+    }
+
     // MARK: - Init
 
     /// Internal init — creates an instance with backend auto-selected by ``BackendRouter``. `tools` (when

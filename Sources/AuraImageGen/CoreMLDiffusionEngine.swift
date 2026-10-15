@@ -26,7 +26,9 @@ protocol DiffusionPipelineRunning: AnyObject {
 ///
 /// One generation runs at a time; a second concurrent call throws ``OnDeviceImageGenError/busy``. Cancelling the
 /// calling task stops between denoising steps; model preparation and the final decode cannot be interrupted.
-/// The Simulator cannot run it (``OnDeviceImageGenError/simulatorUnsupported``).
+/// Moving the app to the background, or an optional ``DeviceConditions`` guard at its block level, stops it the
+/// same way and throws `GenerationInterrupted`. The Simulator cannot run it
+/// (``OnDeviceImageGenError/simulatorUnsupported``).
 public final class CoreMLDiffusionEngine: Sendable {
     typealias RunnerFactory = @Sendable (_ resources: URL, _ computeUnits: DiffusionComputeUnits,
                                          _ reduceMemory: Bool) throws -> any DiffusionPipelineRunning
@@ -39,23 +41,30 @@ public final class CoreMLDiffusionEngine: Sendable {
     private let availableMemory: @Sendable () -> Int?
     private let runsInSimulator: Bool
     private let unknownMemoryMeansExhausted: Bool
+    private let deviceGuard: DeviceConditions?
+    /// `nil` uses `BackgroundLifecycle.shared`, which can only be read on the main actor.
+    private let appLifecycle: BackgroundLifecycle?
     // `generateImages` blocks for seconds to minutes; it must not occupy the cooperative pool.
     private let queue = DispatchQueue(label: "dev.auralocal.imagegen.coreml", qos: .userInitiated)
     private let slot = RunnerSlot()
     private let isBusy = Mutex(false)
 
+    /// `deviceGuard` is checked before the run and every ``DeviceConditions/checkInterval`` denoising steps; `nil`
+    /// (the default) is off.
     public convenience init(model: CoreMLDiffusionModel = .stableDiffusion21Base,
                             computeUnits: DiffusionComputeUnits = .neuralEngine,
-                            memoryMode: DiffusionMemoryMode = .automatic) {
+                            memoryMode: DiffusionMemoryMode = .automatic,
+                            deviceGuard: DeviceConditions? = nil) {
         self.init(model: model, computeUnits: computeUnits, memoryMode: memoryMode, resourcesDirectory: nil,
                   makeRunner: Self.platformRunnerFactory,
-                  availableMemory: { HardwareProfile.availableMemoryBytes() })
+                  availableMemory: { HardwareProfile.availableMemoryBytes() }, deviceGuard: deviceGuard)
     }
 
     init(model: CoreMLDiffusionModel, computeUnits: DiffusionComputeUnits, memoryMode: DiffusionMemoryMode,
          resourcesDirectory: URL?, makeRunner: RunnerFactory?, availableMemory: @escaping @Sendable () -> Int?,
          runsInSimulator: Bool = CoreMLDiffusionEngine.isSimulatorBuild,
-         unknownMemoryMeansExhausted: Bool = CoreMLDiffusionEngine.unknownMemoryIsJetsamLimit) {
+         unknownMemoryMeansExhausted: Bool = CoreMLDiffusionEngine.unknownMemoryIsJetsamLimit,
+         deviceGuard: DeviceConditions? = nil, lifecycle: BackgroundLifecycle? = nil) {
         self.model = model
         self.computeUnits = computeUnits
         self.memoryMode = memoryMode
@@ -64,6 +73,8 @@ public final class CoreMLDiffusionEngine: Sendable {
         self.availableMemory = availableMemory
         self.runsInSimulator = runsInSimulator
         self.unknownMemoryMeansExhausted = unknownMemoryMeansExhausted
+        self.deviceGuard = deviceGuard
+        self.appLifecycle = lifecycle
     }
 
     /// Why this engine cannot run here whatever is downloaded: ``OnDeviceImageGenError/unsupportedPlatform``
@@ -103,9 +114,12 @@ public final class CoreMLDiffusionEngine: Sendable {
         let seed = request.seed ?? UInt32.random(in: 0...UInt32.max)
         let directory = outputDirectory ?? FileManager.default.temporaryDirectory
             .appendingPathComponent("auraimagegen-\(UUID().uuidString)", isDirectory: true)
-        let job = Job(request: request, seed: seed, resources: resources, directory: directory,
-                      required: Self.requiredMemoryBytes(for: model))
         let cancelled = CancellationFlag()
+        let runGuard = try await guardRun(cancelled)
+        defer { Task { @MainActor in runGuard.appLifecycle.unregister(runGuard.registration) } }
+        let job = Job(request: request, seed: seed, resources: resources, directory: directory,
+                      required: Self.requiredMemoryBytes(for: model), startReading: runGuard.startReading,
+                      guardState: runGuard.guardState)
         let clock = ContinuousClock()
         let start = clock.now
         let images = try await withTaskCancellationHandler {
@@ -142,15 +156,48 @@ public final class CoreMLDiffusionEngine: Sendable {
         let resources: URL
         let directory: URL
         let required: Int
+        /// The device-guard reading taken on the main actor when the run began; its battery is reused per step.
+        let startReading: DeviceConditions.Reading?
+        let guardState: DeviceConditionsCheck?
+    }
+
+    private struct RunGuard: Sendable {
+        let appLifecycle: BackgroundLifecycle
+        let registration: UUID
+        let startReading: DeviceConditions.Reading?
+        let guardState: DeviceConditionsCheck?
+    }
+
+    /// On the main actor: refuses to start in the background or on a blocked device, and registers the run so
+    /// backgrounding stops it.
+    private func guardRun(_ cancelled: CancellationFlag) async throws -> RunGuard {
+        try await MainActor.run { [appLifecycle, deviceGuard] in
+            let lifecycle = appLifecycle ?? .shared
+            lifecycle.startObserving()
+            if lifecycle.isPaused {
+                throw GenerationInterrupted(reason: .appBackgrounded, partialText: "")
+            }
+            var state = deviceGuard.map(DeviceConditionsCheck.init)
+            let reading = deviceGuard?.currentReading()
+            if let reading, let blocked = state?.evaluate(reading) {
+                throw GenerationInterrupted(reason: .deviceConditions(blocked), partialText: "")
+            }
+            let registration = lifecycle.register { cancelled.set($0) }
+            return RunGuard(appLifecycle: lifecycle, registration: registration, startReading: reading,
+                            guardState: state)
+        }
     }
 
     /// Runs on `queue` only.
     private func run(_ job: Job, makeRunner: RunnerFactory, cancelled: CancellationFlag,
                      onEvent: @Sendable (DiffusionEvent) -> Void) throws -> [ImageGenResult] {
-        if cancelled.isSet { throw CancellationError() }
+        try cancelled.throwIfSet()
         let runner = try loadedRunner(job, makeRunner: makeRunner, onEvent: onEvent)
+        // Loading can take minutes; do not start encoding the prompt for a run that was stopped meanwhile.
+        try cancelled.throwIfSet()
         let request = job.request
         var nonFiniteStep: Int?
+        var guardState = job.guardState
         let images: [CGImage?]
         do {
             images = try runner.generate(
@@ -161,6 +208,11 @@ public final class CoreMLDiffusionEngine: Sendable {
                 // NaN latents only ever decode to a black image; stop instead of finishing the run.
                 guard latentsAreFinite else {
                     nonFiniteStep = step
+                    return false
+                }
+                if let policy = deviceGuard, let start = job.startReading,
+                   let blocked = guardState?.tick({ policy.reading(batteryFrom: start) }) {
+                    cancelled.set(.deviceConditions(blocked))
                     return false
                 }
                 onEvent(.step(step, of: total))
@@ -181,7 +233,7 @@ public final class CoreMLDiffusionEngine: Sendable {
                 throw OnDeviceImageGenError.generationFailed(
                     "The model produced invalid values (NaN) at step \(nonFiniteStep) on \(hardware).")
             }
-            if cancelled.isSet { throw CancellationError() }
+            try cancelled.throwIfSet()
             throw OnDeviceImageGenError.generationFailed("The pipeline returned no images.")
         }
         try FileManager.default.createDirectory(at: job.directory, withIntermediateDirectories: true)
@@ -324,15 +376,35 @@ private final class RunnerSlot: @unchecked Sendable {
     var reducesMemory = false
 }
 
-/// Set by the task's cancellation handler, read by the pipeline's step callback on the queue.
+/// Set by the task's cancellation handler, the background lifecycle or the device guard; read by the pipeline's
+/// step callback on the queue. The first stop wins.
 private final class CancellationFlag: Sendable {
-    private let state = Mutex(false)
+    private struct Status {
+        var isSet = false
+        var reason: GenerationInterrupted.Trigger?
+    }
 
-    func set() {
-        state.withLock { $0 = true }
+    private let status = Mutex(Status())
+
+    /// `reason == nil` is the caller cancelling.
+    func set(_ reason: GenerationInterrupted.Trigger? = nil) {
+        status.withLock {
+            guard !$0.isSet else { return }
+            $0 = Status(isSet: true, reason: reason)
+        }
     }
 
     var isSet: Bool {
-        state.withLock { $0 }
+        status.withLock { $0.isSet }
+    }
+
+    /// `GenerationInterrupted` when the lifecycle or the guard stopped the run, `CancellationError` when the caller did.
+    func throwIfSet() throws {
+        let current = status.withLock { $0 }
+        guard current.isSet else { return }
+        if let reason = current.reason {
+            throw GenerationInterrupted(reason: reason, partialText: "")
+        }
+        throw CancellationError()
     }
 }

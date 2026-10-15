@@ -21,23 +21,30 @@ final class AuraEngine {
 
     let backend: any InferenceBackend
     let model: Model
+    let appLifecycle: BackgroundLifecycle
+    /// Opt-in guard checked before and during every generation; `nil` is off.
+    var deviceGuard: DeviceConditions?
 
     // MARK: - Init
 
-    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = []) {
+    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = [],
+         lifecycle: BackgroundLifecycle = .shared) {
         self.model = model
         self.backend = BackendRouter.selectBackend(for: model, temperature: temperature, tools: tools)
+        self.appLifecycle = lifecycle
     }
 
     /// Create an engine with a specific backend (used by BackendRouter for GGUF models).
-    init(model: Model, backend: any InferenceBackend) {
+    init(model: Model, backend: any InferenceBackend, lifecycle: BackgroundLifecycle = .shared) {
         self.model = model
         self.backend = backend
+        self.appLifecycle = lifecycle
     }
 
     // MARK: - Load
 
     func load(onProgress: @escaping @MainActor (String) -> Void) async throws {
+        appLifecycle.startObserving()
         try await backend.load(onProgress: onProgress)
     }
 
@@ -50,21 +57,23 @@ final class AuraEngine {
         constraint: GenerationConstraint? = nil,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        if let constraint {
+        try await supervised(onToken: onToken) { [self] onToken in
+            if let constraint {
+                return try await backend.generate(
+                    prompt: prompt,
+                    systemPrompt: systemPrompt,
+                    maxTokens: maxTokens,
+                    constraint: constraint,
+                    onToken: onToken
+                )
+            }
             return try await backend.generate(
                 prompt: prompt,
                 systemPrompt: systemPrompt,
                 maxTokens: maxTokens,
-                constraint: constraint,
                 onToken: onToken
             )
         }
-        return try await backend.generate(
-            prompt: prompt,
-            systemPrompt: systemPrompt,
-            maxTokens: maxTokens,
-            onToken: onToken
-        )
     }
 
     // MARK: - Generate (vision)
@@ -75,12 +84,14 @@ final class AuraEngine {
         maxTokens: Int = 800,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        try await backend.generate(
-            prompt: prompt,
-            image: image,
-            maxTokens: maxTokens,
-            onToken: onToken
-        )
+        try await supervised(onToken: onToken) { [self] onToken in
+            try await backend.generate(
+                prompt: prompt,
+                image: image,
+                maxTokens: maxTokens,
+                onToken: onToken
+            )
+        }
     }
 
     // MARK: - Generate (multi-turn messages)
@@ -90,11 +101,13 @@ final class AuraEngine {
         maxTokens: Int = 1024,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        try await backend.generate(
-            messages: messages,
-            maxTokens: maxTokens,
-            onToken: onToken
-        )
+        try await supervised(onToken: onToken) { [self] onToken in
+            try await backend.generate(
+                messages: messages,
+                maxTokens: maxTokens,
+                onToken: onToken
+            )
+        }
     }
 
     // MARK: - Cleanup
