@@ -32,6 +32,7 @@ final class MLXBackend: InferenceBackend {
     private var modelContainer: ModelContainer?
     private let model: Model
     private let generateParameters: GenerateParameters
+    private(set) var lastGenerationStats: GenerationStats?
 
     var isLoaded: Bool { modelContainer != nil }
 
@@ -207,20 +208,29 @@ final class MLXBackend: InferenceBackend {
 
     // MARK: - Core generation
 
+    private struct Output: Sendable {
+        let text: String
+        let stats: GenerationStats
+    }
+
     private func performGeneration(
         container: ModelContainer,
         prepareInput: @escaping @Sendable (ModelContext) async throws -> LMInput,
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
+        lastGenerationStats = nil
         let params = self.generateParameters
-        return try await container.perform { (context: ModelContext) async throws -> sending String in
+        let output = try await container.perform { (context: ModelContext) async throws -> Output in
+            let start = ContinuousClock.now
+            var firstToken: ContinuousClock.Instant?
             let input = try await prepareInput(context)
             let result = try MLXLMCommon.generate(
                 input: input,
                 parameters: params,
                 context: context
             ) { tokens in
+                if firstToken == nil { firstToken = ContinuousClock.now }
                 guard !Task.isCancelled else { return .stop }
 
                 let partial = context.tokenizer.decode(tokenIds: tokens)
@@ -230,8 +240,19 @@ final class MLXBackend: InferenceBackend {
                 }
                 return tokens.count >= maxTokens ? .stop : .more
             }
-            return context.tokenizer.decode(tokenIds: result.tokens)
+            let stats = GenerationStats(
+                backend: .mlx,
+                source: .runtime,
+                promptTokens: result.promptTokenCount,
+                generatedTokens: result.generationTokenCount,
+                promptTime: result.promptTime,
+                timeToFirstToken: GenerationStats.seconds((firstToken ?? ContinuousClock.now) - start),
+                decodeTime: result.generateTime
+            )
+            return Output(text: context.tokenizer.decode(tokenIds: result.tokenIds), stats: stats)
         }
+        lastGenerationStats = output.stats
+        return output.text
     }
 
     // MARK: - Helpers

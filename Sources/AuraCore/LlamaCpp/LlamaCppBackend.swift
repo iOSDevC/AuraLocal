@@ -24,6 +24,7 @@ final class LlamaCppBackend: InferenceBackend {
     private let model: Model
     private let temperature: Float
     private let tools: [any LLMTool]
+    private(set) var lastGenerationStats: GenerationStats?
 
     var isLoaded: Bool { session != nil }
     /// Tool names registered for function-calling — a testable view of what was threaded in (empty = none).
@@ -98,18 +99,23 @@ final class LlamaCppBackend: InferenceBackend {
             // as `prompt`, so clear any accumulated session history first — otherwise the model re-ingests
             // prior turns on top of the transcript (O(N²) growth → context overflow → truncated/empty replies).
             session.messages = []
+            lastGenerationStats = nil
 
             var fullText = ""
             var tokenCount = 0
+            var meter = StreamMeter()
             let responseStream = session.streamResponse(to: fullPrompt)
             for try await partial in responseStream {
                 guard !Task.isCancelled else { break }
+                meter.recordPiece()
                 fullText += partial
                 tokenCount += 1
                 onToken(fullText)
                 if tokenCount >= maxTokens { break }   // honor the caller's token budget
             }
 
+            lastGenerationStats = meter.stats(backend: .llamaCpp, source: .llamaStream(toolsRegistered: !tools.isEmpty),
+                                              prompt: fullPrompt, output: fullText)
             return fullText
         }
     }
@@ -143,7 +149,8 @@ final class LlamaCppBackend: InferenceBackend {
             try Task.checkCancellation()
             // unload() (e.g. ModelManager.evict) may have run while this call was queued.
             guard session != nil, let loadedFileURL else { throw AuraError.modelNotLoaded }
-            return try await Self.generateOnDedicatedClient(
+            lastGenerationStats = nil
+            let reply = try await Self.generateOnDedicatedClient(
                 url: loadedFileURL,
                 parameter: parameter,
                 constraint: constraint,
@@ -151,6 +158,8 @@ final class LlamaCppBackend: InferenceBackend {
                 maxTokens: maxTokens,
                 onToken: onToken
             )
+            lastGenerationStats = reply.stats
+            return reply.text
         }
     }
 
@@ -229,7 +238,7 @@ final class LlamaCppBackend: InferenceBackend {
         prompt: String,
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
-    ) async throws -> String {
+    ) async throws -> (text: String, stats: GenerationStats) {
         let client = try await LocalLLMClient.llama(url: url, parameter: parameter)
         if case .grammar(_, let root) = constraint, !grammarSamplerExists(in: client) {
             throw GenerationConstraintError.invalidGrammar(root: root)
@@ -237,7 +246,10 @@ final class LlamaCppBackend: InferenceBackend {
 
         var fullText = ""
         var tokenCount = 0
+        // Started after the client loads: `textStream` renders, tokenizes and prefills before it returns.
+        var meter = StreamMeter()
         for try await partial in try client.textStream(from: .chat([.user(prompt)])) {
+            meter.recordPiece()
             fullText += partial
             tokenCount += 1
             await onToken(fullText)
@@ -245,7 +257,7 @@ final class LlamaCppBackend: InferenceBackend {
         }
         // Cancellation ends the stream early; the partial text would not satisfy the constraint.
         try Task.checkCancellation()
-        return fullText
+        return (fullText, meter.stats(backend: .llamaCpp, source: .measured, prompt: prompt, output: fullText))
     }
 
     /// 0.5.0 chains a nil sampler when llama.cpp rejects a GBNF and crashes on the first token, so read its

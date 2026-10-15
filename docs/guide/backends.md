@@ -28,6 +28,9 @@ AuraLocal uses two inference engines internally, selected automatically by `Back
 | `LayerStreamingBackend` | llama.cpp + mmap | `.gguf` | iOS + macOS, when it does not fit (in practice iPhone and iPad) | ~1 GB for a 7B–8B |
 
 All three implement the same `InferenceBackend` protocol — your code looks identical regardless of which backend is running.
+After each generation, `AuraLocal.lastGenerationStats` reports token counts and timings: MLX passes on its runtime
+counters, the llama.cpp backends time the stream and estimate the prompt (see
+[Generation Stats]({{ '/api/core' | relative_url }}#generation-stats)).
 
 {: .warning }
 > The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:onProgress:)`, `AuraProfile.tools`) reach only the GGUF backends; an MLX model silently ignores them. The llama.cpp backends are text-only (an `image:` argument is ignored) and flatten a multi-turn history into one prompt (roles dropped, only the last system turn kept); MLX passes the messages with their roles. A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `AuraSession` enforces `AuraProfile.outputSchema` the same way on every backend, by validating each reply and re-prompting, not by constrained decoding; other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). Of `AuraProfile.sampling` only `maxTokens` reaches generation.

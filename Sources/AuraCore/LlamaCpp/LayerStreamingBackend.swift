@@ -24,6 +24,7 @@ final class LayerStreamingBackend: InferenceBackend {
     private let temperature: Float
     private let memoryManager: MemoryBudgetManager
     private let tools: [any LLMTool]
+    private(set) var lastGenerationStats: GenerationStats?
 
     var isLoaded: Bool { session != nil }
     /// Tool names registered for function-calling — a testable view of what was threaded in (empty = none).
@@ -110,14 +111,17 @@ final class LayerStreamingBackend: InferenceBackend {
         // Stateless per call: the prompt already carries the full conversation, so clear accumulated
         // history to avoid re-ingesting prior turns (O(N²) growth → context overflow).
         session.messages = []
+        lastGenerationStats = nil
 
         var fullText = ""
         var tokenCount = 0
+        var meter = StreamMeter()
         let responseStream = session.streamResponse(to: fullPrompt)
 
         for try await partial in responseStream {
             guard !Task.isCancelled else { break }
 
+            meter.recordPiece()
             fullText += partial
             tokenCount += 1
             onToken(fullText)
@@ -130,6 +134,8 @@ final class LayerStreamingBackend: InferenceBackend {
             if tokenCount >= safeMaxTokens { break }
         }
 
+        lastGenerationStats = meter.stats(backend: .layerStreaming, source: .llamaStream(toolsRegistered: !tools.isEmpty),
+                                          prompt: fullPrompt, output: fullText)
         return fullText
     }
 

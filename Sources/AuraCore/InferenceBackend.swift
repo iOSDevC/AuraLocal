@@ -51,6 +51,14 @@ public protocol InferenceBackend: AnyObject {
 
     /// Release all model resources from memory.
     func unload()
+
+    /// Counts and timings of the last generation that returned. Defaults to `nil`, so conformers that cannot
+    /// measure need not implement it.
+    var lastGenerationStats: GenerationStats? { get }
+}
+
+public extension InferenceBackend {
+    var lastGenerationStats: GenerationStats? { nil }
 }
 
 // MARK: - BackendKind

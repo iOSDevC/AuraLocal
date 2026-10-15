@@ -21,6 +21,9 @@ final class AuraEngine {
 
     let backend: any InferenceBackend
     let model: Model
+    /// Copied from the backend when a call returns and cleared when one starts, so a call that throws before
+    /// decoding cannot leave the previous call's numbers behind.
+    private(set) var lastGenerationStats: GenerationStats?
 
     // MARK: - Init
 
@@ -50,21 +53,23 @@ final class AuraEngine {
         constraint: GenerationConstraint? = nil,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        if let constraint {
+        try await recordingStats {
+            if let constraint {
+                return try await backend.generate(
+                    prompt: prompt,
+                    systemPrompt: systemPrompt,
+                    maxTokens: maxTokens,
+                    constraint: constraint,
+                    onToken: onToken
+                )
+            }
             return try await backend.generate(
                 prompt: prompt,
                 systemPrompt: systemPrompt,
                 maxTokens: maxTokens,
-                constraint: constraint,
                 onToken: onToken
             )
         }
-        return try await backend.generate(
-            prompt: prompt,
-            systemPrompt: systemPrompt,
-            maxTokens: maxTokens,
-            onToken: onToken
-        )
     }
 
     // MARK: - Generate (vision)
@@ -75,12 +80,14 @@ final class AuraEngine {
         maxTokens: Int = 800,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        try await backend.generate(
-            prompt: prompt,
-            image: image,
-            maxTokens: maxTokens,
-            onToken: onToken
-        )
+        try await recordingStats {
+            try await backend.generate(
+                prompt: prompt,
+                image: image,
+                maxTokens: maxTokens,
+                onToken: onToken
+            )
+        }
     }
 
     // MARK: - Generate (multi-turn messages)
@@ -90,11 +97,20 @@ final class AuraEngine {
         maxTokens: Int = 1024,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        try await backend.generate(
-            messages: messages,
-            maxTokens: maxTokens,
-            onToken: onToken
-        )
+        try await recordingStats {
+            try await backend.generate(
+                messages: messages,
+                maxTokens: maxTokens,
+                onToken: onToken
+            )
+        }
+    }
+
+    private func recordingStats(_ body: () async throws -> String) async rethrows -> String {
+        lastGenerationStats = nil
+        let reply = try await body()
+        lastGenerationStats = backend.lastGenerationStats
+        return reply
     }
 
     // MARK: - Cleanup

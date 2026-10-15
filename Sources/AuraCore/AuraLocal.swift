@@ -40,6 +40,11 @@ public final class AuraLocal {
     
     let engine: AuraEngine
     public let model: Model
+
+    /// Token counts and timings of the last generation that returned, labelled by
+    /// ``GenerationStats/Provenance``. Read it after `chat` returns or a stream finishes; `nil` before the first
+    /// generation and after one that threw.
+    public var lastGenerationStats: GenerationStats? { engine.lastGenerationStats }
     
     // MARK: - Init
 

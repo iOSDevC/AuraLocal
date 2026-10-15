@@ -147,8 +147,53 @@ func summarizeAndPrune(
 ### Properties
 
 ```swift
-var model: Model { get }     // the loaded model
+var model: Model { get }                           // the loaded model
+var lastGenerationStats: GenerationStats? { get }  // the last generation that returned; nil after one that threw
 ```
+
+### Generation Stats
+
+Token counts and timings of the last generation, labelled with where they come from. Read them after `chat`
+returns or a stream finishes:
+
+```swift
+for try await delta in llm.stream("Summarize this in one line.") { print(delta, terminator: "") }
+if let stats = llm.lastGenerationStats {
+    print(stats.source.label, stats.timeToFirstToken, stats.decodeTokensPerSecond ?? 0)
+}
+```
+
+```swift
+public struct GenerationStats: Sendable, Hashable {
+    public enum Provenance: String, Sendable, Hashable, CaseIterable {
+        case runtime    // the runtime's own counters (MLX GenerateResult)
+        case measured   // AuraLocal's clock around the stream; output counted per piece; prompt estimated
+        case estimated  // counts from text length (UTF-8 bytes ÷ 4)
+        var label: String
+    }
+    let backend: BackendKind
+    let source: Provenance
+    let promptTokens: Int              // exact only for .runtime
+    let generatedTokens: Int           // stop token excluded
+    let promptTime: TimeInterval       // prefill through the first token; equals timeToFirstToken unless .runtime
+    let timeToFirstToken: TimeInterval // from when the backend starts the request; includes template + tokenization
+    let decodeTime: TimeInterval       // first generated token to last
+    var decodeTokensPerSecond: Double?  // (generatedTokens − 1) ÷ decodeTime; nil below two tokens
+    var prefillTokensPerSecond: Double? // promptTokens ÷ promptTime
+}
+```
+
+| Backend | `source` | Prompt tokens | Output tokens | Durations |
+|---|---|---|---|---|
+| `MLXBackend` | `.runtime` | exact | exact | runtime prefill and decode; TTFT from AuraLocal's clock |
+| `LlamaCppBackend`, no tools; constrained calls | `.measured` | estimated | one per streamed piece (one per sampled token in LocalLLMClient 0.5.0) | AuraLocal's clock |
+| `LlamaCppBackend` / `LayerStreamingBackend` with tools | `.estimated` | estimated | estimated | AuraLocal's clock |
+| `LayerStreamingBackend`, no tools | `.measured` | estimated | one per streamed piece | AuraLocal's clock |
+| Remote (`HybridEscalator`) | — | — | — | no stats; provider-reported usage is in `HybridEscalator.Result.usage` |
+
+LocalLLMClient 0.5.0 exposes no tokenizer or prompt count, so llama.cpp prompt counts stay estimates. A constrained
+call's clock starts after its dedicated client loads. `InferenceBackend` gained `var lastGenerationStats:
+GenerationStats? { get }`, with a protocol-extension default of `nil`, so existing conformers still compile.
 
 Loaded state is queried on `ModelManager`, not on `AuraLocal`:
 
@@ -482,7 +527,7 @@ public struct ModelCompatibility: Sendable {
     let fitLevel: ModelFitLevel
     let requiredMemoryGB: Double
     let availableMemoryGB: Double
-    let estimatedDecodeTokensPerSecond: Double?  // nil when chip bandwidth is unknown
+    let estimatedDecodeTokensPerSecond: Double?  // nil when chip bandwidth is unknown; see Benchmarks › Speed estimate
     var utilizationPercent: Double               // % of available memory consumed
     var speedLevel: SpeedLevel
 }
