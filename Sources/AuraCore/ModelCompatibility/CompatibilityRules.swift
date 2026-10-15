@@ -10,6 +10,8 @@ struct RuleInput: Sendable {
     /// Tensor names from the weight map, else from the shipped files' headers; `nil` when neither was read.
     let tensorNames: [String]?
     let quantGroups: [GGUFQuantGroup]
+    /// llama.cpp's per-layer cache from the GGUF header; `nil` for other formats and uniform headers.
+    let ggufCache: GGUFCacheShape?
 
     init(snapshot: RepoSnapshot, target: DevicePreset) {
         source = snapshot
@@ -17,6 +19,7 @@ struct RuleInput: Sendable {
         weightFormat = DetectedFormat.detect(snapshot)
         tensorNames = snapshot.liveWeightMap.map { Array($0.keys) } ?? snapshot.singleFileHeader?.tensorNames
         quantGroups = GGUFQuantGroup.groups(in: snapshot.listing?.files ?? [])
+        ggufCache = weightFormat == .gguf ? snapshot.ggufMetadata.flatMap(KVCacheLayout.derive(gguf:)) : nil
     }
 
     var listing: HFRepoInfo? { source.listing }
@@ -85,21 +88,27 @@ struct RuleInput: Sendable {
     var layerCount: Int? {
         Self.plausible(weightFormat == .gguf ? ggufMetadata?.blockCount : settings?.numLayers, upTo: 4096)
     }
+    /// For a GGUF with a per-layer cache, the sliding layers' heads and width (``ggufCache``).
     var kvHeadCount: Int? {
-        Self.plausible(weightFormat == .gguf ? ggufMetadata?.headCountKV : settings?.kvHeads, upTo: 1024)
+        let gguf = ggufCache?.kvHeads ?? ggufMetadata?.headCountKV
+        return Self.plausible(weightFormat == .gguf ? gguf : settings?.kvHeads, upTo: 1024)
     }
     var headWidth: Int? {
-        Self.plausible(weightFormat == .gguf ? ggufMetadata?.headDimension : settings?.headDim, upTo: 8192)
+        let gguf = ggufCache?.headDim ?? ggufMetadata?.headDimension
+        return Self.plausible(weightFormat == .gguf ? gguf : settings?.headDim, upTo: 8192)
     }
 
-    /// Cache per layer type from `config.json`. GGUF sizing keeps the header's uniform layout.
+    /// Cache per layer type: llama.cpp's from the GGUF header, else mlx-swift-lm's from `config.json`. The
+    /// sliding-window VLMs in the pin (Gemma 3, Gemma 4, Mistral 3) prefill the whole prompt in one pass.
     var kvLayout: KVCacheLayout? {
-        weightFormat == .gguf ? nil : settings?.kvLayers
+        if weightFormat == .gguf { return ggufCache?.layout }
+        guard let layout = settings?.kvLayers else { return nil }
+        return inferredCategory == .vision ? layout.prefilledInOnePass() : layout
     }
 
     /// Experts read per token, from the safetensors headers' exact tensor sizes; `nil` for dense models, GGUF,
     /// or when the sizes were not read.
-    var expertRouting: ExpertRouting? {
+    var moeRouting: ExpertRouting? {
         guard weightFormat == .mlx, let experts = settings?.routedExperts, let perToken = settings?.expertsPerToken,
               let bytes = source.tensorBytes, !bytes.isEmpty else { return nil }
         return ExpertRouting.measure(tensorBytes: bytes, routedExperts: experts, expertsPerToken: perToken)

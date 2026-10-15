@@ -71,7 +71,8 @@ public struct ArchitectureFacts: Sendable, Equatable {
     public let hasVision: Bool
     /// `4-bit` for MLX; the quant labels for GGUF.
     public let quantization: String?
-    /// Cache per layer type, from `config.json`; `nil` for GGUF or when the layer count is unknown.
+    /// Cache per layer type, from `config.json` or a GGUF header that lists its sliding-window layers; `nil` when
+    /// the layer count is unknown and for a GGUF sized uniformly.
     public let kvLayers: KVCacheLayout?
     /// Mixture-of-experts routing measured from the tensor sizes; `nil` for dense models.
     public let experts: ExpertRouting?
@@ -206,13 +207,13 @@ public enum CompatibilityEvaluator {
         }
         let model = sizingModel(format: .mlx, bytes: bytes, layers: input.layerCount,
                                 kvHeads: input.kvHeadCount, headDim: input.headWidth,
-                                kvLayers: input.kvLayout, experts: input.expertRouting)
+                                kvLayers: input.kvLayout, experts: input.moeRouting)
         return estimate(model, profile: profile)
     }
 
     private static func quantFit(_ group: GGUFQuantGroup, input: RuleInput) -> QuantFit {
         let model = sizingModel(format: .gguf, bytes: group.totalBytes, layers: input.layerCount,
-                                kvHeads: input.kvHeadCount, headDim: input.headWidth)
+                                kvHeads: input.kvHeadCount, headDim: input.headWidth, kvLayers: input.kvLayout)
         return QuantFit(option: group, memory: estimate(model, profile: input.target.memoryProfile))
     }
 
@@ -281,25 +282,61 @@ public enum CompatibilityEvaluator {
         guard let layout = input.kvLayout, let heads = input.kvHeadCount, let width = input.headWidth else { return nil }
         let layers = input.layerCount ?? layout.cachedLayers
         guard layout.slidingLayers + layout.recurrentLayers > 0 || layout.cachedLayers != layers else { return nil }
+        if layout.slidingLayers > 0, layout.slidingWindow == 0 {
+            return fullSizeKVFinding(input, layout: layout, layers: layers, heads: heads, width: width)
+        }
+        let wholePrompt = layout.slidingLayers > 0 && layout.slidingPrefillStep == nil
         var parts = ["\(layout.fullAttentionLayers) of \(layers) layers keep the whole context"]
         if layout.slidingLayers > 0 {
-            parts.append("\(layout.slidingLayers) keep the last \(layout.slidingWindow) tokens")
+            let peak = layout.slidingPrefillStep.map {
+                " (up to \(layout.slidingWindow + $0 - 1) while the prompt is prefilled \($0) tokens at a time)"
+            } ?? " once decoding starts; the runtime prefills the whole prompt in one pass, so until then they hold all of it"
+            parts.append("\(layout.slidingLayers) keep the last \(layout.slidingWindow) tokens" + peak)
         }
         if layout.recurrentLayers > 0 {
             parts.append(String(format: "%d keep a fixed %.1f MB state", layout.recurrentLayers,
                                 Double(layout.recurrentStateBytes) / 1_048_576))
         }
-        let sampled = layout.cacheBytes(contextLength: kvSampleContext, kvHeads: heads, headDim: width)
+        let peak = layout.cacheBytes(contextLength: kvSampleContext, kvHeads: heads, headDim: width)
+        let decoding = layout.decodingCacheBytes(contextLength: kvSampleContext, kvHeads: heads, headDim: width)
         let uniform = KVCacheLayout(fullAttentionLayers: layers)
             .cacheBytes(contextLength: kvSampleContext, kvHeads: heads, headDim: width)
-        let sizes = String(format: ". At %d tokens: %.0f MB (%.0f MB if every layer kept it).",
-                           kvSampleContext, sampled / 1_048_576, uniform / 1_048_576)
-        return .info("kv", "KV cache grows on \(layout.fullAttentionLayers) of \(layers) layers",
+        let sampled = peak == decoding
+            ? String(format: "%.0f MB", peak / 1_048_576)
+            : String(format: "%.0f MB at the prefill peak, %.0f MB once decoding starts", peak / 1_048_576,
+                     decoding / 1_048_576)
+        let sizes = String(format: ". At %d tokens: %@ (%.0f MB if every layer kept it).",
+                           kvSampleContext, sampled, uniform / 1_048_576)
+        let title = "KV cache grows on \(layout.fullAttentionLayers) of \(layers) layers"
+        return .info("kv", wholePrompt ? title + " once decoding starts" : title, parts.joined(separator: ", ") + sizes)
+    }
+
+    /// llama.cpp sizes sliding-window layers for the whole context too (`swa_full`); they differ only in width.
+    private static func fullSizeKVFinding(_ input: RuleInput, layout: KVCacheLayout, layers: Int, heads: Int,
+                                          width: Int) -> CompatibilityFinding {
+        let globalHeads = layout.fullAttentionKVHeads ?? heads
+        let globalWidth = layout.fullAttentionHeadDim ?? width
+        var parts = ["llama.cpp sizes every cached layer for the whole context: \(layout.fullAttentionLayers) global "
+                     + "at \(globalHeads) × \(globalWidth), \(layout.slidingLayers) sliding-window at \(heads) × \(width)"]
+        if layout.cachedLayers < layers {
+            parts.append("\(layers - layout.cachedLayers) reuse an earlier layer's cache")
+        }
+        let sampled = layout.cacheBytes(contextLength: kvSampleContext, kvHeads: heads, headDim: width)
+        var sizes = String(format: ". At %d tokens: %.0f MB", kvSampleContext, sampled / 1_048_576)
+        if let headerHeads = input.ggufMetadata?.headCountKV, let headerWidth = input.ggufMetadata?.headDimension {
+            let uniform = KVCacheLayout(fullAttentionLayers: layers)
+                .cacheBytes(contextLength: kvSampleContext, kvHeads: headerHeads, headDim: headerWidth)
+            sizes += String(format: " (%.0f MB with every layer at %d × %d).", uniform / 1_048_576, headerHeads,
+                            headerWidth)
+        } else {
+            sizes += "."
+        }
+        return .info("kv", "KV cache: \(layout.fullAttentionLayers) global and \(layout.slidingLayers) sliding-window layers",
                      parts.joined(separator: ", ") + sizes)
     }
 
     private static func moeFinding(_ input: RuleInput, weightsFit: FitEstimate?) -> CompatibilityFinding? {
-        guard let routing = input.expertRouting else { return nil }
+        guard let routing = input.moeRouting else { return nil }
         let read = String(format: "A token reads ≈%.2f GB of the weights (non-expert tensors plus %d/%d of the experts).",
                           Double(routing.activeSizeMB) / 1024, routing.expertsPerToken, routing.routedExperts)
         let speed = weightsFit?.decodeText.map { " Decode \($0) on \(input.target.displayName)." } ?? ""
@@ -345,7 +382,7 @@ public enum CompatibilityEvaluator {
                 modelCategory: category, weightFormat: .mlx, approximateSizeMB: megabytes(weightsBytes),
                 isUncensored: uncensored, ggufFilename: nil, numLayers: input.layerCount ?? 0,
                 kvHeads: input.kvHeadCount ?? 0, headDim: input.headWidth ?? 0, maxContextLength: context,
-                kvLayers: layout, experts: input.expertRouting)
+                kvLayers: layout, experts: input.moeRouting)
         case .gguf:
             guard let pick = QuantFit.recommended(in: quantFits) else { return nil }
             return CatalogEntry(
@@ -354,7 +391,8 @@ public enum CompatibilityEvaluator {
                 displayName: CatalogEntry.displayName(repoID: listing.repoID, format: .gguf, quant: pick.option.label, bits: nil),
                 modelCategory: .text, weightFormat: .gguf, approximateSizeMB: megabytes(pick.option.totalBytes),
                 isUncensored: uncensored, ggufFilename: pick.option.firstPath, numLayers: input.layerCount ?? 0,
-                kvHeads: input.kvHeadCount ?? 0, headDim: input.headWidth ?? 0, maxContextLength: context)
+                kvHeads: input.kvHeadCount ?? 0, headDim: input.headWidth ?? 0, maxContextLength: context,
+                kvLayers: input.kvLayout)
         default:
             return nil
         }
@@ -368,14 +406,14 @@ public enum CompatibilityEvaluator {
             return ArchitectureFacts(
                 family: input.ggufArchitecture, layers: input.layerCount, trainedContext: input.trainedContext,
                 kvHeads: input.kvHeadCount, headDim: input.headWidth, hasVision: false,
-                quantization: labels.isEmpty ? nil : "\(labels.count) quants", kvLayers: nil, experts: nil)
+                quantization: labels.isEmpty ? nil : "\(labels.count) quants", kvLayers: input.kvLayout, experts: nil)
         default:
             return ArchitectureFacts(
                 family: config?.modelType, layers: input.layerCount, trainedContext: input.trainedContext,
                 kvHeads: input.kvHeadCount, headDim: input.headWidth,
                 hasVision: category == .vision || (category == nil && input.hasVisionTensors == true),
                 quantization: config?.quantizationBits.map { "\($0)-bit" } ?? config?.foreignQuantMethod,
-                kvLayers: input.kvLayout, experts: input.expertRouting)
+                kvLayers: input.kvLayout, experts: input.moeRouting)
         }
     }
 }

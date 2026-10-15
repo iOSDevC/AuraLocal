@@ -718,7 +718,8 @@
       "defaultDocumentPrompt": null,
       "numLayers": 48,
       "kvHeads": 8,
-      "headDim": 512
+      "headDim": 256,
+      "kvLayers": {"fullAttentionLayers": 8, "slidingLayers": 40, "slidingWindow": 0, "recurrentLayers": 0, "recurrentStateBytes": 0, "fullAttentionKVHeads": 1, "fullAttentionHeadDim": 512}
     },
     {
       "id": "gemma4_12b_agentic_gguf",
@@ -734,7 +735,8 @@
       "defaultDocumentPrompt": null,
       "numLayers": 48,
       "kvHeads": 8,
-      "headDim": 512
+      "headDim": 256,
+      "kvLayers": {"fullAttentionLayers": 8, "slidingLayers": 40, "slidingWindow": 0, "recurrentLayers": 0, "recurrentStateBytes": 0, "fullAttentionKVHeads": 1, "fullAttentionHeadDim": 512}
     },
     {
       "id": "security_gemma_e2b_gguf",
@@ -750,7 +752,8 @@
       "defaultDocumentPrompt": null,
       "numLayers": 35,
       "kvHeads": 1,
-      "headDim": 512
+      "headDim": 256,
+      "kvLayers": {"fullAttentionLayers": 3, "slidingLayers": 12, "slidingWindow": 0, "recurrentLayers": 0, "recurrentStateBytes": 0, "fullAttentionHeadDim": 512}
     },
     {
       "id": "ornith_1_5_35b_a3b_mlx",

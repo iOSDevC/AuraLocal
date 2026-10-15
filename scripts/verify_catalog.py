@@ -48,7 +48,8 @@ KEY_ORDER = ["id", "domain", "repoID", "displayName", "category", "docTags", "fo
 CONTEXT_CEILING = 32_768  # CatalogEntry.contextCeiling
 SHARD = re.compile(r"-\d{5}-of-\d{5}\.gguf$")
 NESTED_ORDER = ["fullAttentionLayers", "slidingLayers", "slidingWindow", "recurrentLayers", "recurrentStateBytes",
-                "fullAttentionKVHeads", "fullAttentionHeadDim", "routedExperts", "expertsPerToken", "activeSizeMB"]
+                "fullAttentionKVHeads", "fullAttentionHeadDim", "slidingPrefillStep", "routedExperts", "expertsPerToken",
+                "activeSizeMB"]
 
 
 # MARK: - HTTP
@@ -242,7 +243,7 @@ def compare(entry: dict, state: RepoState, report: dict | None, tolerance: float
         elif entry.get(key) != live:
             diffs.append(Diff(key, entry.get(key), live, True))
 
-    if entry["format"] == "mlx" and report is not None:
+    if report is not None:
         layout = None if uniform(arch.get("kvLayers"), layers) else ordered(arch.get("kvLayers"))
         if entry.get("kvLayers") != layout:
             diffs.append(Diff("kvLayers", entry.get("kvLayers"), layout, True))

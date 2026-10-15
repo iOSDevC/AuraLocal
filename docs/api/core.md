@@ -541,7 +541,9 @@ public struct ModelCompatibility: Sendable {
     let fitLevel: ModelFitLevel
     let requiredMemoryGB: Double
     let availableMemoryGB: Double
-    let estimatedDecodeTokensPerSecond: Double?  // nil when chip bandwidth is unknown; see Benchmarks › Speed estimate
+    let estimatedDecodeTokensPerSecond: Double?  // nil when chip bandwidth is unknown; see Benchmarks › Speed estimate.
+                                                 // For a mixture of experts, the low end of the range below
+    let estimatedDecodeTokensPerSecondRange: ClosedRange<Double>?  // mixture of experts only; nil for dense
     var utilizationPercent: Double               // % of available memory consumed
     var speedLevel: SpeedLevel
 }
@@ -631,7 +633,8 @@ public struct CompatibilityReport: Sendable {
     let modelCategory: Model.Category?       // how AuraLocal would load it; nil when it cannot
     let status: CompatibilityVerdict         // .runnable .runnableWithCaveats .notRunnable .unknown
     let findings: [CompatibilityFinding]     // blockers first, then caveats, then info
-    let overview: ArchitectureFacts          // family, layers, trainedContext, kvHeads, headDim, hasVision, quantization
+    let overview: ArchitectureFacts          // family, layers, trainedContext, kvHeads, headDim, hasVision, quantization,
+                                             // kvLayers (cache per layer type), experts (MoE routing)
     let weightsBytes: Int64?                 // non-GGUF weights
     let weightsFit: FitEstimate?
     let quantFits: [QuantFit]                // every GGUF quant, smallest first, each with its fit
@@ -658,8 +661,10 @@ public struct FitEstimate: Sendable, Equatable {
     let rating: ModelFitLevel
     let requiredGB: Double
     let budgetGB: Double
-    let tokensPerSecond: Double?             // nil when the device's bandwidth is unknown
+    let tokensPerSecond: Double?             // nil when the device's bandwidth is unknown; MoE: the range's low end
+    let tokensPerSecondRange: ClosedRange<Double>?  // mixture of experts only; nil for dense
     var summary: String                      // "Good · 12.0 of 20.0 GB"
+    var decodeText: String?                  // "~18 tok/s", or "~37–75 tok/s (uncalibrated MoE range)"
 }
 ```
 

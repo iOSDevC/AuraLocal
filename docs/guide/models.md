@@ -217,7 +217,7 @@ uv run scripts/verify_catalog.py --no-aura           # repos, files and sizes on
 | MLX files | a top-level `config.json` and `*.safetensors` | — |
 | `approximateSizeMB` | GGUF: that file's size; MLX: the safetensors `aura` loads (`weightsBytes`); drift above `--size-tolerance` (2 %) | yes, in MiB |
 | `numLayers`, `kvHeads`, `headDim` | `aura`'s `architecture` object: `config.json`, or the header of the entry's own GGUF (`--gguf`) | yes |
-| `kvLayers`, `experts` | the same, MLX only; `kvLayers` stays out when every layer keeps the whole context | yes |
+| `kvLayers`, `experts` | the same; `kvLayers` stays out when every layer keeps the whole context at one width, and `experts` is MLX only | yes |
 | `maxContextLength` | the trained context: a cap above it, or no cap while it is below 32768 | yes |
 
 Requests stay under `--max-requests` (450) per 300 s, below Hugging Face's 500; each `aura` call is charged at an
@@ -245,6 +245,9 @@ the pinned runtimes and never fail the run. Differences that must stay go in `sc
   18 → 40), the `Dolphin3.0-Qwen2.5-3b` file name case, sizes, and `maxContextLength` caps below 32768.
 - Not a catalog difference: `gemma4_12b` declares `model_type` `gemma4_unified`, which mlx-swift-lm 3.31.3 does not
   register, so it does not load until the pin moves.
+- Re-run the same day with the per-layer GGUF sizing: `gemma4_12b_coder_gguf`, `gemma4_12b_agentic_gguf` and
+  `security_gemma_e2b_gguf` now carry their sliding layers' `headDim` 256 (`key_length_swa`) and a `kvLayers` with the
+  global layers' 512-wide heads; before, every layer was sized at 512. 53 entries, 0 differences.
 
 ---
 
@@ -297,10 +300,16 @@ Two optional `models.json` objects refine the estimate. Entries without them kee
 ```
 
 - **`kvLayers`** (`KVCacheLayout`) mirrors the caches mlx-swift-lm 3.31.3 allocates in `newCache(parameters:)`:
-  full-attention layers grow with the context, sliding-window layers stop at `slidingWindow` tokens
-  (`RotatingKVCache`), and linear-attention / state-space layers hold a fixed `recurrentStateBytes` (`MambaCache`).
-  `estimatedKVCacheGB(contextLength:)` sums the three. Gemma 4 adds `fullAttentionKVHeads` / `fullAttentionHeadDim`
-  for its wider global layers.
+  full-attention layers grow with the context, sliding-window layers stop at `slidingWindow` tokens once decoding
+  starts (`RotatingKVCache`), and linear-attention / state-space layers hold a fixed `recurrentStateBytes`
+  (`MambaCache`). Gemma 4 adds `fullAttentionKVHeads` / `fullAttentionHeadDim` for its wider global layers.
+  `estimatedKVCacheGB(contextLength:)` sums them at their peak, which for a sliding layer comes during prefill:
+  `slidingPrefillStep` (512, `GenerateParameters.prefillStepSize`) means the prompt is fed in steps, so the layer
+  briefly holds `slidingWindow + 511` tokens; no `slidingPrefillStep` means the runtime prefills the whole prompt in
+  one pass and the layer holds all of it until the first decoded token. That is the case for `gemma3`,
+  `gemma3_text` and `gemma3n` (their `prepare` does not chunk) and for the sliding-window VLMs (Gemma 3, Gemma 4,
+  Mistral 3), so their peak equals every layer keeping the whole context. `MLXBackend` re-prefills the whole
+  conversation every turn, so every turn reaches it.
 - **`experts`** (`ExpertRouting`) holds the MiB a decoded token reads: the non-expert tensors plus
   `expertsPerToken / routedExperts` of the expert tensors (`.experts.`, `switch_mlp`, Granite's
   `input_linear` / `output_linear`). Shared experts count as non-expert; vision towers and `mtp` heads are left out.
@@ -322,8 +331,14 @@ Recurrent states are sized at 2 bytes per element from `linear_*` keys (Gated De
 `conv_L_cache` × `hidden_size` (LFM2). A sliding layer with no plausible `sliding_window` counts as full. Families the
 table does not list (Jamba, Falcon H1, Baichuan M1, MiMo V2 Flash) are sized as every layer full attention,
 without the recurrent state some of them also keep.
-GGUF sizing still reads only the header, so it stays uniform; the `kvLayers` and `experts` objects come from MLX
-repos. The 256-token allocation step of `KVCacheSimple` is ignored.
+A GGUF header that lists its sliding-window layers (`attention.sliding_window_pattern`, one flag per layer, as in
+Gemma 4) gets a `kvLayers` too, sized as llama.cpp b8851 allocates it: `llama_context_default_params()` sets
+`swa_full`, so sliding-window layers are sized for the whole context like the global ones (`slidingWindow` 0), at
+`attention.key_length_swa` × their own `head_count_kv`; the entry's `kvHeads` / `headDim` are the sliding layers',
+and the global layers' go in `fullAttentionKVHeads` / `fullAttentionHeadDim`. The last
+`attention.shared_kv_layers` layers hold no cache. Other GGUF headers stay uniform at the largest `head_count_kv`
+and `key_length`, which llama.cpp's own sizing matches when every layer has the same width. The `experts` object
+comes from MLX repos only. The 256-token allocation step of `KVCacheSimple` is ignored.
 
 `HardwareAnalyzer.recommendedContextWindow(for:)` searches the largest multiple of 512 whose cache fits, so a
 sliding or hybrid model earns a longer window than its layer count suggests.
@@ -407,11 +422,11 @@ decides it. Any blocker means **Won't run**.
 unreadable headers, an ignored mmproj, trained contexts below 32768 tokens) but never block.
 
 Fit uses the existing `HardwareAnalyzer` math: weights + runtime overhead + a GQA-aware KV cache at 2048 tokens,
-with `kvHeads` / `headDim` from `config.json` or the GGUF header and, for MLX, the cache per layer type described in
+with `kvHeads` / `headDim` from `config.json` or the GGUF header and the cache per layer type described in
 [KV cache per layer type and mixtures of experts](#kv-cache-per-layer-type-and-mixtures-of-experts). A `kv` finding
 reports the layer split when not every layer keeps the whole context, and a `moe` finding the bytes a token reads
-and the decode range. Suggested MLX entries carry `kvHeads`, `headDim`, `kvLayers` (omitted when every layer is full)
-and `experts`. Every GGUF quant gets its own fit. Sizes are
+and the decode range. Suggested entries carry `kvHeads`, `headDim` and `kvLayers` (omitted when every layer keeps the
+whole context at one width); MLX entries also carry `experts`. Every GGUF quant gets its own fit. Sizes are
 binary: catalog `approximateSizeMB` is MiB, because `HardwareAnalyzer` divides it by 1024 to get GiB. Layer, KV-head
 and head-width values past 4096, 1024 and 8192 come from a corrupt or hostile file and count as unknown.
 
@@ -444,14 +459,16 @@ Verified on 2026-09-29 with `aura models check <repo> --device mac-32gb` (M1 Pro
 | `mlx-community/gemma-3n-E4B-it-bf16` | Won't run | `gemma3n` is LLM-only here; `model.vision_tower` / `model.audio_tower` would be unhandled keys |
 | `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ` | Won't run | an embedding model (`sentence-transformers` tags) despite `pipeline_tag: text-generation` |
 
-Re-checked on 2026-10-14 with the per-layer KV and the MoE estimate (`--device mac-32gb`):
+Re-checked on 2026-10-14 with the per-layer KV and the MoE estimate (`--device mac-32gb`). One figure means the peak
+and the decoding size are the same; in parentheses, every layer keeping the whole context:
 
-| Repository | KV layers | KV at 8192 tokens | Decode |
-|------------|-----------|-------------------|--------|
+| Repository | KV layers | KV at 8192 tokens: peak / once decoding | Decode |
+|------------|-----------|-----------------------------------------|--------|
 | `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | 10 of 40 full, 30 Gated DeltaNet (31.4 MB state) | 191 MB (640 MB if every layer kept it) | ~29–58 tok/s, uncalibrated MoE range: a token reads ≈1.82 of 18.17 GB |
 | `mlx-community/Qwen3.5-2B-4bit` | 6 of 24 full, 18 Gated DeltaNet (9.6 MB state) | 106 MB (384 MB) | ~63 tok/s |
-| `mlx-community/gemma-3-12b-it-qat-4bit` | 8 of 48 full, 40 sliding (1024 tokens) | 832 MB (3072 MB) | ~20 tok/s |
-| `mlx-community/gemma-3-4b-it-4bit` | 5 of 34 full, 29 sliding (1024 tokens); heads from the runtime defaults | 276 MB (1088 MB) | ~40 tok/s |
+| `mlx-community/gemma-3-12b-it-qat-4bit` | 8 of 48 full, 40 sliding (1024 tokens); the prompt is prefilled in one pass | 3072 MB / 832 MB (3072 MB) | ~20 tok/s |
+| `mlx-community/gemma-3-4b-it-4bit` | 5 of 34 full, 29 sliding (1024 tokens), prefilled in one pass; heads from the runtime defaults | 1088 MB / 276 MB (1088 MB) | ~40 tok/s |
+| `yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF` (`gemma4-coding-Q4_K_M.gguf`) | llama.cpp: 8 global at 1 × 512 and 40 sliding-window at 8 × 256, all sized for the whole context | 2688 MB (6144 MB at the header's 8 × 512 on every layer) | — |
 
 ### Device presets
 

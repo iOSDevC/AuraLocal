@@ -75,6 +75,14 @@ extension KVCacheLayout {
     /// Types whose last `num_kv_shared_layers` layers reuse an earlier layer's cache.
     static let sharedKVModelTypes: Set<String> = ["gemma3n", "gemma4", "gemma4_text"]
 
+    /// LLM types whose `prepare` runs the whole prompt in one pass instead of `LLMModel.prepare`'s chunks
+    /// (MLXLLM Gemma3Text.swift, Gemma3nText.swift). The sliding-window VLMs (MLXVLM Gemma3.swift, Gemma4.swift,
+    /// Mistral3.swift) do the same; see ``prefilledInOnePass()``.
+    static let wholePromptPrefillModelTypes: Set<String> = ["gemma3", "gemma3_text", "gemma3n"]
+
+    /// `GenerateParameters.prefillStepSize`'s default, the chunk `LLMModel.prepare` feeds per step.
+    static let defaultPrefillStep = 512
+
     /// Gemma 4 full-attention layers use `global_head_dim` and, with `attention_k_eq_v`, `num_global_key_value_heads`.
     static let globalWidthModelTypes: Set<String> = ["gemma4", "gemma4_text"]
 
@@ -102,10 +110,20 @@ extension KVCacheLayout {
         let recurrentLayers = resolved.filter { $0 == .recurrent }.count
         guard let stateBytes = recurrentStateBytes(config, layers: recurrentLayers) else { return nil }
         let widths = globalWidthModelTypes.contains(type) ? globalWidths(config) : (nil, nil)
+        let chunked = slidingLayers > 0 && !wholePromptPrefillModelTypes.contains(type)
         return KVCacheLayout(
             fullAttentionLayers: resolved.filter { $0 == .full }.count, slidingLayers: slidingLayers,
             slidingWindow: slidingLayers > 0 ? window ?? 0 : 0, recurrentLayers: recurrentLayers,
-            recurrentStateBytes: stateBytes, fullAttentionKVHeads: widths.0, fullAttentionHeadDim: widths.1)
+            recurrentStateBytes: stateBytes, fullAttentionKVHeads: widths.0, fullAttentionHeadDim: widths.1,
+            slidingPrefillStep: chunked ? defaultPrefillStep : nil)
+    }
+
+    /// The same caches, for a runtime that prefills the whole prompt in one pass.
+    func prefilledInOnePass() -> KVCacheLayout {
+        KVCacheLayout(fullAttentionLayers: fullAttentionLayers, slidingLayers: slidingLayers,
+                      slidingWindow: slidingWindow, recurrentLayers: recurrentLayers,
+                      recurrentStateBytes: recurrentStateBytes, fullAttentionKVHeads: fullAttentionKVHeads,
+                      fullAttentionHeadDim: fullAttentionHeadDim, slidingPrefillStep: nil)
     }
 
     /// One entry per decoder layer.
@@ -193,6 +211,66 @@ extension KVCacheLayout {
         }
         let bytes = elements * 2 * Double(layers)
         return bytes < Double(Int.max / 2) ? Int(bytes) : nil
+    }
+}
+
+// MARK: - GGUF layout
+
+/// The KV cache llama.cpp allocates for a GGUF, with the heads and width of the layers ``KVCacheLayout`` sizes at the
+/// model's `kvHeads` / `headDim`.
+struct GGUFCacheShape: Equatable {
+    let layout: KVCacheLayout
+    let kvHeads: Int
+    let headDim: Int
+}
+
+extension KVCacheLayout {
+
+    // Evidence: llama.cpp b8851 llama-model.cpp (LLM_ARCH_GEMMA4 hparams), llama-hparams.cpp (`n_embd_k_gqa(il)`,
+    // `has_kv`), llama-kv-cache-iswa.cpp (`swa_full`), llama-context.cpp (`swa_full = true` by default).
+
+    /// llama.cpp's per-layer cache for a header that lists its sliding-window layers
+    /// (`attention.sliding_window_pattern`, one flag per layer); `nil` without that list, so every layer is sized
+    /// like the widest one, or when the per-layer values are implausible.
+    ///
+    /// Sliding layers take `attention.key_length_swa` as their width and global layers `attention.key_length`;
+    /// `attention.head_count_kv` may list heads per layer. Both kinds are sized for the whole context (`swa_full`).
+    /// The last `attention.shared_kv_layers` layers reuse an earlier cache (`n_layer_kv_from_start`).
+    static func derive(gguf header: GGUFHeader) -> GGUFCacheShape? {
+        guard let architecture = header.architecture,
+              let layers = header.blockCount, (1...maxLayers).contains(layers),
+              let pattern = perLayer(header.metadata["\(architecture).attention.sliding_window_pattern"], layers),
+              let fullWidth = header.headDimension, let fullHeads = header.headCountKV else { return nil }
+        let swaWidth = header.architectureInteger("attention.key_length_swa") ?? fullWidth
+        let heads = perLayer(header.metadata["\(architecture).attention.head_count_kv"], layers)
+            ?? Array(repeating: fullHeads, count: layers)
+        let shared = header.architectureInteger("attention.shared_kv_layers")
+            .flatMap { (0..<layers).contains($0) ? $0 : nil } ?? 0
+        let cached = 0..<(layers - shared)
+        let sliding = cached.filter { pattern[$0] != 0 }
+        let global = cached.filter { pattern[$0] == 0 }
+        guard !sliding.isEmpty,
+              let swaHeads = sliding.map({ heads[$0] }).max(),
+              (1...maxDimension).contains(swaHeads), (1...maxDimension).contains(swaWidth),
+              (1...maxDimension).contains(fullWidth) else { return nil }
+        let globalHeads = global.map { heads[$0] }.max() ?? swaHeads
+        guard (1...maxDimension).contains(globalHeads) else { return nil }
+        // Same maxima on both kinds and nothing shared: the uniform estimate is already exact.
+        if shared == 0, globalHeads == swaHeads, fullWidth == swaWidth { return nil }
+        let layout = KVCacheLayout(
+            fullAttentionLayers: global.count, slidingLayers: sliding.count, slidingWindow: 0,
+            fullAttentionKVHeads: global.isEmpty || globalHeads == swaHeads ? nil : globalHeads,
+            fullAttentionHeadDim: global.isEmpty || fullWidth == swaWidth ? nil : fullWidth)
+        return GGUFCacheShape(layout: layout, kvHeads: swaHeads, headDim: swaWidth)
+    }
+
+    /// One integer per layer (flags as 0 / 1), when the array is complete; the parser keeps only its first elements.
+    private static func perLayer(_ value: GGUFValue?, _ layers: Int) -> [Int]? {
+        guard case .array(let list)? = value, list.count == UInt64(layers), list.elements.count == layers else {
+            return nil
+        }
+        let values = list.elements.compactMap(\.integer)
+        return values.count == layers ? values : nil
     }
 }
 

@@ -2,9 +2,10 @@ import Foundation
 
 /// A `models.json` entry for a model the checker found runnable, with the catalog's fields and key order.
 ///
-/// `kvHeads` / `headDim` come from `config.json` (MLX) or the file header (GGUF), 0 when neither has them.
-/// `maxContextLength` is set only below 32768 tokens. MLX entries add `kvLayers` when not every layer keeps the
-/// whole context, and `experts` for a mixture of experts whose tensor sizes were read.
+/// `kvHeads` / `headDim` come from `config.json` (MLX) or the file header (GGUF), 0 when neither has them; for a
+/// GGUF that lists its sliding-window layers they are those layers'. `maxContextLength` is set only below 32768
+/// tokens. Entries add `kvLayers` when not every layer keeps the whole context at one width, and MLX entries
+/// `experts` for a mixture of experts whose tensor sizes were read.
 public struct CatalogEntry: Sendable, Equatable {
     public let id: String
     public let repoID: String
@@ -88,6 +89,7 @@ public struct CatalogEntry: Sendable, Equatable {
         ]
         if let heads = layout.fullAttentionKVHeads { pairs.append(("fullAttentionKVHeads", heads)) }
         if let width = layout.fullAttentionHeadDim { pairs.append(("fullAttentionHeadDim", width)) }
+        if let step = layout.slidingPrefillStep { pairs.append(("slidingPrefillStep", step)) }
         return "{" + pairs.map { "\"\($0.0)\": \($0.1)" }.joined(separator: ", ") + "}"
     }
 

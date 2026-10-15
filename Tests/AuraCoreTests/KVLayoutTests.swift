@@ -37,17 +37,40 @@ final class KVLayoutTests: XCTestCase {
         XCTAssertEqual(layout.recurrentStateBytes, 0, "no linear_* keys, no state to size")
     }
 
-    func testGemma3SlidingLayersStopAtTheirWindow() throws {
+    func testGemma3SlidingLayersStopAtTheirWindowOnceDecodingStarts() throws {
         let facts = try XCTUnwrap(LayoutFixture.facts(LayoutFixture.gemma3TwelveB))
         let layout = try XCTUnwrap(facts.kvLayers)
         XCTAssertEqual(layout.fullAttentionLayers, 8)
         XCTAssertEqual(layout.slidingLayers, 40)
         XCTAssertEqual(layout.slidingWindow, 1024)
+        XCTAssertNil(layout.slidingPrefillStep, "Gemma3Text.prepare runs the whole prompt in one pass")
 
-        let model = LayoutFixture.model(layers: 48, kvHeads: 8, headDim: 256, kvLayers: layout)
-        let perFullToken = 8.0 * 4 * 8 * 256 / 1_073_741_824
-        let growth = model.estimatedKVCacheGB(contextLength: 8192) - model.estimatedKVCacheGB(contextLength: 4096)
-        XCTAssertEqual(growth, perFullToken * 4096, accuracy: 1e-9, "past the window only the 8 global layers grow")
+        let perFullToken = 8.0 * 4 * 8 * 256
+        let growth = layout.decodingCacheBytes(contextLength: 8192, kvHeads: 8, headDim: 256)
+            - layout.decodingCacheBytes(contextLength: 4096, kvHeads: 8, headDim: 256)
+        XCTAssertEqual(growth, perFullToken * 4096, accuracy: 1e-6, "past the window only the 8 global layers grow")
+    }
+
+    func testGemma3PeaksAtTheWholePromptOnEveryLayer() throws {
+        let layout = try XCTUnwrap(LayoutFixture.facts(LayoutFixture.gemma3TwelveB)?.kvLayers)
+        let gemma = LayoutFixture.model(layers: 48, kvHeads: 8, headDim: 256, kvLayers: layout)
+        let uniform = LayoutFixture.model(layers: 48, kvHeads: 8, headDim: 256, kvLayers: nil)
+
+        XCTAssertEqual(gemma.estimatedKVCacheGB(contextLength: 8192), uniform.estimatedKVCacheGB(contextLength: 8192),
+                       accuracy: 1e-9)
+    }
+
+    func testChunkedPrefillHoldsTheWindowPlusOneStep() {
+        let layout = KVCacheLayout(fullAttentionLayers: 0, slidingLayers: 1, slidingWindow: 1024, slidingPrefillStep: 512)
+        XCTAssertEqual(layout.cacheBytes(contextLength: 8192, kvHeads: 1, headDim: 1), 4 * 1535)
+        XCTAssertEqual(layout.cacheBytes(contextLength: 1000, kvHeads: 1, headDim: 1), 4 * 1000)
+        XCTAssertEqual(layout.decodingCacheBytes(contextLength: 8192, kvHeads: 1, headDim: 1), 4 * 1024)
+    }
+
+    func testVisionEntriesPrefillTheWholePrompt() throws {
+        let layout = KVCacheLayout(fullAttentionLayers: 2, slidingLayers: 8, slidingWindow: 512, slidingPrefillStep: 512)
+        XCTAssertNil(layout.prefilledInOnePass().slidingPrefillStep)
+        XCTAssertEqual(layout.prefilledInOnePass().slidingWindow, 512)
     }
 
     func testGemma3VisionConfigWithoutHeadsUsesTheRuntimeDefaults() throws {
@@ -72,8 +95,10 @@ final class KVLayoutTests: XCTestCase {
             """#)?.kvLayers)
 
         XCTAssertEqual(layout, KVCacheLayout(fullAttentionLayers: 1, slidingLayers: 5, slidingWindow: 512,
-                                             fullAttentionKVHeads: 1, fullAttentionHeadDim: 512))
+                                             fullAttentionKVHeads: 1, fullAttentionHeadDim: 512, slidingPrefillStep: 512))
         XCTAssertEqual(layout.cacheBytes(contextLength: 2048, kvHeads: 2, headDim: 256),
+                       4.0 * 1 * 512 * 2048 + 5 * 4.0 * 2 * 256 * (512 + 511))
+        XCTAssertEqual(layout.decodingCacheBytes(contextLength: 2048, kvHeads: 2, headDim: 256),
                        4.0 * 1 * 512 * 2048 + 5 * 4.0 * 2 * 256 * 512)
     }
 
@@ -82,7 +107,8 @@ final class KVLayoutTests: XCTestCase {
             {"model_type": "gemma4_text", "num_hidden_layers": 10, "num_key_value_heads": 2, "head_dim": 256,
              "global_head_dim": 256, "sliding_window": 512}
             """#)?.kvLayers)
-        XCTAssertEqual(layout, KVCacheLayout(fullAttentionLayers: 2, slidingLayers: 8, slidingWindow: 512))
+        XCTAssertEqual(layout, KVCacheLayout(fullAttentionLayers: 2, slidingLayers: 8, slidingWindow: 512,
+                                             slidingPrefillStep: 512))
     }
 
     func testSlidingLayerTypesCountAsFullWhereTheRuntimeIgnoresThem() throws {
@@ -97,7 +123,8 @@ final class KVLayoutTests: XCTestCase {
              "layer_types": ["sliding_attention", "sliding_attention", "full_attention", "full_attention"]}
             """#)?.kvLayers)
 
-        XCTAssertEqual(gptOSS, KVCacheLayout(fullAttentionLayers: 2, slidingLayers: 2, slidingWindow: 128))
+        XCTAssertEqual(gptOSS, KVCacheLayout(fullAttentionLayers: 2, slidingLayers: 2, slidingWindow: 128,
+                                             slidingPrefillStep: 512))
         XCTAssertEqual(qwen2, KVCacheLayout(fullAttentionLayers: 4))
     }
 
@@ -132,10 +159,66 @@ final class KVLayoutTests: XCTestCase {
         XCTAssertEqual(hugeWindow, KVCacheLayout(fullAttentionLayers: 12), "no plausible window: cache in full")
     }
 
+    // MARK: - GGUF per-layer cache
+
+    func testGemma4GGUFSizesGlobalAndSlidingLayersAtTheirOwnWidths() throws {
+        let shape = try XCTUnwrap(KVCacheLayout.derive(gguf: LayoutFixture.gemma4TwelveBHeader()))
+
+        XCTAssertEqual(shape.kvHeads, 8)
+        XCTAssertEqual(shape.headDim, 256)
+        XCTAssertEqual(shape.layout, KVCacheLayout(fullAttentionLayers: 8, slidingLayers: 40, slidingWindow: 0,
+                                                   fullAttentionKVHeads: 1, fullAttentionHeadDim: 512))
+        // llama.cpp b8851 with swa_full: 40 × 2 × 8 × 256 × 2 B + 8 × 2 × 1 × 512 × 2 B per token on every layer.
+        XCTAssertEqual(shape.layout.cacheBytes(contextLength: 2048, kvHeads: 8, headDim: 256), 344_064 * 2048)
+    }
+
+    func testGGUFSharedKVLayersHoldNoCache() throws {
+        let shape = try XCTUnwrap(KVCacheLayout.derive(gguf: LayoutFixture.gemma4E2BHeader()))
+
+        XCTAssertEqual(shape.layout.cachedLayers, 15, "the last 20 of 35 layers reuse an earlier cache")
+        XCTAssertEqual(shape.layout.fullAttentionLayers, 3)
+        XCTAssertEqual(shape.kvHeads, 1)
+        XCTAssertEqual(shape.layout.cacheBytes(contextLength: 1, kvHeads: 1, headDim: 256), 3 * 4 * 512 + 12 * 4 * 256)
+    }
+
+    func testGGUFWithoutAPerLayerPatternStaysUniform() {
+        var metadata = LayoutFixture.gemma4TwelveBHeader().metadata
+        metadata["gemma4.attention.sliding_window_pattern"] = nil
+        XCTAssertNil(KVCacheLayout.derive(gguf: LayoutFixture.header(metadata)))
+
+        var sameWidths = LayoutFixture.gemma4TwelveBHeader().metadata
+        sameWidths["gemma4.attention.key_length_swa"] = .uint32(512)
+        sameWidths["gemma4.attention.head_count_kv"] = .uint32(8)
+        XCTAssertNil(KVCacheLayout.derive(gguf: LayoutFixture.header(sameWidths)),
+                     "one width and one head count on every layer is the uniform estimate already")
+    }
+
+    func testGemma4GGUFReportUsesTheSlidingWidthAndExplainsTheSplit() throws {
+        let snapshot = Fixture.gguf(header: LayoutFixture.gemma4TwelveBHeader(), architecture: "gemma4")
+        let report = CompatibilityEvaluator.evaluate(snapshot, on: .mac32GB)
+        let entry = try XCTUnwrap(report.suggestedEntry)
+        let finding = try XCTUnwrap(report.findings.first { $0.rule == "kv" })
+
+        XCTAssertEqual(report.overview.headDim, 256)
+        XCTAssertEqual(entry.headDim, 256)
+        XCTAssertEqual(entry.kvLayers?.fullAttentionHeadDim, 512)
+        XCTAssertEqual(entry.decodedModel()?.kvLayers, entry.kvLayers)
+        XCTAssertEqual(finding.title, "KV cache: 8 global and 40 sliding-window layers")
+        XCTAssertTrue(finding.detail.contains("with every layer at 8 × 512"), finding.detail)
+    }
+
+    func testGemma3ReportSaysTheSlidingLayersHoldThePromptUntilDecoding() throws {
+        let snapshot = Fixture.mlx("o/gemma3", config: LayoutFixture.facts(LayoutFixture.gemma3TwelveB), weightMap: nil)
+        let finding = try XCTUnwrap(CompatibilityEvaluator.evaluate(snapshot, on: .mac32GB).findings.first { $0.rule == "kv" })
+
+        XCTAssertEqual(finding.title, "KV cache grows on 8 of 48 layers once decoding starts")
+        XCTAssertTrue(finding.detail.contains("3072 MB at the prefill peak, 832 MB once decoding starts"), finding.detail)
+    }
+
     // MARK: - Context window
 
     func testHybridModelEarnsALargerWindowThanTheSameModelSizedUniformly() throws {
-        let layout = try XCTUnwrap(LayoutFixture.facts(LayoutFixture.gemma3TwelveB)?.kvLayers)
+        let layout = KVCacheLayout(fullAttentionLayers: 8, slidingLayers: 40, slidingWindow: 1024, slidingPrefillStep: 512)
         let hybrid = LayoutFixture.model(sizeMB: 7657, layers: 48, kvHeads: 8, headDim: 256, kvLayers: layout)
         let uniform = LayoutFixture.model(sizeMB: 7657, layers: 48, kvHeads: 8, headDim: 256, kvLayers: nil)
 
@@ -159,7 +242,8 @@ final class KVLayoutTests: XCTestCase {
 
     func testOnlySlidingLayersReachThePlatformCeiling() {
         let model = LayoutFixture.model(sizeMB: 1000, layers: 20, kvHeads: 8, headDim: 256,
-                                        kvLayers: KVCacheLayout(fullAttentionLayers: 0, slidingLayers: 20, slidingWindow: 1024))
+                                        kvLayers: KVCacheLayout(fullAttentionLayers: 0, slidingLayers: 20,
+                                                                slidingWindow: 1024, slidingPrefillStep: 512))
         #if os(macOS)
         XCTAssertEqual(HardwareAnalyzer.recommendedContextWindow(for: model, availableGB: 4), 32_768)
         #else
@@ -259,8 +343,11 @@ final class KVLayoutTests: XCTestCase {
     }
 
     func testEntriesWithoutTheNewKeysOrWithPartialOnesStillDecode() throws {
-        let legacy = #"{"id":"x","repoID":"a/b","displayName":"X","category":"text","docTags":false,"format":"mlx","approximateSizeMB":100,"isUncensored":false,"ggufFilename":null,"defaultDocumentPrompt":null,"numLayers":24,"kvHeads":0,"headDim":0}"#
-        let partial = #"{"id":"y","repoID":"a/b","displayName":"Y","category":"text","docTags":false,"format":"mlx","approximateSizeMB":100,"isUncensored":false,"ggufFilename":null,"defaultDocumentPrompt":null,"numLayers":24,"kvHeads":2,"headDim":256,"kvLayers":{"fullAttentionLayers":6},"experts":{}}"#
+        let common = #""repoID":"a/b","category":"text","docTags":false,"format":"mlx","approximateSizeMB":100,"#
+            + #""isUncensored":false,"ggufFilename":null,"defaultDocumentPrompt":null,"numLayers":24"#
+        let legacy = #"{"id":"x","displayName":"X","# + common + #","kvHeads":0,"headDim":0}"#
+        let partial = #"{"id":"y","displayName":"Y","# + common
+            + #","kvHeads":2,"headDim":256,"kvLayers":{"fullAttentionLayers":6},"experts":{}}"#
 
         let old = try JSONDecoder().decode(Model.self, from: Data(legacy.utf8))
         let new = try JSONDecoder().decode(Model.self, from: Data(partial.utf8))
@@ -361,6 +448,45 @@ enum LayoutFixture {
 
     static func facts(_ json: String) -> ModelConfigFacts? {
         ModelConfigFacts.parse(Data(json.utf8))
+    }
+
+    static func header(_ metadata: [String: GGUFValue]) -> GGUFHeader {
+        GGUFHeader(version: 3, tensorCount: 0, declaredKeyCount: UInt64(metadata.count), metadata: metadata,
+                   isComplete: true)
+    }
+
+    static func flags(_ values: [Bool]) -> GGUFValue {
+        .array(GGUFArray(elementType: .bool, count: UInt64(values.count), elements: values.map(GGUFValue.bool)))
+    }
+
+    /// The keys of gemma4-coding-Q4_K_M.gguf that size its cache: every sixth of 48 blocks global, with one KV head.
+    static func gemma4TwelveBHeader() -> GGUFHeader {
+        let heads = (0..<48).map { GGUFValue.uint32($0 % 6 == 5 ? 1 : 8) }
+        return header([
+            "general.architecture": .string("gemma4"),
+            "gemma4.block_count": .uint32(48),
+            "gemma4.attention.head_count": .uint32(16),
+            "gemma4.attention.head_count_kv": .array(GGUFArray(elementType: .uint32, count: 48, elements: heads)),
+            "gemma4.attention.key_length": .uint32(512),
+            "gemma4.attention.key_length_swa": .uint32(256),
+            "gemma4.attention.sliding_window": .uint32(1024),
+            "gemma4.attention.sliding_window_pattern": flags((0..<48).map { $0 % 6 != 5 }),
+        ])
+    }
+
+    /// security-gemma-4-e2b-it.Q4_K_M.gguf: 35 blocks, every fifth global, one KV head, the last 20 shared.
+    static func gemma4E2BHeader() -> GGUFHeader {
+        header([
+            "general.architecture": .string("gemma4"),
+            "gemma4.block_count": .uint32(35),
+            "gemma4.attention.head_count": .uint32(8),
+            "gemma4.attention.head_count_kv": .uint32(1),
+            "gemma4.attention.key_length": .uint32(512),
+            "gemma4.attention.key_length_swa": .uint32(256),
+            "gemma4.attention.sliding_window": .uint32(512),
+            "gemma4.attention.shared_kv_layers": .uint32(20),
+            "gemma4.attention.sliding_window_pattern": flags((0..<35).map { $0 % 5 != 4 }),
+        ])
     }
 
     static func model(sizeMB: Int = 1000, layers: Int, kvHeads: Int, headDim: Int, kvLayers: KVCacheLayout?) -> Model {

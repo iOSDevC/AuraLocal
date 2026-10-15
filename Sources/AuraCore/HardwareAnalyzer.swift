@@ -334,8 +334,8 @@ public extension Model {
     /// Modern models (Llama 3, Mistral, Qwen2) use grouped-query attention
     /// with fewer KV heads than query heads, reducing KV cache by 4-8x.
     /// Formula: `2 * n_layers * n_kv_heads * head_dim * seq_len * bytes / 1 GB`.
-    /// With ``kvLayers``, only full-attention layers grow with `seq_len`; sliding
-    /// layers stop at their window and recurrent layers add a fixed state.
+    /// With ``kvLayers``, sliding layers stop at their prefill peak (``KVCacheLayout/slidingPrefillStep``)
+    /// and recurrent layers add a fixed state; see ``KVCacheLayout/cacheBytes(contextLength:kvHeads:headDim:)``.
     ///
     /// Without KV metadata (kvHeads == 0, e.g. older MLX entries), returns a flat 0.15 GB.
     func estimatedKVCacheGB(contextLength: Int) -> Double {
