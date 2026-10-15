@@ -134,11 +134,15 @@ struct ModelEvalView: View {
                     .textSelection(.enabled)
 
                 HStack(spacing: 12) {
-                    if let ttft = result.wrappedValue.ttft {
-                        metric("TTFT", String(format: "%.1fs", ttft))
-                    }
-                    if let tps = result.wrappedValue.tokensPerSecond {
-                        metric("Speed", String(format: "≈%.0f tok/s", tps))
+                    if let stats = result.wrappedValue.stats {
+                        metric("TTFT", String(format: "%.2fs", stats.timeToFirstToken))
+                        if let tps = stats.decodeTokensPerSecond {
+                            metric("Decode", String(format: "%@%.1f tok/s", stats.source == .estimated ? "≈" : "", tps))
+                        }
+                        if stats.source == .runtime, let prefill = stats.prefillTokensPerSecond {
+                            metric("Prefill", String(format: "%.0f tok/s", prefill))
+                        }
+                        metric("Tokens", "\(stats.source == .runtime ? "" : "≈")\(stats.promptTokens) → \(stats.generatedTokens)")
                     }
                     metric("Total", String(format: "%.1fs", result.wrappedValue.elapsed))
                 }
@@ -172,13 +176,16 @@ struct ModelEvalView: View {
     private var verdictSection: some View {
         let rated   = results.filter { $0.rating != nil }
         let useful  = results.filter { $0.rating == true }
-        let speeds  = results.compactMap(\.tokensPerSecond)
+        let measured = results.compactMap(\.stats)
+        let speeds  = measured.compactMap(\.decodeTokensPerSecond)
         let avgSpeed = speeds.isEmpty ? nil : speeds.reduce(0, +) / Double(speeds.count)
+        let sources = Set(measured.map(\.source))
 
         Section {
             LabeledContent("Hardware fit", value: fit.label)
             if let avgSpeed {
-                LabeledContent("Average speed", value: String(format: "≈%.0f tok/s", avgSpeed))
+                LabeledContent("Average decode", value: String(format: "%@%.1f tok/s",
+                                                               sources.contains(.estimated) ? "≈" : "", avgSpeed))
             }
             LabeledContent("You rated useful", value: "\(useful.count) / \(rated.count) rated")
             if !rated.isEmpty {
@@ -194,7 +201,9 @@ struct ModelEvalView: View {
         } header: {
             Text("Verdict")
         } footer: {
-            Text("Speed is measured; suitability is your rating. Token counts are estimated from characters.")
+            Text(sources.isEmpty
+                 ? "Suitability is your rating."
+                 : "Speed from \(sources.map(\.label).sorted().joined(separator: "; ")). Suitability is your rating.")
         }
     }
 
@@ -218,25 +227,19 @@ struct ModelEvalView: View {
 
         for index in results.indices {
             status = "Prompt \(index + 1) of \(results.count)…"
-            let start = Date()
-            var firstToken: Date?
+            let start = ContinuousClock.now
             var text = ""
             do {
                 for try await token in llm.stream(results[index].prompt,
                                                   systemPrompt: domain.testSystemPrompt,
                                                   maxTokens: 256) {
-                    if firstToken == nil { firstToken = Date() }
                     text += token
                     results[index].output = text
                 }
-                let elapsed = Date().timeIntervalSince(start)
-                let ttft    = firstToken.map { $0.timeIntervalSince(start) }
-                // Token count estimated from characters (~4 chars/token).
-                let approxTokens = max(1, text.count / 4)
-                let genTime = elapsed - (ttft ?? 0)
-                results[index].elapsed = elapsed
-                results[index].ttft    = ttft
-                results[index].tokensPerSecond = genTime > 0 ? Double(approxTokens) / genTime : nil
+                let elapsed = ContinuousClock.now - start
+                results[index].elapsed = Double(elapsed.components.seconds)
+                    + Double(elapsed.components.attoseconds) / 1e18
+                results[index].stats = llm.lastGenerationStats
             } catch {
                 results[index].error = error.localizedDescription
             }
@@ -250,9 +253,8 @@ struct EvalResult: Identifiable {
     let id = UUID()
     let prompt: String
     var output = ""
-    var ttft: TimeInterval?
     var elapsed: TimeInterval = 0
-    var tokensPerSecond: Double?
+    var stats: GenerationStats?
     var error: String?
     /// The user's own judgment — nil until rated.
     var rating: Bool?
