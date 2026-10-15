@@ -26,7 +26,9 @@ AuraLocal supports two weight formats:
 
 The complete catalog is `Sources/AuraCore/Resources/models.json`; `Model.allModels` returns it at runtime. Entries
 without a static member (e.g. `ornith_1_5_35b_a3b_mlx`, `minicpm5_1b`, `swift15_qwen38_27b_mlx`) are loaded by id; see
-[Catalog entries without a static member](#catalog-entries-without-a-static-member).
+[Catalog entries without a static member](#catalog-entries-without-a-static-member). Sizes in these tables are the
+catalog's `approximateSizeMB` (MiB) in binary MB / GB; [Verifying the catalog](#verifying-the-catalog) keeps them,
+and the layer and KV fields, in line with Hugging Face.
 
 ---
 
@@ -36,26 +38,22 @@ Fast, GPU-accelerated text generation. Downloads from `mlx-community` on Hugging
 
 | Model case | Display name | Size | HuggingFace repo |
 |-----------|-------------|------|-----------------|
-| `.qwen3_0_6b` | Qwen3 0.6B | ~400 MB | `mlx-community/Qwen3-0.6B-4bit` |
-| `.qwen3_1_7b` ⭐ | Qwen3 1.7B | ~1.0 GB | `mlx-community/Qwen3-1.7B-4bit` |
-| `.qwen3_4b` | Qwen3 4B | ~2.5 GB | `mlx-community/Qwen3-4B-Instruct-2507-4bit` |
+| `.qwen3_0_6b` | Qwen3 0.6B | ~320 MB | `mlx-community/Qwen3-0.6B-4bit` |
+| `.qwen3_1_7b` ⭐ | Qwen3 1.7B | ~923 MB | `mlx-community/Qwen3-1.7B-4bit` |
+| `.qwen3_4b` | Qwen3 4B | ~2.1 GB | `mlx-community/Qwen3-4B-Instruct-2507-4bit` |
 | `.gemma3_1b` | Gemma 3 1B | ~700 MB | `mlx-community/gemma-3-1b-it-4bit` |
-| `.phi3_5_mini` | Phi-3.5 Mini | ~2.2 GB | `mlx-community/Phi-3.5-mini-instruct-4bit` |
-| `.llama3_2_1b` | Llama 3.2 1B | ~700 MB | `mlx-community/Llama-3.2-1B-Instruct-4bit` |
-| `.llama3_2_3b` | Llama 3.2 3B | ~1.8 GB | `mlx-community/Llama-3.2-3B-Instruct-4bit` |
-| `.gemma4_1b` | Gemma 4 1B | ~700 MB | `mlx-community/gemma-4-1b-it-4bit` |
-| `.gemma4_4b` | Gemma 4 4B | ~2.5 GB | `mlx-community/gemma-4-4b-it-4bit` |
-| `.gemma4_12b` | Gemma 4 12B | ~7.2 GB | `mlx-community/gemma-4-12b-it-4bit` |
-| `.granite4_tiny` | Granite 4.0 Tiny | ~700 MB | `mlx-community/granite-4.0-tiny-preview-4bit` |
-| `.granite4_compact` | Granite 4.0 Compact | ~1.4 GB | `mlx-community/granite-4.0-compact-preview-4bit` |
-| `.cogito_v1_3b` | Cogito v1 Preview 3B | ~1.8 GB | `mlx-community/cogito-v1-preview-llama-3B-4bit` |
-| `.lfm2_1_2b` | LFM 2 1.2B | ~750 MB | `mlx-community/LFM-2-1.2B-Chat-4bit` |
-| `.lfm25_3_2b` | LFM 2.5 3.2B | ~1.9 GB | `mlx-community/LFM-2.5-3.2B-Chat-4bit` |
-| `.ministral_3b` | Ministral 3B | ~1.8 GB | `mlx-community/Ministral-3B-Instruct-2412-4bit` |
-| `.qwen35_2b_text` | Qwen 3.5 2B (Text) | ~1.7 GB | `mlx-community/Qwen3.5-2B-Instruct-4bit` |
-| `.smollm3_3b` | SmolLM 3 3B | ~1.8 GB | `mlx-community/SmolLM3-3B-Instruct-4bit` |
+| `.phi3_5_mini` | Phi-3.5 Mini | ~2.0 GB | `mlx-community/Phi-3.5-mini-instruct-4bit` |
+| `.llama3_2_1b` | Llama 3.2 1B | ~663 MB | `mlx-community/Llama-3.2-1B-Instruct-4bit` |
+| `.llama3_2_3b` | Llama 3.2 3B | ~1.7 GB | `mlx-community/Llama-3.2-3B-Instruct-4bit` |
+| `.gemma4_12b` | Gemma 4 12B | ~6.3 GB | `mlx-community/gemma-4-12B-it-4bit` |
+| `.granite4_tiny` | Granite 4.0 Tiny | ~3.5 GB | `mlx-community/granite-4.0-tiny-preview-4bit` |
+| `.cogito_v1_3b` | Cogito v1 Preview 3B | ~1.7 GB | `mlx-community/deepcogito-cogito-v1-preview-llama-3B-4bit` |
+| `.lfm2_1_2b` | LFM 2 1.2B | ~628 MB | `mlx-community/LFM2-1.2B-4bit` |
+| `.qwen35_2b_text` | Qwen 3.5 2B (Text) | ~1.6 GB | `mlx-community/Qwen3.5-2B-MLX-4bit` |
+| `.smollm3_3b` | SmolLM 3 3B | ~1.6 GB | `mlx-community/SmolLM3-3B-4bit` |
 
-⭐ Recommended default. `.gemma4_12b` exceeds every iPhone [device preset](#device-presets); use it on a Mac.
+⭐ Recommended default. `.gemma4_12b` exceeds every iPhone [device preset](#device-presets), and mlx-swift-lm 3.31.3
+cannot load it yet: its repo declares `model_type` `gemma4_unified`, which neither factory registers.
 
 ```swift
 let llm = try await AuraLocal.text(.qwen3_1_7b)
@@ -69,11 +67,11 @@ Multimodal image + text models. Pass a `UIImage` or `NSImage` for analysis.
 
 | Model case | Display name | Size | Best for |
 |-----------|-------------|------|---------|
-| `.qwen35_0_8b` ⭐ | Qwen3.5 0.8B (default) | ~625 MB | Default, iPhone |
-| `.qwen35_2b` | Qwen3.5 2B | ~1.7 GB | Higher accuracy, iPad |
-| `.smolvlm_500m` | SmolVLM 500M | ~1.0 GB | Minimum memory footprint |
-| `.smolvlm_2b` | SmolVLM2 2B | ~1.5 GB | SmolVLM, balanced |
-| `.lfm25_vl_1_6b` | LFM 2.5 VL 1.6B | ~1.1 GB | — |
+| `.qwen35_0_8b` ⭐ | Qwen3.5 0.8B (default) | ~596 MB | Default, iPhone |
+| `.qwen35_2b` | Qwen3.5 2B | ~1.6 GB | Higher accuracy, iPad |
+| `.smolvlm_500m` | SmolVLM 500M | ~968 MB | Minimum memory footprint |
+| `.smolvlm_2b` | SmolVLM2 2B | ~1.4 GB | SmolVLM, balanced |
+| `.lfm25_vl_1_6b` | LFM 2.5 VL 1.6B | ~1.4 GB | — |
 
 ```swift
 let vlm = try await AuraLocal.vision(.qwen35_0_8b)
@@ -88,10 +86,9 @@ Optimized for structured document and receipt extraction.
 
 | Model case | Display name | Size | Output format |
 |-----------|-------------|------|--------------|
-| `.fastVLM_0_5b_fp16` ⭐ | FastVLM 0.5B FP16 | ~1.25 GB | JSON |
-| `.fastVLM_1_5b_int8` | FastVLM 1.5B Int8 | ~800 MB | JSON |
-| `.graniteDocling_258m` | Granite Docling 258M (IBM) | ~631 MB | DocTags → Markdown |
-| `.graniteVision_3_3` | Granite Vision 3.2 2B | ~1.2 GB | Plain text |
+| `.fastVLM_0_5b_fp16` ⭐ | FastVLM 0.5B FP16 | ~1.2 GB | JSON |
+| `.fastVLM_1_5b_int8` | FastVLM 1.5B Int8 | ~1.8 GB | JSON |
+| `.graniteDocling_258m` | Granite Docling 258M (IBM) | ~601 MB | DocTags → Markdown |
 
 ```swift
 // FastVLM — structured JSON output
@@ -115,13 +112,13 @@ Use `ModelManager.shared.load(_:)`, which downloads the file, refuses `.tooLarge
 
 | Model case | Display name | File size | Min RAM (iOS) | Min RAM (macOS) |
 |-----------|-------------|-----------|--------------|----------------|
-| `.llama3_1_8b_gguf` ⭐ | Llama 3.1 8B (GGUF) | ~4.7 GB | 4 GB (streaming) | 16 GB |
-| `.qwen2_5_7b_gguf` | Qwen 2.5 7B (GGUF) | ~4.4 GB | 4 GB (streaming) | 16 GB |
-| `.mistral_7b_gguf` | Mistral 7B v0.2 (GGUF) | ~4.1 GB | 4 GB (streaming) | 16 GB |
+| `.llama3_1_8b_gguf` ⭐ | Llama 3.1 8B (GGUF) | ~4.6 GB | 4 GB (streaming) | 16 GB |
+| `.qwen2_5_7b_gguf` | Qwen 2.5 7B (GGUF) | ~4.3 GB | 4 GB (streaming) | 16 GB |
+| `.mistral_7b_gguf` | Mistral 7B v0.2 (GGUF) | ~4.0 GB | 4 GB (streaming) | 16 GB |
 | `.phi3_medium_gguf` | Phi-3 Medium 14B (GGUF) | ~8.0 GB | 6 GB (streaming) | 16 GB |
-| `.gemma2_9b_gguf` | Gemma 2 9B (GGUF) | ~5.5 GB | 4 GB (streaming) | 16 GB |
+| `.gemma2_9b_gguf` | Gemma 2 9B (GGUF) | ~5.4 GB | 4 GB (streaming) | 16 GB |
 | `.qwen2_5_32b_gguf` | Qwen 2.5 32B (GGUF) | ~18.5 GB | 12 GB, iPhone 17 Pro (streaming) | 32 GB (streams on 16 GB) |
-| `.llama3_1_70b_gguf` | Llama 3.1 70B (GGUF) | ~40 GB | Not viable | 64 GB (streams on 32 GB) |
+| `.llama3_1_70b_gguf` | Llama 3.1 70B (GGUF) | ~39.1 GB | Not viable | 64 GB (streams on 32 GB) |
 
 {: .note }
 > Each cell is the smallest [device preset](#device-presets) at which `HardwareAnalyzer.assess` rates the model
@@ -132,9 +129,8 @@ Use `ModelManager.shared.load(_:)`, which downloads the file, refuses `.tooLarge
 > needs both memory entitlements (see [Memory Management]({{ '/guide/memory' | relative_url }}#entitlement)), so a
 > "4 GB (streaming)" cell is the fit rule's answer, not a tested setup.
 
-{: .warning }
-> `.qwen2_5_7b_gguf` and `.qwen2_5_32b_gguf` do not download today: upstream ships their Q4_K_M only as split
-> files, so the catalog file returns 404.
+`.qwen2_5_7b_gguf` and `.qwen2_5_32b_gguf` download bartowski's single-file Q4_K_M: Qwen's own repos ship that quant
+only in parts, which the GGUF downloader skips.
 
 ```swift
 // Backend selected automatically by HardwareAnalyzer
@@ -160,11 +156,11 @@ Models tagged with a `Model.Domain` (`code`, `security`, `finance`, `medicine`).
 
 | Model case | Display name | Format | Size | Domain | Notes |
 |-----------|-------------|--------|------|--------|-------|
-| `.medgemma_4b` | MedGemma 4B | MLX (vision) | ~3.0 GB | medicine | load with `AuraLocal.vision(_:)`; HAI-DEF license terms apply |
-| `.fingpt_mt_llama3_8b_gguf` | FinGPT MT 8B (Llama 3) | GGUF | ~5.0 GB | finance | |
-| `.fingpt_sentiment_lfm2_1_2b_gguf` | FinGPT Sentiment 1.2B | GGUF | ~900 MB | finance | sentiment only, tuned for single-token outputs; not for chat |
-| `.security_gemma_e2b_gguf` | Security SLM Gemma 4 E2B (Mobile Sec) | GGUF | ~3.4 GB | security | vulnerability triage, not the sole authority |
-| `gemma4_12b_coder_gguf` | Gemma 4 12B Coder (Fable5·Composer2.5) | GGUF | ~7.4 GB | code | no static member |
+| `.medgemma_4b` | MedGemma 4B | MLX (vision) | ~2.8 GB | medicine | load with `AuraLocal.vision(_:)`; HAI-DEF license terms apply |
+| `.fingpt_mt_llama3_8b_gguf` | FinGPT MT 8B (Llama 3) | GGUF | ~4.6 GB | finance | |
+| `.fingpt_sentiment_lfm2_1_2b_gguf` | FinGPT Sentiment 1.2B | GGUF | ~769 MB | finance | sentiment only, tuned for single-token outputs; not for chat |
+| `.security_gemma_e2b_gguf` | Security SLM Gemma 4 E2B (Mobile Sec) | GGUF | ~3.2 GB | security | vulnerability triage, not the sole authority |
+| `gemma4_12b_coder_gguf` | Gemma 4 12B Coder (Fable5·Composer2.5) | GGUF | ~6.9 GB | code | no static member |
 | `gemma4_12b_agentic_gguf` | Gemma 4 12B Agentic (Fable5·Composer2.5) | GGUF | ~6.9 GB | code | no static member |
 
 ```swift
@@ -181,13 +177,13 @@ These entries are in `models.json` but have no `Model.<id>` constant; look them 
 
 | Model id | Display name | Format | Size | Smallest preset |
 |----------|-------------|--------|------|-----------------|
-| `minicpm5_1b` | MiniCPM5 1B | MLX | ~610 MB | `iphone-4gb` |
-| `minicpm5_2b` | MiniCPM5 2B | MLX | ~1.4 GB | `iphone-4gb` |
-| `minicpm4_1_8b` | MiniCPM4.1 8B | MLX | ~4.6 GB | `iphone-17-pro` |
-| `swift15_qwen38_27b_mlx` | Swift 1.5 Qwen3.8 27B (MLX 3-bit) | MLX | ~11.8 GB | `mac-32gb` |
-| `qwen38_27b_uncensored_mlx` | Qwen3.8 27B Uncensored (MLX 4-bit) | MLX (vision) | ~15.4 GB | `mac-32gb` |
-| `ornith_1_5_35b_a3b_mlx` | Ornith 1.5 35B A3B (MLX 4-bit) | MLX | ~19.5 GB | `mac-32gb` |
-| `gemma4_12b_coder_gguf` | Gemma 4 12B Coder (Fable5·Composer2.5) | GGUF | ~7.4 GB | `iphone-6gb` (streaming) |
+| `minicpm5_1b` | MiniCPM5 1B | MLX | ~580 MB | `iphone-4gb` |
+| `minicpm5_2b` | MiniCPM5 2B | MLX | ~1.3 GB | `iphone-4gb` |
+| `minicpm4_1_8b` | MiniCPM4.1 8B | MLX | ~4.3 GB | `iphone-17-pro` |
+| `swift15_qwen38_27b_mlx` | Swift 1.5 Qwen3.8 27B (MLX 3-bit) | MLX | ~11.0 GB | `mac-32gb` |
+| `qwen38_27b_uncensored_mlx` | Qwen3.8 27B Uncensored (MLX 4-bit) | MLX (vision) | ~15.0 GB | `mac-32gb` |
+| `ornith_1_5_35b_a3b_mlx` | Ornith 1.5 35B A3B (MLX 4-bit) | MLX | ~18.2 GB | `mac-32gb` |
+| `gemma4_12b_coder_gguf` | Gemma 4 12B Coder (Fable5·Composer2.5) | GGUF | ~6.9 GB | `iphone-6gb` (streaming) |
 | `gemma4_12b_agentic_gguf` | Gemma 4 12B Agentic (Fable5·Composer2.5) | GGUF | ~6.9 GB | `iphone-6gb` (streaming) |
 
 ```swift
@@ -196,6 +192,59 @@ if let model = ModelRegistry.shared.model(id: "minicpm5_1b") {
     print(try await llm.chat("Hello"))
 }
 ```
+
+---
+
+## Verifying the catalog
+
+`scripts/verify_catalog.py` checks every `models.json` entry against live Hugging Face data, prints the differences
+and exits 1 when any remain. It uses only the Python standard library and reads layers, KV heads, head width,
+`kvLayers`, `experts`, the trained context and the loaded weight bytes from `aura models check <repo> --json`, the
+code behind `aura models check --entry`.
+
+```sh
+swift build --product aura                       # the script runs .build/debug/aura (or --aura <path>)
+uv run scripts/verify_catalog.py                 # report only
+uv run scripts/verify_catalog.py --fix           # also write the fixable corrections to both catalog copies
+uv run scripts/verify_catalog.py --only gemma4_12b,granite4_tiny --report /tmp/catalog.json
+uv run scripts/verify_catalog.py --no-aura           # repos, files and sizes only, no aura build needed
+```
+
+| Field | Live source | `--fix` |
+|-------|-------------|---------|
+| `repoID` | `/api/models/{repo}?blobs=true` without following redirects: a 3xx is a rename, `gated` is reported as a note, 401/403/404 is gone or private (anonymous requests cannot tell which) | renames only |
+| `ggufFilename` | the repo listing: the exact name at the repo root; a split (`-0000N-of-0000M`) or subfolder file is a difference | case-only mismatches |
+| MLX files | a top-level `config.json` and `*.safetensors` | — |
+| `approximateSizeMB` | GGUF: that file's size; MLX: the safetensors `aura` loads (`weightsBytes`); drift above `--size-tolerance` (2 %) | yes, in MiB |
+| `numLayers`, `kvHeads`, `headDim` | `aura`'s `architecture` object: `config.json`, or the header of the entry's own GGUF (`--gguf`) | yes |
+| `kvLayers`, `experts` | the same, MLX only; `kvLayers` stays out when every layer keeps the whole context | yes |
+| `maxContextLength` | the trained context: a cap above it, or no cap while it is below 32768 | yes |
+
+Requests stay under `--max-requests` (450) per 300 s, below Hugging Face's 500; each `aura` call is charged at an
+upper bound (5 plus 2 per top-level safetensors file). A 429 waits for `Retry-After`, else the `RateLimit` header's
+`t=`, else 15 s doubling up to 300 s; an `aura` report that met a 429 is retried after 60 s, doubling. `HF_TOKEN`, when set, is sent to huggingface.co with the script's own requests;
+`aura` uses the Keychain token. `--device` (default `mac-64gb`) only affects the "not runnable" notes, which report
+the pinned runtimes and never fail the run. Differences that must stay go in `scripts/catalog-exceptions.json`
+(`{"entries": {"<id>": {"fields": ["approximateSizeMB"], "reason": "…"}}}`), which the run lists without failing.
+
+**Last run, 2026-10-14:** 59 entries before, 53 after, 0 differences.
+
+- Same model, live repo: `cogito_v1_3b` → `mlx-community/deepcogito-cogito-v1-preview-llama-3B-4bit`, `smollm3_3b` →
+  `mlx-community/SmolLM3-3B-4bit`, `lfm2_1_2b` → `mlx-community/LFM2-1.2B-4bit`, `lfm25_vl_1_6b` →
+  `mlx-community/LFM2.5-VL-1.6B-4bit`, `qwen35_2b_text` → `mlx-community/Qwen3.5-2B-MLX-4bit` (Qwen3.5-2B has no
+  separate Instruct release); `qwen2_5_7b_gguf` / `qwen2_5_32b_gguf` → bartowski's single-file Q4_K_M.
+- Renamed on Hugging Face (the old names still redirect): `dphn/Dolphin3.0-Llama3.1-8B-GGUF`,
+  `mlx-community/gemma-4-12B-it-4bit`. Downloads live in a folder named after `repoID`, so a Dolphin 3.0 8B
+  downloaded under the old id downloads again.
+- Removed, no loadable repo: `gemma4_1b`, `gemma4_4b` (Gemma 4 ships E2B, E4B, 12B, 26B-A4B, 31B),
+  `granite4_compact` (no such Granite 4.0 model), `lfm25_3_2b` (no LFM2.5 3.2B), `ministral_3b` (the 2412 3B weights
+  were never released), `graniteVision_3_3` (its repo holds no weights, and mlx-swift-lm 3.31.3 has no
+  `granite_vision`). Their `Model` constants are `@available(*, unavailable)` with the reason.
+- Corrected from the live data: every MLX entry's `kvHeads` / `headDim` (all were 0), 12 `kvLayers`, 2 `experts`
+  (`granite4_tiny`, `ornith_1_5_35b_a3b_mlx`), `numLayers` of 10 entries (`qwen35_2b` 36 → 24, `granite4_tiny`
+  18 → 40), the `Dolphin3.0-Qwen2.5-3b` file name case, sizes, and `maxContextLength` caps below 32768.
+- Not a catalog difference: `gemma4_12b` declares `model_type` `gemma4_unified`, which mlx-swift-lm 3.31.3 does not
+  register, so it does not load until the pin moves.
 
 ---
 
@@ -295,7 +344,9 @@ for any Hugging Face repo: will AuraLocal, with the runtimes it pins — **mlx-s
 **llama.cpp b8851** (GGUF, via LocalLLMClient 0.5.0) — load and run it on a given device, and if not, exactly why.
 
 It reads the repo listing (`/api/models/{id}?blobs=true`), `config.json`, `model.safetensors.index.json` and, with
-HTTP Range requests, the first 4 MiB of one GGUF file or the headers of the shipped safetensors files (when there is
+HTTP Range requests, the first 4 MiB of one GGUF file (`ggufFile` when given, else the smallest whole quant at the
+repo root: subfolders hold MTP draft heads and other files the downloader never fetches) or the headers of the shipped
+safetensors files (when there is
 no index or it is stale; a `qwen3_5` vision repo's first shard when its `__metadata__` decides the verdict; every
 loaded shard, up to 64, when `config.json` declares more than one routed expert, to size each tensor from its
 `data_offsets`). Weights are never downloaded. Network errors, 401/403 and 404 come back as findings — the verdict is `unknown` when they hide
@@ -423,12 +474,13 @@ says where it comes from (the CLI and the app show it). The 32 GB figure was mea
 
 ```
 aura models search "<query>" [--format mlx|gguf] [--device <preset>] [--limit N]
-aura models check <owner/repo | URL> [--device <preset>] [--json] [--entry]
+aura models check <owner/repo | URL> [--device <preset>] [--gguf <file>] [--json] [--entry]
 aura models devices
 ```
 
 `search` checks every hit (four at a time) and prints a verdict table; `check` prints every finding, the
-per-quant fit table and the `models.json` entry; `--entry` prints only the entry, `--json` the whole report.
+per-quant fit table and the `models.json` entry; `--entry` prints only the entry, `--json` the whole report (with an
+`architecture` object that survives blockers, and HF's `gated` mode). `--gguf <file>` picks the GGUF whose header is read.
 `--device` defaults to `this-device`; `--limit` defaults to 15 (1–100). See also the
 [CLI reference]({{ '/guide/cli' | relative_url }}#model-compatibility-aura-models).
 
@@ -600,14 +652,14 @@ AuraLocal ships a curated set of uncensored and abliterated models for use cases
 
 | Model case | Display name | Size | Min RAM | Method |
 |-----------|-------------|------|---------|--------|
-| `.dolphin_qwen2_1_5b` | Dolphin 2.9 Qwen2 1.5B | ~870 MB | 4 GB | Dolphin dataset |
-| `.josiefied_qwen3_1_7b` ⭐ | Josiefied Qwen3 1.7B | ~950 MB | 4 GB | Abliterated + Josiefied |
-| `.josiefied_qwen3_4b` | Josiefied Qwen3 4B | ~2.3 GB | 6 GB | Abliterated + Josiefied |
-| `.josiefied_qwen3_8b` | Josiefied Qwen3 8B | ~4.6 GB | 12 GB (iPhone 17 Pro) | Abliterated + Josiefied |
+| `.dolphin_qwen2_1_5b` | Dolphin 2.9 Qwen2 1.5B | ~828 MB | 4 GB | Dolphin dataset |
+| `.josiefied_qwen3_1_7b` ⭐ | Josiefied Qwen3 1.7B | ~923 MB | 4 GB | Abliterated + Josiefied |
+| `.josiefied_qwen3_4b` | Josiefied Qwen3 4B | ~2.1 GB | 6 GB | Abliterated + Josiefied |
+| `.josiefied_qwen3_8b` | Josiefied Qwen3 8B | ~4.3 GB | 12 GB (iPhone 17 Pro) | Abliterated + Josiefied |
 
 ⭐ Recommended starting point — best quality-to-size ratio for iPhone
 
-`qwen38_27b_uncensored_mlx` ("Qwen3.8 27B Uncensored (MLX 4-bit)", ~15.4 GB, a vision model, Mac only) is also
+`qwen38_27b_uncensored_mlx` ("Qwen3.8 27B Uncensored (MLX 4-bit)", ~15.0 GB, a vision model, Mac only) is also
 flagged uncensored, so `Model.uncensoredModels` returns it. It has no static member; see
 [Catalog entries without a static member](#catalog-entries-without-a-static-member).
 
@@ -624,11 +676,11 @@ for try await token in llm.stream("Write a story with no restrictions.") {
 
 | Model case | Display name | File size | Min RAM (iOS) | Method |
 |-----------|-------------|-----------|--------------|--------|
-| `.dolphin3_qwen25_1_5b_gguf` | Dolphin 3.0 Qwen2.5 1.5B (GGUF) | ~990 MB | 4 GB | Dolphin dataset |
-| `.llama32_3b_uncensored_gguf` | Llama 3.2 3B Uncensored (GGUF) | ~2.2 GB | 4 GB (streaming), 6 GB full load | Uncensored fine-tune |
-| `.dolphin3_qwen25_3b_gguf` | Dolphin 3.0 Qwen2.5 3B (GGUF) | ~1.9 GB | 4 GB (streaming), 6 GB full load | Dolphin dataset |
-| `.dolphin3_llama31_8b_gguf` ⭐ | Dolphin 3.0 Llama 3.1 8B (GGUF) | ~4.9 GB | 4 GB (streaming) | Dolphin dataset |
-| `.llama31_8b_abliterated_gguf` | Llama 3.1 8B Abliterated (GGUF) | ~4.9 GB | 4 GB (streaming) | Abliteration |
+| `.dolphin3_qwen25_1_5b_gguf` | Dolphin 3.0 Qwen2.5 1.5B (GGUF) | ~940 MB | 4 GB | Dolphin dataset |
+| `.llama32_3b_uncensored_gguf` | Llama 3.2 3B Uncensored (GGUF) | ~2.1 GB | 4 GB (streaming), 6 GB full load | Uncensored fine-tune |
+| `.dolphin3_qwen25_3b_gguf` | Dolphin 3.0 Qwen2.5 3B (GGUF) | ~1.8 GB | 4 GB (streaming), 6 GB full load | Dolphin dataset |
+| `.dolphin3_llama31_8b_gguf` ⭐ | Dolphin 3.0 Llama 3.1 8B (GGUF) | ~4.6 GB | 4 GB (streaming) | Dolphin dataset |
+| `.llama31_8b_abliterated_gguf` | Llama 3.1 8B Abliterated (GGUF) | ~4.6 GB | 4 GB (streaming) | Abliteration |
 
 ⭐ Most downloaded uncensored GGUF — 37k+ downloads/month on HuggingFace
 

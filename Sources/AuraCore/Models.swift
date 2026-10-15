@@ -397,7 +397,6 @@ public extension Model {
     static let fastVLM_0_5b_fp16  = ModelRegistry.shared.model(id: "fastVLM_0_5b_fp16") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
     static let fastVLM_1_5b_int8  = ModelRegistry.shared.model(id: "fastVLM_1_5b_int8") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
     static let graniteDocling_258m = ModelRegistry.shared.model(id: "graniteDocling_258m") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
-    static let graniteVision_3_3  = ModelRegistry.shared.model(id: "graniteVision_3_3") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
 
     // MARK: GGUF Standard
     static let llama3_1_8b_gguf   = ModelRegistry.shared.model(id: "llama3_1_8b_gguf") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
@@ -425,17 +424,27 @@ public extension Model {
 
     // MARK: New Models
     static let granite4_tiny    = ModelRegistry.shared.model(id: "granite4_tiny") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
-    static let granite4_compact = ModelRegistry.shared.model(id: "granite4_compact") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
     static let cogito_v1_3b     = ModelRegistry.shared.model(id: "cogito_v1_3b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
-    static let gemma4_1b        = ModelRegistry.shared.model(id: "gemma4_1b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
-    static let gemma4_4b        = ModelRegistry.shared.model(id: "gemma4_4b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
     static let gemma4_12b       = ModelRegistry.shared.model(id: "gemma4_12b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
     static let lfm2_1_2b        = ModelRegistry.shared.model(id: "lfm2_1_2b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
-    static let lfm25_3_2b       = ModelRegistry.shared.model(id: "lfm25_3_2b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
     static let lfm25_vl_1_6b    = ModelRegistry.shared.model(id: "lfm25_vl_1_6b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
-    static let ministral_3b     = ModelRegistry.shared.model(id: "ministral_3b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
     static let qwen35_2b_text   = ModelRegistry.shared.model(id: "qwen35_2b_text") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
     static let smollm3_3b       = ModelRegistry.shared.model(id: "smollm3_3b") ?? ModelRegistry.shared.models.first(where: { $0.format == .gguf })!
+
+    // MARK: Removed from the catalog: no loadable Hugging Face repo (scripts/verify_catalog.py)
+
+    @available(*, unavailable, message: "mlx-community/granite-vision-3.2-2b-MLX holds no weights, and mlx-swift-lm 3.31.3 has no granite_vision model.")
+    static var graniteVision_3_3: Model { fatalError("unavailable") }
+    @available(*, unavailable, message: "IBM published no Granite 4.0 Compact; mlx-community/granite-4.0-compact-preview-4bit does not exist.")
+    static var granite4_compact: Model { fatalError("unavailable") }
+    @available(*, unavailable, message: "Gemma 4 has no 1B model (it ships E2B, E4B, 12B, 26B-A4B, 31B); mlx-community/gemma-4-1b-it-4bit does not exist.")
+    static var gemma4_1b: Model { fatalError("unavailable") }
+    @available(*, unavailable, message: "Gemma 4 has no 4B model; mlx-community/gemma-4-4b-it-4bit does not exist. The nearest is E4B (mlx-community/gemma-4-e4b-it-4bit).")
+    static var gemma4_4b: Model { fatalError("unavailable") }
+    @available(*, unavailable, message: "LiquidAI published no LFM2.5 3.2B; mlx-community/LFM-2.5-3.2B-Chat-4bit does not exist. The nearest is LFM2.5-2.6B.")
+    static var lfm25_3_2b: Model { fatalError("unavailable") }
+    @available(*, unavailable, message: "Ministral 3B (2412) weights were never released; Ministral 3 3B Instruct 2512 is a different model.")
+    static var ministral_3b: Model { fatalError("unavailable") }
 
     // MARK: Domain-specialized (medical / financial)
 

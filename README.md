@@ -557,25 +557,25 @@ Each constrained call runs on its own short-lived llama.cpp client; see
 
 | Model | Size | Best for |
 |-------|------|----------|
-| `.qwen3_0_6b` | ~400 MB | Ultra-fast responses |
-| `.qwen3_1_7b` ⭐ | ~1.0 GB | Balanced (default) |
-| `.qwen3_4b` | ~2.5 GB | Higher quality |
+| `.qwen3_0_6b` | ~320 MB | Ultra-fast responses |
+| `.qwen3_1_7b` ⭐ | ~923 MB | Balanced (default) |
+| `.qwen3_4b` | ~2.1 GB | Higher quality |
 | `.gemma3_1b` | ~700 MB | Google alternative |
-| `.phi3_5_mini` | ~2.2 GB | Microsoft alternative |
-| `.llama3_2_1b` | ~700 MB | Meta, lightweight |
-| `.llama3_2_3b` | ~1.8 GB | Meta, higher quality |
+| `.phi3_5_mini` | ~2.0 GB | Microsoft alternative |
+| `.llama3_2_1b` | ~663 MB | Meta, lightweight |
+| `.llama3_2_3b` | ~1.7 GB | Meta, higher quality |
 
 ### Text Models — GGUF (llama.cpp)
 
 | Model | Disk Size | Smallest iOS preset | Smallest Mac preset | Notes |
 |-------|-----------|---------------------|---------------------|-------|
-| `.llama3_1_8b_gguf` ⭐ | ~4.7 GB | 4 GB (streaming) | 16 GB | Primary large model |
-| `.qwen2_5_7b_gguf` | ~4.4 GB | 4 GB (streaming) | 16 GB | **Download broken**: upstream ships this quant split into shards |
-| `.mistral_7b_gguf` | ~4.1 GB | 4 GB (streaming) | 16 GB | Fast, efficient |
+| `.llama3_1_8b_gguf` ⭐ | ~4.6 GB | 4 GB (streaming) | 16 GB | Primary large model |
+| `.qwen2_5_7b_gguf` | ~4.3 GB | 4 GB (streaming) | 16 GB | bartowski's single-file Q4_K_M |
+| `.mistral_7b_gguf` | ~4.0 GB | 4 GB (streaming) | 16 GB | Fast, efficient |
 | `.phi3_medium_gguf` | ~8.0 GB | 6 GB (streaming) | 16 GB | High quality |
-| `.gemma2_9b_gguf` | ~5.5 GB | 4 GB (streaming) | 16 GB | Google Gemma 2 |
-| `.qwen2_5_32b_gguf` | ~18.5 GB | 12 GB iPhone 17 Pro (streaming) | 32 GB (streams on 16 GB) | **Download broken**: upstream ships this quant split into shards |
-| `.llama3_1_70b_gguf` | ~40.0 GB | Not viable | 64 GB (streams on 32 GB) | Largest in the catalog |
+| `.gemma2_9b_gguf` | ~5.4 GB | 4 GB (streaming) | 16 GB | Google Gemma 2 |
+| `.qwen2_5_32b_gguf` | ~18.5 GB | 12 GB iPhone 17 Pro (streaming) | 32 GB (streams on 16 GB) | bartowski's single-file Q4_K_M |
+| `.llama3_1_70b_gguf` | ~39.1 GB | Not viable | 64 GB (streams on 32 GB) | Largest in the catalog |
 
 Each cell is the smallest device preset at which `HardwareAnalyzer.assess` rates the model runnable. The
 budgets are estimates (except the measured 32 GB Mac), and the iPhone cells assume the memory
@@ -610,10 +610,10 @@ for try await token in vlm.streamVision("Describe this image", image: photo) {
 
 | Model | Size | Best for |
 |-------|------|----------|
-| `.qwen35_0_8b` ⭐ | ~625 MB | Default, iPhone |
-| `.qwen35_2b` | ~1.7 GB | iPad, higher accuracy |
-| `.smolvlm_500m` | ~1.0 GB | Minimum memory |
-| `.smolvlm_2b` | ~1.5 GB | SmolVLM, balanced |
+| `.qwen35_0_8b` ⭐ | ~596 MB | Default, iPhone |
+| `.qwen35_2b` | ~1.6 GB | iPad, higher accuracy |
+| `.smolvlm_500m` | ~968 MB | Minimum memory |
+| `.smolvlm_2b` | ~1.4 GB | SmolVLM, balanced |
 
 ---
 
@@ -638,10 +638,9 @@ let markdown = AuraLocal.parseDocTags(raw)
 
 | Model | Size | Output |
 |-------|------|--------|
-| `.fastVLM_0_5b_fp16` ⭐ | ~1.25 GB | JSON (receipts) |
-| `.fastVLM_1_5b_int8` | ~800 MB | JSON (receipts) |
-| `.graniteDocling_258m` | ~631 MB | DocTags → Markdown |
-| `.graniteVision_3_3` | ~1.2 GB | Plain text |
+| `.fastVLM_0_5b_fp16` ⭐ | ~1.2 GB | JSON (receipts) |
+| `.fastVLM_1_5b_int8` | ~1.8 GB | JSON (receipts) |
+| `.graniteDocling_258m` | ~601 MB | DocTags → Markdown |
 
 ---
 
