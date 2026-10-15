@@ -359,7 +359,7 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
 
         var resumed = first.history
         for call in calls {
-            resumed.append(.tool(try await execute(call)))
+            resumed.append(.tool(try await Self.output(of: call, among: renderer.tools)))
         }
         try await waitForDrain()
         try Task.checkCancellation()
@@ -431,12 +431,18 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
         return (Task.isCancelled ? .cut : .finished(calls), history, prompt)
     }
 
-    /// Formats the output the way `LLMSession` does, so the resumed prompt matches its tool loop.
-    private func execute(_ call: LLMToolCall) async throws -> String {
-        guard let tool = renderer.tools.first(where: { $0.name == call.name }) else {
+    /// Formats the output the way `LLMSession` does, so the resumed prompt matches its tool loop. A tool's own error
+    /// is rethrown unwrapped from LocalLLMClient's `ToolError.executionFailed`.
+    nonisolated static func output(of call: LLMToolCall, among tools: [AnyLLMTool]) async throws -> String {
+        guard let tool = tools.first(where: { $0.name == call.name }) else {
             throw LLMError.invalidParameter(reason: "Tool '\(call.name)' not found")
         }
-        let output = try await tool.call(argumentsJSON: call.arguments)
+        let output: ToolOutput
+        do {
+            output = try await tool.call(argumentsJSON: call.arguments)
+        } catch ToolError.executionFailed(_, let underlying) {
+            throw underlying
+        }
         return output.data.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
     }
 

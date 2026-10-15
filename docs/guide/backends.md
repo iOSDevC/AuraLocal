@@ -148,7 +148,8 @@ aborted; the fix it needs upstream is prepared as `contrib/localllmclient/0004`.
 - **With tools** a turn runs on a LocalLLMClient `LlamaClient` (its tool-call parser), with the same rendering, the
   call → execute → resume loop `LLMSession` runs, and the same clean start. That client decodes in a task nobody can
   cancel, so a reply cut short returns at once but the **next** turn waits until that decode reaches the end of
-  generation or fills the context (seconds on a 0.5B model). A tool that throws fails the turn with its own error.
+  generation or fills the context (seconds on a 0.5B model). A tool that throws fails the turn with its own error;
+  arguments that do not decode fail it with LocalLLMClient's `ToolError.argumentDecodingFailed`.
 - **Not reset:** the sampler's repetition-penalty window and random state carry over between turns (no public reset
   in LocalLLMClient 0.5.0; see `contrib/localllmclient/0003`). At temperature 0 they have no effect.
 
