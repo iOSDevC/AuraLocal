@@ -221,7 +221,7 @@ public actor ConversationStore {
     public func turns(for conversationID: UUID) throws -> [Turn] {
         try ensureOpen()
         return try query(
-            "SELECT * FROM turns WHERE conversation_id = ? ORDER BY created_at ASC;",
+            "SELECT * FROM turns WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC;",
             bindings: [conversationID.uuidString],
             map: rowToTurn
         )
@@ -260,14 +260,14 @@ public actor ConversationStore {
         
         // Always include system turns first
         let systemTurns = try query(
-            "SELECT * FROM turns WHERE conversation_id = ? AND role = 'system' ORDER BY created_at ASC;",
+            "SELECT * FROM turns WHERE conversation_id = ? AND role = 'system' ORDER BY created_at ASC, rowid ASC;",
             bindings: [conversationID.uuidString],
             map: rowToTurn
         )
         
         // Load non-system turns newest-first so we can budget from the end
         let otherTurns = try query(
-            "SELECT * FROM turns WHERE conversation_id = ? AND role != 'system' ORDER BY created_at DESC;",
+            "SELECT * FROM turns WHERE conversation_id = ? AND role != 'system' ORDER BY created_at DESC, rowid DESC;",
             bindings: [conversationID.uuidString],
             map: rowToTurn
         )
@@ -322,7 +322,7 @@ public actor ConversationStore {
         
         // Find the IDs of turns to prune (all except last N non-system turns)
         let allTurns = try query(
-            "SELECT * FROM turns WHERE conversation_id = ? AND role != 'system' ORDER BY created_at ASC;",
+            "SELECT * FROM turns WHERE conversation_id = ? AND role != 'system' ORDER BY created_at ASC, rowid ASC;",
             bindings: [conversationID.uuidString],
             map: rowToTurn
         )
