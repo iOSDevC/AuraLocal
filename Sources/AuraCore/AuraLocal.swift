@@ -48,6 +48,12 @@ public final class AuraLocal {
         set { engine.deviceGuard = newValue }
     }
 
+    /// Set when the last generation outgrew the MLX KV window, which drops the oldest context without an error.
+    /// `nil` when it fit or the model does not run on MLX.
+    public var lastContextOverflow: ContextWindowOverflow? {
+        engine.backend.lastContextOverflow
+    }
+
     // MARK: - Init
 
     /// Internal init — creates an instance with backend auto-selected by ``BackendRouter``. `tools` (when

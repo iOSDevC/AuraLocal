@@ -31,7 +31,8 @@ final class MLXBackend: InferenceBackend {
 
     private var modelContainer: ModelContainer?
     private let model: Model
-    private let generateParameters: GenerateParameters
+    let generateParameters: GenerateParameters
+    private(set) var lastContextOverflow: ContextWindowOverflow?
 
     var isLoaded: Bool { modelContainer != nil }
 
@@ -45,7 +46,10 @@ final class MLXBackend: InferenceBackend {
         case .vision:            defaultTemp = 0.1
         case .visionSpecialized: defaultTemp = 0.0
         }
-        self.generateParameters = GenerateParameters(temperature: temperature ?? defaultTemp)
+        // Unbounded, the KV cache grows with every token until jetsam; the window makes MLX rotate it instead.
+        self.generateParameters = GenerateParameters(
+            maxKVSize: HardwareAnalyzer.recommendedContextWindow(for: model),
+            temperature: temperature ?? defaultTemp)
     }
 
     // MARK: - InferenceBackend
@@ -214,7 +218,9 @@ final class MLXBackend: InferenceBackend {
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
         let params = self.generateParameters
-        return try await container.perform { (context: ModelContext) async throws -> sending String in
+        lastContextOverflow = nil
+        let (text, overflow) = try await container.perform {
+            (context: ModelContext) async throws -> sending (String, ContextWindowOverflow?) in
             let input = try await prepareInput(context)
             let result = try MLXLMCommon.generate(
                 input: input,
@@ -230,8 +236,25 @@ final class MLXBackend: InferenceBackend {
                 }
                 return tokens.count >= maxTokens ? .stop : .more
             }
-            return context.tokenizer.decode(tokenIds: result.tokens)
+            let overflow = params.maxKVSize.flatMap {
+                ContextWindowOverflow.detect(promptTokens: result.promptTokenCount,
+                                             generatedTokens: result.generationTokenCount, windowSize: $0)
+            }.flatMap { candidate in
+                Self.cacheHonorsWindow(context.model, params) ? candidate : nil
+            }
+            return (context.tokenizer.decode(tokenIds: result.tokens), overflow)
         }
+        lastContextOverflow = overflow
+        return text
+    }
+
+    /// Several architectures (Qwen3.5 text, Gemma 3/4, LFM2…) build their own caches and ignore `maxKVSize`, so
+    /// nothing was dropped there. Comparing the caches built with and without it tells them apart.
+    nonisolated private static func cacheHonorsWindow(_ model: any LanguageModel, _ params: GenerateParameters) -> Bool {
+        var unbounded = params
+        unbounded.maxKVSize = nil
+        return model.newCache(parameters: params).map(\.maxSize)
+            != model.newCache(parameters: unbounded).map(\.maxSize)
     }
 
     // MARK: - Helpers

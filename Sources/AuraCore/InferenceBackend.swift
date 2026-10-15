@@ -51,6 +51,13 @@ public protocol InferenceBackend: AnyObject {
 
     /// Release all model resources from memory.
     func unload()
+
+    /// Set when the last generation outgrew a KV cache that drops history silently (MLX); `nil` otherwise.
+    var lastContextOverflow: ContextWindowOverflow? { get }
+}
+
+extension InferenceBackend {
+    var lastContextOverflow: ContextWindowOverflow? { nil }
 }
 
 // MARK: - BackendKind
