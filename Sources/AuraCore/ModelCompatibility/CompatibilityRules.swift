@@ -92,6 +92,19 @@ struct RuleInput: Sendable {
         Self.plausible(weightFormat == .gguf ? ggufMetadata?.headDimension : settings?.headDim, upTo: 8192)
     }
 
+    /// Cache per layer type from `config.json`. GGUF sizing keeps the header's uniform layout.
+    var kvLayout: KVCacheLayout? {
+        weightFormat == .gguf ? nil : settings?.kvLayers
+    }
+
+    /// Experts read per token, from the safetensors headers' exact tensor sizes; `nil` for dense models, GGUF,
+    /// or when the sizes were not read.
+    var expertRouting: ExpertRouting? {
+        guard weightFormat == .mlx, let experts = settings?.routedExperts, let perToken = settings?.expertsPerToken,
+              let bytes = source.tensorBytes, !bytes.isEmpty else { return nil }
+        return ExpertRouting.measure(tensorBytes: bytes, routedExperts: experts, expertsPerToken: perToken)
+    }
+
     static func plausible(_ value: Int?, upTo limit: Int) -> Int? {
         value.flatMap { (1...limit).contains($0) ? $0 : nil }
     }

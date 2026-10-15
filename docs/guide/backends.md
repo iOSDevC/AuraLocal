@@ -102,7 +102,7 @@ Used for `.gguf` models when the full file fits in available RAM.
 **Characteristics:**
 - Uses `LocalLLMClient` → llama.cpp under the hood
 - Full Metal GPU offload (all layers, the llama.cpp default) on a Mac or iOS device; CPU-only in the Simulator
-- Context window: `HardwareAnalyzer.recommendedContextWindow(for:)` derives it from the model's GQA KV cost and the memory left after the weights (0.4 GB reserve), rounded down to a multiple of 512, never below 1024 and never above 32768 on macOS / 8192 on iOS, and capped at the entry's `maxContextLength`. Entries without KV metadata (`kvHeads == 0`) fall back to 8192 (Mac with ≥32 GB), 4096 (smaller Macs), 2048 (iOS with ≥8 GB) or 1024.
+- Context window: `HardwareAnalyzer.recommendedContextWindow(for:)` derives it from the model's GQA KV cost (per layer type when the entry has `kvLayers`) and the memory left after the weights (0.4 GB reserve): the largest multiple of 512 that fits, never below 1024 and never above 32768 on macOS / 8192 on iOS, and capped at the entry's `maxContextLength`. Entries without KV metadata (`kvHeads == 0`) fall back to 8192 (Mac with ≥32 GB), 4096 (smaller Macs), 2048 (iOS with ≥8 GB) or 1024.
 - Up to 8 threads on macOS, up to 4 on iOS
 - 8–20 tokens/second on M-series Mac depending on model size
 

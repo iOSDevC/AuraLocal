@@ -9,19 +9,32 @@ public struct FitEstimate: Sendable, Equatable {
     /// diffusion peak for image pipelines.
     public let requiredGB: Double
     public let budgetGB: Double
-    /// Bandwidth-bound decode estimate; `nil` when the device's bandwidth is unknown.
+    /// Bandwidth-bound decode estimate; `nil` when the device's bandwidth is unknown. For a mixture of experts,
+    /// the low end of ``tokensPerSecondRange``.
     public let tokensPerSecond: Double?
+    /// Uncalibrated decode range of a mixture of experts; `nil` for dense models.
+    public let tokensPerSecondRange: ClosedRange<Double>?
 
-    public init(rating: ModelFitLevel, requiredGB: Double, budgetGB: Double, tokensPerSecond: Double?) {
+    public init(rating: ModelFitLevel, requiredGB: Double, budgetGB: Double, tokensPerSecond: Double?,
+                tokensPerSecondRange: ClosedRange<Double>? = nil) {
         self.rating = rating
         self.requiredGB = requiredGB
         self.budgetGB = budgetGB
         self.tokensPerSecond = tokensPerSecond
+        self.tokensPerSecondRange = tokensPerSecondRange
     }
 
     /// `Good · 12.0 of 20.0 GB`.
     public var summary: String {
         String(format: "%@ · %.1f of %.1f GB", rating.label, requiredGB, budgetGB)
+    }
+
+    /// `~18 tok/s`, or `~37–75 tok/s (uncalibrated MoE range)`; `nil` without an estimate.
+    public var decodeText: String? {
+        if let range = tokensPerSecondRange {
+            return String(format: "~%.0f–%.0f tok/s (uncalibrated MoE range)", range.lowerBound, range.upperBound)
+        }
+        return tokensPerSecond.map { String(format: "~%.0f tok/s", $0) }
     }
 }
 
@@ -58,6 +71,10 @@ public struct ArchitectureFacts: Sendable, Equatable {
     public let hasVision: Bool
     /// `4-bit` for MLX; the quant labels for GGUF.
     public let quantization: String?
+    /// Cache per layer type, from `config.json`; `nil` for GGUF or when the layer count is unknown.
+    public let kvLayers: KVCacheLayout?
+    /// Mixture-of-experts routing measured from the tensor sizes; `nil` for dense models.
+    public let experts: ExpertRouting?
 }
 
 // MARK: - CompatibilityReport
@@ -124,6 +141,7 @@ public enum CompatibilityEvaluator {
 
         var findings = CompatibilityRules.all.flatMap { $0.findings(for: input) }
         findings += fitFindings(input, weightsFit: weightsFit, quantFits: quantFits)
+        findings += layoutFindings(input, weightsFit: weightsFit)
         let hasBlocker = findings.contains { $0.level == .blocker }
         let category = hasBlocker ? nil : input.inferredCategory
         let entry = hasBlocker
@@ -170,7 +188,8 @@ public enum CompatibilityEvaluator {
         return CompatibilityReport(
             repoID: snapshot.repoID, target: target, weightFormat: .unknown, modelCategory: nil, status: .unknown,
             findings: [finding], overview: ArchitectureFacts(family: nil, layers: nil, trainedContext: nil, kvHeads: nil,
-                                                            headDim: nil, hasVision: false, quantization: nil),
+                                                            headDim: nil, hasVision: false, quantization: nil,
+                                                            kvLayers: nil, experts: nil),
             weightsBytes: nil, weightsFit: nil, quantFits: [], suggestedEntry: nil, licenseID: nil, licenseName: nil,
             gatedMode: nil)
     }
@@ -186,7 +205,8 @@ public enum CompatibilityEvaluator {
             return FitEstimate(rating: rating, requiredGB: peak, budgetGB: profile.availableMemoryGB, tokensPerSecond: nil)
         }
         let model = sizingModel(format: .mlx, bytes: bytes, layers: input.layerCount,
-                                kvHeads: input.kvHeadCount, headDim: input.headWidth)
+                                kvHeads: input.kvHeadCount, headDim: input.headWidth,
+                                kvLayers: input.kvLayout, experts: input.expertRouting)
         return estimate(model, profile: profile)
     }
 
@@ -200,15 +220,17 @@ public enum CompatibilityEvaluator {
         let assessment = HardwareAnalyzer.assess(model, profile: profile)
         return FitEstimate(rating: assessment.fitLevel, requiredGB: assessment.requiredMemoryGB,
                            budgetGB: assessment.availableMemoryGB,
-                           tokensPerSecond: assessment.estimatedDecodeTokensPerSecond)
+                           tokensPerSecond: assessment.estimatedDecodeTokensPerSecond,
+                           tokensPerSecondRange: assessment.estimatedDecodeTokensPerSecondRange)
     }
 
     /// A throwaway ``Model`` so ``HardwareAnalyzer/assess(_:profile:)`` can size the download.
-    static func sizingModel(format: ModelFormat, bytes: Int64, layers: Int?, kvHeads: Int?, headDim: Int?) -> Model {
+    static func sizingModel(format: ModelFormat, bytes: Int64, layers: Int?, kvHeads: Int?, headDim: Int?,
+                            kvLayers: KVCacheLayout? = nil, experts: ExpertRouting? = nil) -> Model {
         Model(id: "sizing", repoID: "sizing", displayName: "sizing", category: .text, domain: nil, docTags: false,
               format: format, approximateSizeMB: megabytes(bytes), isUncensored: false, ggufFilename: nil,
               defaultDocumentPrompt: nil, numLayers: layers ?? 0, kvHeads: kvHeads ?? 0, headDim: headDim ?? 0,
-              maxContextLength: nil, downloadURL: nil, localFileURL: nil)
+              kvLayers: kvLayers, experts: experts, maxContextLength: nil, downloadURL: nil, localFileURL: nil)
     }
 
     /// Catalog megabytes are MiB: `HardwareAnalyzer` divides them by 1024 to get GiB.
@@ -247,6 +269,44 @@ public enum CompatibilityEvaluator {
         return [CompatibilityFinding(rule: "fit", level: base.level, title: title, detail: base.detail + " " + tally)]
     }
 
+    /// Context sampled for the KV figure in the `kv` finding.
+    static let kvSampleContext = 8192
+
+    /// How the KV cache grows when not every layer keeps the whole context, and a mixture of experts' decode range.
+    private static func layoutFindings(_ input: RuleInput, weightsFit: FitEstimate?) -> [CompatibilityFinding] {
+        [kvFinding(input), moeFinding(input, weightsFit: weightsFit)].compactMap { $0 }
+    }
+
+    private static func kvFinding(_ input: RuleInput) -> CompatibilityFinding? {
+        guard let layout = input.kvLayout, let heads = input.kvHeadCount, let width = input.headWidth else { return nil }
+        let layers = input.layerCount ?? layout.cachedLayers
+        guard layout.slidingLayers + layout.recurrentLayers > 0 || layout.cachedLayers != layers else { return nil }
+        var parts = ["\(layout.fullAttentionLayers) of \(layers) layers keep the whole context"]
+        if layout.slidingLayers > 0 {
+            parts.append("\(layout.slidingLayers) keep the last \(layout.slidingWindow) tokens")
+        }
+        if layout.recurrentLayers > 0 {
+            parts.append(String(format: "%d keep a fixed %.1f MB state", layout.recurrentLayers,
+                                Double(layout.recurrentStateBytes) / 1_048_576))
+        }
+        let sampled = layout.cacheBytes(contextLength: kvSampleContext, kvHeads: heads, headDim: width)
+        let uniform = KVCacheLayout(fullAttentionLayers: layers)
+            .cacheBytes(contextLength: kvSampleContext, kvHeads: heads, headDim: width)
+        let sizes = String(format: ". At %d tokens: %.0f MB (%.0f MB if every layer kept it).",
+                           kvSampleContext, sampled / 1_048_576, uniform / 1_048_576)
+        return .info("kv", "KV cache grows on \(layout.fullAttentionLayers) of \(layers) layers",
+                     parts.joined(separator: ", ") + sizes)
+    }
+
+    private static func moeFinding(_ input: RuleInput, weightsFit: FitEstimate?) -> CompatibilityFinding? {
+        guard let routing = input.expertRouting else { return nil }
+        let read = String(format: "A token reads ≈%.2f GB of the weights (non-expert tensors plus %d/%d of the experts).",
+                          Double(routing.activeSizeMB) / 1024, routing.expertsPerToken, routing.routedExperts)
+        let speed = weightsFit?.decodeText.map { " Decode \($0) on \(input.target.displayName)." } ?? ""
+        return .info("moe", "Mixture of experts: \(routing.expertsPerToken) of \(routing.routedExperts) per token",
+                     read + speed + " The range stays uncalibrated until a MoE is measured.")
+    }
+
     /// Best rating first; among equals, the largest (highest quality) quant.
     private static func rank(_ fit: QuantFit) -> (ModelFitLevel, Double) {
         (fit.memory.rating, -fit.memory.requiredGB)
@@ -277,12 +337,15 @@ public enum CompatibilityEvaluator {
         case .mlx:
             guard let weightsBytes else { return nil }
             let bits = input.settings?.quantizationBits
+            let uniform = KVCacheLayout(fullAttentionLayers: input.layerCount ?? -1)
+            let layout = input.kvLayout.flatMap { $0 == uniform ? nil : $0 }
             return CatalogEntry(
                 id: CatalogEntry.identifier(repoID: listing.repoID, quant: nil), repoID: listing.repoID,
                 displayName: CatalogEntry.displayName(repoID: listing.repoID, format: .mlx, quant: nil, bits: bits),
                 modelCategory: category, weightFormat: .mlx, approximateSizeMB: megabytes(weightsBytes),
                 isUncensored: uncensored, ggufFilename: nil, numLayers: input.layerCount ?? 0,
-                kvHeads: 0, headDim: 0, maxContextLength: context)
+                kvHeads: input.kvHeadCount ?? 0, headDim: input.headWidth ?? 0, maxContextLength: context,
+                kvLayers: layout, experts: input.expertRouting)
         case .gguf:
             guard let pick = QuantFit.recommended(in: quantFits) else { return nil }
             return CatalogEntry(
@@ -305,13 +368,14 @@ public enum CompatibilityEvaluator {
             return ArchitectureFacts(
                 family: input.ggufArchitecture, layers: input.layerCount, trainedContext: input.trainedContext,
                 kvHeads: input.kvHeadCount, headDim: input.headWidth, hasVision: false,
-                quantization: labels.isEmpty ? nil : "\(labels.count) quants")
+                quantization: labels.isEmpty ? nil : "\(labels.count) quants", kvLayers: nil, experts: nil)
         default:
             return ArchitectureFacts(
                 family: config?.modelType, layers: input.layerCount, trainedContext: input.trainedContext,
                 kvHeads: input.kvHeadCount, headDim: input.headWidth,
                 hasVision: category == .vision || (category == nil && input.hasVisionTensors == true),
-                quantization: config?.quantizationBits.map { "\($0)-bit" } ?? config?.foreignQuantMethod)
+                quantization: config?.quantizationBits.map { "\($0)-bit" } ?? config?.foreignQuantMethod,
+                kvLayers: input.kvLayout, experts: input.expertRouting)
         }
     }
 }

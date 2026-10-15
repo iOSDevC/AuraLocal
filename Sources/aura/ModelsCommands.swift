@@ -80,6 +80,9 @@ extension AuraCLI {
             let fit = report.weightsFit.map { " · \($0.summary)" } ?? ""
             print("Weights: \(CompatibilityReport.gigabytesText(bytes))\(fit)")
         }
+        if let decode = report.weightsFit?.decodeText {
+            print("Decode: \(decode) on \(report.target.displayName)")
+        }
         print("")
         for finding in report.findings {
             print("  \(marker(finding.level)) \(finding.title)")
@@ -113,7 +116,9 @@ extension AuraCLI {
     static func jsonText(_ report: CompatibilityReport) throws -> String {
         let fit: (FitEstimate?) -> Any = { estimate in
             guard let estimate else { return NSNull() }
-            return ["rating": estimate.rating.label, "requiredGB": estimate.requiredGB, "budgetGB": estimate.budgetGB]
+            let range = estimate.tokensPerSecondRange.map { [$0.lowerBound, $0.upperBound] as Any } ?? NSNull()
+            return ["rating": estimate.rating.label, "requiredGB": estimate.requiredGB, "budgetGB": estimate.budgetGB,
+                    "tokensPerSecond": estimate.tokensPerSecond ?? NSNull(), "tokensPerSecondRange": range] as [String: Any]
         }
         let object: [String: Any] = [
             "repoID": report.repoID,

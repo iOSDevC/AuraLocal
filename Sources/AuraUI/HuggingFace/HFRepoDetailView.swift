@@ -109,8 +109,8 @@ struct HFReportForm: View {
             Section("Memory on \(result.target.displayName)") {
                 if let bytes = result.weightsBytes { LabeledContent("Weights", value: CompatibilityReport.gigabytesText(bytes)) }
                 LabeledContent("Fit", value: fit.summary)
-                if let speed = fit.tokensPerSecond {
-                    LabeledContent("Decode estimate", value: String(format: "~%.0f tokens/s", speed))
+                if let speed = fit.decodeText {
+                    LabeledContent("Decode estimate", value: speed)
                 }
             }
         }
