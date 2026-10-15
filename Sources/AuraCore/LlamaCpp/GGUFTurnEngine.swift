@@ -152,11 +152,11 @@ final class LlamaTurnEngine: GGUFTurnEngine {
 
         var text = ""
         var produced = 0
-        var prefill: LlamaTurnCore.Prefill?
+        var prefilled: LlamaTurnCore.Prefill?
         reading: for try await event in events {
             switch event {
             case .prefilled(let report):
-                prefill = report
+                prefilled = report
                 lastHistory = report.history
                 if report.rebuilt { rebuildCount += 1 }
             case .piece(let piece):
@@ -166,7 +166,7 @@ final class LlamaTurnEngine: GGUFTurnEngine {
                 if let shouldStop, shouldStop(produced) { break reading }
             }
         }
-        return GGUFTurnReply(text: text, prompt: prefill?.prompt ?? "", history: prefill?.history ?? [])
+        return GGUFTurnReply(text: text, prompt: prefilled?.prompt ?? "", history: prefilled?.history ?? [])
     }
 
     /// Waits for the decode a cut or cancelled turn left running.
@@ -182,9 +182,9 @@ final class LlamaTurnEngine: GGUFTurnEngine {
 /// The context of a ``LlamaTurnEngine`` and what it has learned about prompt sizes. Only the current turn's decode
 /// task touches it: a turn starts after the previous one's task has finished.
 final class LlamaTurnCore: @unchecked Sendable {
-    private let url: URL
-    private let parameter: LlamaClient.Parameter
-    private var context: LocalLLMClientLlama.Context?
+    private let modelFile: URL
+    private let loadParameters: LlamaClient.Parameter
+    private var liveContext: LocalLLMClientLlama.Context?
     private var fitter: GGUFPromptFitter
 
     struct Request: Sendable {
@@ -206,9 +206,9 @@ final class LlamaTurnCore: @unchecked Sendable {
     }
 
     private init(url: URL, parameter: LlamaClient.Parameter) throws {
-        self.url = url
-        self.parameter = parameter
-        context = try LocalLLMClientLlama.Context(url: url, parameter: parameter)
+        modelFile = url
+        loadParameters = parameter
+        liveContext = try LocalLLMClientLlama.Context(url: url, parameter: parameter)
         fitter = GGUFPromptFitter(windowSize: parameter.context)
     }
 
@@ -217,7 +217,7 @@ final class LlamaTurnCore: @unchecked Sendable {
         try LlamaTurnCore(url: url, parameter: parameter)
     }
 
-    var currentContext: LocalLLMClientLlama.Context? { context }
+    var currentContext: LocalLLMClientLlama.Context? { liveContext }
 
     func run(_ request: Request, into events: AsyncThrowingStream<Event, any Error>.Continuation) async {
         do {
@@ -251,16 +251,16 @@ final class LlamaTurnCore: @unchecked Sendable {
 
     /// A context whose reset fails is replaced, which reloads the model; the old one is freed first.
     private func preparedContext() throws -> (context: LocalLLMClientLlama.Context, rebuilt: Bool) {
-        if let context {
+        if let liveContext {
             do {
-                try Self.reset(context)
-                return (context, false)
+                try Self.reset(liveContext)
+                return (liveContext, false)
             } catch {
-                self.context = nil
+                self.liveContext = nil
             }
         }
-        let fresh = try LocalLLMClientLlama.Context(url: url, parameter: parameter)
-        context = fresh
+        let fresh = try LocalLLMClientLlama.Context(url: modelFile, parameter: loadParameters)
+        liveContext = fresh
         return (fresh, true)
     }
 
@@ -277,7 +277,7 @@ final class LlamaTurnCore: @unchecked Sendable {
                 do {
                     try Self.reset(context)
                 } catch {
-                    self.context = nil
+                    liveContext = nil
                     throw error
                 }
                 guard let shorter = try fitter.shortened(history, replyBudget: request.maxTokens,
@@ -299,8 +299,8 @@ final class LlamaTurnCore: @unchecked Sendable {
 @MainActor
 final class LlamaToolTurnEngine: GGUFTurnEngine {
     let renderer: LlamaPromptRenderer
-    private let url: URL
-    private let parameter: LlamaClient.Parameter
+    private let modelFile: URL
+    private let loadParameters: LlamaClient.Parameter
     private var client: LlamaClient?
     private var fitter: GGUFPromptFitter
     /// Reads the current stream to its end, so finishing means the client's decode has stopped.
@@ -324,8 +324,8 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
     }
 
     init(url: URL, parameter: LlamaClient.Parameter, renderer: LlamaPromptRenderer, client: LlamaClient) {
-        self.url = url
-        self.parameter = parameter
+        modelFile = url
+        loadParameters = parameter
         self.renderer = renderer
         self.client = client
         fitter = GGUFPromptFitter(windowSize: parameter.context)
@@ -448,7 +448,7 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
 
     private func liveClient() async throws -> LlamaClient {
         if let client { return client }
-        let fresh = try await Self.makeClient(url: url, parameter: parameter, tools: renderer.tools)
+        let fresh = try await Self.makeClient(url: modelFile, parameter: loadParameters, tools: renderer.tools)
         rebuildCount += 1
         client = fresh
         return fresh
