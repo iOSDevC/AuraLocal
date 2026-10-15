@@ -40,6 +40,9 @@ let package = Package(
         // conflicting; `from:` (not a branch) is what lets SwiftPM backtrack off the 602 floor.
         .package(url: "https://github.com/ml-explore/mlx-swift-lm",      from: "3.31.3"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
+        // Also already resolved: LocalLLMClient renders chat templates with it. The GGUF backends render the
+        // same templates themselves, so every turn can start from an empty KV cache with real roles.
+        .package(url: "https://github.com/huggingface/swift-jinja", from: "2.3.5"),
 
         // Core ML Stable Diffusion for AuraImageGen. `exact:` because upstream main pins
         // swift-transformers 0.1.8, which conflicts with the 1.3.0 floor above; 1.1.1 depends only on
@@ -59,6 +62,7 @@ let package = Package(
                 .product(name: "MLXVLM",      package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "Tokenizers",  package: "swift-transformers"),
+                .product(name: "Jinja",       package: "swift-jinja"),
             ],
             path: "Sources/AuraCore",
             resources: [

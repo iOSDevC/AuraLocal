@@ -1,0 +1,326 @@
+import Foundation
+import Jinja
+import LocalLLMClient
+
+// MARK: - LlamaChatMessage
+
+/// One message of a conversation as the GGUF backends render it.
+struct LlamaChatMessage: Sendable, Equatable {
+    enum Speaker: String, Sendable {
+        case system, user, assistant, tool
+    }
+
+    var role: Speaker
+    var content: String
+
+    static func system(_ content: String) -> LlamaChatMessage { .init(role: .system, content: content) }
+    static func user(_ content: String) -> LlamaChatMessage { .init(role: .user, content: content) }
+    static func assistant(_ content: String) -> LlamaChatMessage { .init(role: .assistant, content: content) }
+    static func tool(_ content: String) -> LlamaChatMessage { .init(role: .tool, content: content) }
+
+    /// `[["role": …, "content": …]]` as `InferenceBackend.generate(messages:)` receives it; an unknown or missing
+    /// role is user text.
+    static func list(from raw: [[String: String]]) -> [LlamaChatMessage] {
+        raw.map { entry in
+            LlamaChatMessage(role: Speaker(rawValue: entry["role"] ?? "") ?? .user, content: entry["content"] ?? "")
+        }
+    }
+
+    /// The single-prompt entry points: an optional system prompt and one user turn.
+    static func list(prompt: String, systemPrompt: String?) -> [LlamaChatMessage] {
+        (systemPrompt.map { [.system($0)] } ?? []) + [.user(prompt)]
+    }
+}
+
+// MARK: - LlamaChatNormalizer
+
+enum LlamaChatNormalizer {
+    /// Reshapes a history into what every chat template accepts: at most one leading system message, then
+    /// alternating user/assistant turns (tool results stay where they are).
+    ///
+    /// - Every system message (a stored summary can sit mid-history) merges into the leading one, in order.
+    /// - Assistant turns before the first user turn join the system text; alternation templates raise on them.
+    /// - Empty assistant turns (a failed reply) are dropped.
+    /// - Consecutive user or assistant turns merge.
+    static func normalize(_ messages: [LlamaChatMessage]) -> [LlamaChatMessage] {
+        var systemParts: [String] = []
+        var turns: [LlamaChatMessage] = []
+        for message in messages {
+            switch message.role {
+            case .system:
+                if !isBlank(message.content) { systemParts.append(message.content) }
+            case .assistant where isBlank(message.content):
+                continue
+            case .assistant where !turns.contains(where: { $0.role == .user }):
+                systemParts.append(message.content)
+            case .user, .assistant:
+                if let last = turns.last, last.role == message.role {
+                    turns[turns.count - 1].content = last.content + "\n\n" + message.content
+                } else {
+                    turns.append(message)
+                }
+            case .tool:
+                turns.append(message)
+            }
+        }
+        let system = systemParts.isEmpty ? [] : [LlamaChatMessage.system(systemParts.joined(separator: "\n\n"))]
+        return system + turns
+    }
+
+    /// Drops the oldest exchange: its user turn up to the next one. `nil` when only the last user turn is left,
+    /// which must reach the model.
+    static func droppingOldestExchange(_ messages: [LlamaChatMessage]) -> [LlamaChatMessage]? {
+        let userIndices = messages.indices.filter { messages[$0].role == .user }
+        guard userIndices.count >= 2 else { return nil }
+        var trimmed = messages
+        trimmed.removeSubrange(userIndices[0]..<userIndices[1])
+        return trimmed
+    }
+
+    static func isBlank(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+// MARK: - LlamaPromptRenderer
+
+/// Renders a conversation with the GGUF's own chat template the way LocalLLMClient's `.chat` input does (same
+/// Jinja engine, context variables, message shapes and tool instructions), so the text a turn decodes is what
+/// `LLMSession` would have decoded for the same roles.
+struct LlamaPromptRenderer: Sendable {
+    /// `nil` renders a role-labelled transcript.
+    let template: String?
+    let specialTokens: [String: String]
+    let tools: [AnyLLMTool]
+    private let parsed: Result<Template, any Error>?
+
+    enum RenderError: LocalizedError {
+        case templateFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .templateFailed(let reason): "The model's chat template could not render the conversation: \(reason)"
+            }
+        }
+    }
+
+    init(template: String?, specialTokens: [String: String] = [:], tools: [AnyLLMTool] = []) {
+        let source = template.map(Self.patched)
+        self.template = source
+        self.specialTokens = specialTokens
+        self.tools = tools
+        parsed = source.map { text in Result<Template, any Error> { try Template(text) } }
+    }
+
+    init(metadata: GGUFChatMetadata, tools: [any LLMTool]) {
+        self.init(template: metadata.template, specialTokens: metadata.specialTokens,
+                  tools: tools.map { AnyLLMTool($0) })
+    }
+
+    /// Same template and tokens, no tool instructions: what a constrained call sends.
+    var withoutTools: LlamaPromptRenderer {
+        tools.isEmpty ? self : LlamaPromptRenderer(template: template, specialTokens: specialTokens)
+    }
+
+    /// How message content reaches the template. LocalLLMClient picks one per template family.
+    enum ContentShape: Equatable {
+        /// `content` is a string (ChatML and the fallback processor).
+        case text
+        /// `content` is `[{"type": "text", "text": …}]` (Gemma, SmolVLM, Qwen2-VL).
+        case parts
+        /// User content is a string, every other role uses parts (Llama 3.2 Vision).
+        case partsExceptUser
+    }
+
+    /// Mirrors `MessageProcessorFactory.createAutoProcessor`.
+    static func contentShape(for template: String) -> ContentShape {
+        if template.contains("<|turn>") { return .parts }
+        if template.contains("<|im_start|>") && template.contains("<end_of_utterance>") { return .parts }
+        if template.contains("content[i].type == 'image'") || template.contains("<vision>") { return .parts }
+        if template.contains("<|begin_of_text|>") && template.contains("<|start_header_id|>") { return .partsExceptUser }
+        if template.contains("<start_of_image>") { return .parts }
+        return .text
+    }
+
+    /// Tries LocalLLMClient's message shape first, then plain strings, then the system prompt folded into the
+    /// first user turn. A render only counts when every message's text reaches the prompt: some templates drop the
+    /// system prompt silently, and Llama 3 text templates blank assistant turns sent as parts.
+    func render(_ messages: [LlamaChatMessage]) throws -> String {
+        let normalized = LlamaChatNormalizer.normalize(messages)
+        guard let template, let parsed else { return Self.transcript(normalized) }
+        let compiled: Template
+        do {
+            compiled = try parsed.get()
+        } catch {
+            throw RenderError.templateFailed(String(describing: error))
+        }
+
+        let preferred = Self.contentShape(for: template)
+        var attempts: [(messages: [LlamaChatMessage], shape: ContentShape)] = [(normalized, preferred)]
+        if preferred != .text { attempts.append((normalized, .text)) }
+        if normalized.first?.role == .system {
+            attempts.append((Self.foldingSystemIntoFirstUser(normalized), .text))
+        }
+
+        var lastFailure = "no attempt rendered"
+        for (index, attempt) in attempts.enumerated() {
+            do {
+                let rendered = try render(attempt.messages, with: compiled, nativeTools: template.contains("tools"),
+                                          shape: attempt.shape)
+                let isLast = index == attempts.count - 1
+                if isLast || Self.keepsEveryMessage(attempt.messages, in: rendered) {
+                    return rendered
+                }
+                lastFailure = "the template dropped part of the conversation"
+            } catch {
+                lastFailure = "\(error)"
+            }
+        }
+        throw RenderError.templateFailed(lastFailure)
+    }
+
+    // MARK: Rendering
+
+    private func render(_ messages: [LlamaChatMessage], with compiled: Template, nativeTools: Bool,
+                        shape: ContentShape) throws -> String {
+        let payload = try toolProcessed(messages.map { Self.payload(for: $0, shape: shape) },
+                                        nativeSupport: nativeTools, shape: shape)
+        var context: [String: Value] = [
+            "add_generation_prompt": .boolean(true),
+            "messages": try Value(any: payload),
+        ]
+        try context.merge(specialTokens.mapValues { try Value(any: $0) }) { _, new in new }
+        if !tools.isEmpty && nativeTools {
+            context["tools"] = try Value(any: tools.map { $0.toOAICompatJSON() })
+        }
+
+        // LocalLLMClient sets these on the environment, which this Jinja ignores; setting them the same way keeps
+        // the two renderings identical if that ever changes.
+        let environment = Environment()
+        environment.lstripBlocks = true
+        environment.trimBlocks = true
+        return try compiled.render(context, environment: environment)
+    }
+
+    private static func payload(for message: LlamaChatMessage, shape: ContentShape) -> [String: any Sendable] {
+        ["role": message.role.rawValue, "content": content(message.content, role: message.role, shape: shape)]
+    }
+
+    private static func content(_ text: String, role: LlamaChatMessage.Speaker, shape: ContentShape) -> any Sendable {
+        let usesParts = switch shape {
+        case .text: false
+        case .parts: true
+        case .partsExceptUser: role != .user
+        }
+        return usesParts ? [["type": "text", "text": text] as [String: String]] : text
+    }
+
+    /// `StandardToolInstructionProcessor.processMessages`, which LocalLLMClient applies whenever tools exist. A system
+    /// message it has to add gets the template's content shape; LocalLLMClient always uses parts there.
+    private func toolProcessed(_ messages: [[String: any Sendable]], nativeSupport: Bool,
+                               shape: ContentShape) throws -> [[String: any Sendable]] {
+        guard !tools.isEmpty else { return messages }
+        var processed = messages
+        let toolsJSON = try tools.toOAICompatJSONString(options: [])
+        let lastIsTool = processed.last?["role"] as? String == LlamaChatMessage.Speaker.tool.rawValue
+
+        if nativeSupport {
+            if let index = Self.systemIndex(in: processed) {
+                processed[index]["tools"] = toolsJSON
+            } else {
+                processed.insert(["role": "system", "content": Self.content("", role: .system, shape: shape),
+                                  "tools": toolsJSON], at: 0)
+            }
+        }
+        if !lastIsTool {
+            let instructions = Self.toolInstructions(toolsJSON)
+            if let index = Self.systemIndex(in: processed) {
+                processed[index]["content"] = Self.appending(instructions, to: processed[index]["content"])
+            } else {
+                processed.insert(["role": "system", "content": Self.content(instructions, role: .system, shape: shape)],
+                                 at: 0)
+            }
+        }
+        if lastIsTool, let index = processed.indices.last {
+            processed[index]["role"] = LlamaChatMessage.Speaker.assistant.rawValue
+            processed[index]["content"] = Self.wrappingToolResponse(processed[index]["content"])
+        }
+        return processed
+    }
+
+    private static func systemIndex(in messages: [[String: any Sendable]]) -> Int? {
+        messages.firstIndex { $0["role"] as? String == LlamaChatMessage.Speaker.system.rawValue }
+    }
+
+    private static func appending(_ instructions: String, to content: (any Sendable)?) -> any Sendable {
+        if let text = content as? String {
+            return text.isEmpty ? instructions : text + "\n\n" + instructions
+        }
+        if var parts = content as? [[String: String]], let first = parts.first?["text"] {
+            parts[0]["text"] = first.isEmpty ? instructions : first + "\n\n" + instructions
+            return parts
+        }
+        return instructions
+    }
+
+    private static func wrappingToolResponse(_ content: (any Sendable)?) -> any Sendable {
+        if var parts = content as? [[String: String]], let text = parts.first?["text"] {
+            parts[0]["text"] = "You reply to the user using the following results of the invoked function:\n"
+                + "<tool_response>\n\(text)\n</tool_response>"
+            return parts
+        }
+        return "<tool_response>\n\((content as? String) ?? "")\n</tool_response>"
+    }
+
+    private static func toolInstructions(_ toolsJSON: String) -> String {
+        """
+        If you decide to invoke any of the function(s), you MUST put it in the format of
+        <tool_call>
+        {"name": function name, "arguments": dictionary of argument name and its value}
+        </tool_call>\n
+        You SHOULD NOT include any other text in the response if you call a function
+        \(toolsJSON)\n
+        """
+    }
+
+    // MARK: Fallbacks
+
+    /// Looks for the end of each message only: templates trim content, and reasoning templates drop everything up
+    /// to `</think>` from assistant turns.
+    static func keepsEveryMessage(_ messages: [LlamaChatMessage], in rendered: String) -> Bool {
+        messages.allSatisfy { message in
+            let content = message.content
+            let answer = content.range(of: "</think>", options: .backwards).map { content[$0.upperBound...] } ?? content[...]
+            let tail = answer.trimmingCharacters(in: .whitespacesAndNewlines).suffix(64)
+            return tail.isEmpty || rendered.contains(tail)
+        }
+    }
+
+    /// For templates without a system role (Gemma 2, some Mistral builds).
+    static func foldingSystemIntoFirstUser(_ messages: [LlamaChatMessage]) -> [LlamaChatMessage] {
+        guard let system = messages.first, system.role == .system else { return messages }
+        var rest = Array(messages.dropFirst())
+        if let index = rest.firstIndex(where: { $0.role == .user }) {
+            rest[index].content = system.content + "\n\n" + rest[index].content
+        } else {
+            rest.insert(.user(system.content), at: 0)
+        }
+        return rest
+    }
+
+    /// LocalLLMClient falls back to a Gemma-style template without role markers; a labelled transcript keeps the
+    /// speakers apart.
+    static func transcript(_ messages: [LlamaChatMessage]) -> String {
+        let lines = messages.map { "\($0.role.rawValue.capitalized): \($0.content)" }
+        return (lines + ["Assistant:"]).joined(separator: "\n\n")
+    }
+
+    /// Qwen2.5 GGUFs escape the tool-call example as `{{"name": …}}` inside a string literal, which renders the
+    /// braces doubled; small models copy them and no tool call parses.
+    static func patched(_ template: String) -> String {
+        template.replacingOccurrences(
+            of: #"{{\"name\": <function-name>, \"arguments\": <args-json-object>}}"#,
+            with: #"{\"name\": <function-name>, \"arguments\": <args-json-object>}"#
+        )
+    }
+}
