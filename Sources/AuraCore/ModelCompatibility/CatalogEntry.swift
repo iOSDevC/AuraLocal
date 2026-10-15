@@ -2,8 +2,9 @@ import Foundation
 
 /// A `models.json` entry for a model the checker found runnable, with the catalog's fields and key order.
 ///
-/// MLX entries carry `kvHeads`/`headDim` 0 (the catalog convention: MLX sizes its KV cache at runtime);
-/// GGUF entries fill them from the file header. `maxContextLength` is set only below 32768 tokens.
+/// `kvHeads` / `headDim` come from `config.json` (MLX) or the file header (GGUF), 0 when neither has them.
+/// `maxContextLength` is set only below 32768 tokens. MLX entries add `kvLayers` when not every layer keeps the
+/// whole context, and `experts` for a mixture of experts whose tensor sizes were read.
 public struct CatalogEntry: Sendable, Equatable {
     public let id: String
     public let repoID: String
@@ -19,10 +20,13 @@ public struct CatalogEntry: Sendable, Equatable {
     public let kvHeads: Int
     public let headDim: Int
     public let maxContextLength: Int?
+    public let kvLayers: KVCacheLayout?
+    public let experts: ExpertRouting?
 
     public init(id: String, repoID: String, displayName: String, modelCategory: Model.Category,
                 weightFormat: ModelFormat, approximateSizeMB: Int, isUncensored: Bool, ggufFilename: String?,
-                numLayers: Int, kvHeads: Int, headDim: Int, maxContextLength: Int?) {
+                numLayers: Int, kvHeads: Int, headDim: Int, maxContextLength: Int?,
+                kvLayers: KVCacheLayout? = nil, experts: ExpertRouting? = nil) {
         self.id = id
         self.repoID = repoID
         self.displayName = displayName
@@ -37,6 +41,8 @@ public struct CatalogEntry: Sendable, Equatable {
         self.kvHeads = kvHeads
         self.headDim = headDim
         self.maxContextLength = maxContextLength
+        self.kvLayers = kvLayers
+        self.experts = experts
     }
 
     /// Contexts at or above this need no `maxContextLength` (the memory budget caps them first).
@@ -62,6 +68,8 @@ public struct CatalogEntry: Sendable, Equatable {
             ("headDim", "\(headDim)"),
         ]
         if let maxContextLength { fields.append(("maxContextLength", "\(maxContextLength)")) }
+        if let kvLayers { fields.append(("kvLayers", Self.object(kvLayers))) }
+        if let experts { fields.append(("experts", Self.object(experts))) }
         let body = fields.map { "\(pad)  \"\($0.0)\": \($0.1)" }.joined(separator: ",\n")
         return "\(pad){\n\(body)\n\(pad)}"
     }
@@ -69,6 +77,23 @@ public struct CatalogEntry: Sendable, Equatable {
     /// The entry decoded as the ``Model`` the registry would build from it.
     public func decodedModel() -> Model? {
         try? JSONDecoder().decode(Model.self, from: Data(jsonText().utf8))
+    }
+
+    /// `{"fullAttentionLayers": 6, …}` on one line, so a catalog entry stays one screen tall.
+    private static func object(_ layout: KVCacheLayout) -> String {
+        var pairs = [
+            ("fullAttentionLayers", layout.fullAttentionLayers), ("slidingLayers", layout.slidingLayers),
+            ("slidingWindow", layout.slidingWindow), ("recurrentLayers", layout.recurrentLayers),
+            ("recurrentStateBytes", layout.recurrentStateBytes),
+        ]
+        if let heads = layout.fullAttentionKVHeads { pairs.append(("fullAttentionKVHeads", heads)) }
+        if let width = layout.fullAttentionHeadDim { pairs.append(("fullAttentionHeadDim", width)) }
+        return "{" + pairs.map { "\"\($0.0)\": \($0.1)" }.joined(separator: ", ") + "}"
+    }
+
+    private static func object(_ routing: ExpertRouting) -> String {
+        "{\"routedExperts\": \(routing.routedExperts), \"expertsPerToken\": \(routing.expertsPerToken), "
+            + "\"activeSizeMB\": \(routing.activeSizeMB)}"
     }
 
     // MARK: Naming
@@ -136,6 +161,6 @@ public extension CatalogEntry {
             modelCategory: modelCategory, weightFormat: .gguf,
             approximateSizeMB: CompatibilityEvaluator.megabytes(quant.totalBytes), isUncensored: isUncensored,
             ggufFilename: quant.firstPath, numLayers: numLayers, kvHeads: kvHeads, headDim: headDim,
-            maxContextLength: maxContextLength)
+            maxContextLength: maxContextLength, kvLayers: kvLayers, experts: experts)
     }
 }

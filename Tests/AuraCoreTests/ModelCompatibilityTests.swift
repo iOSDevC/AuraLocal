@@ -414,7 +414,7 @@ extension ModelCompatibilityTests {
     }
 
     func testEveryRuleFindingCarriesItsRuleID() {
-        let ids = Set(CompatibilityRules.all.map(\.id)).union(["fit", "entry", "repository"])
+        let ids = Set(CompatibilityRules.all.map(\.id)).union(["fit", "entry", "repository", "kv", "moe"])
         let snapshots = [
             Fixture.mlx("o/a", config: Fixture.qwen35Config, weightMap: Fixture.weightMap(["visual": 1, "language_model": 1])),
             Fixture.gguf(architecture: "qwen4exp"),
@@ -449,8 +449,8 @@ extension ModelCompatibilityTests {
           "ggufFilename": null,
           "defaultDocumentPrompt": null,
           "numLayers": 24,
-          "kvHeads": 0,
-          "headDim": 0,
+          "kvHeads": 2,
+          "headDim": 128,
           "maxContextLength": 4096
         }
         """)

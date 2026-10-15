@@ -108,7 +108,8 @@ final class ContextWindowTests: XCTestCase {
               format: model.format, approximateSizeMB: model.approximateSizeMB,
               isUncensored: model.isUncensored, ggufFilename: model.ggufFilename,
               defaultDocumentPrompt: model.defaultDocumentPrompt, numLayers: model.numLayers,
-              kvHeads: model.kvHeads, headDim: model.headDim, maxContextLength: nil,
+              kvHeads: model.kvHeads, headDim: model.headDim, kvLayers: model.kvLayers, experts: model.experts,
+              maxContextLength: nil,
               downloadURL: model.downloadURL, localFileURL: model.localFileURL)
     }
 }

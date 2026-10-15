@@ -150,6 +150,14 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
     /// Head dimension for KV-cache calculation (0 = use flat estimate).
     public let headDim: Int
 
+    /// Which layers keep the whole context, a sliding window or a fixed recurrent state. `nil` = every one of
+    /// ``numLayers`` keeps the whole context. Absent in JSON decodes as `nil`.
+    public let kvLayers: KVCacheLayout?
+
+    /// Mixture-of-experts routing, which sizes the decode estimate by the weights a token reads. `nil` = dense.
+    /// Absent in JSON decodes as `nil`.
+    public let experts: ExpertRouting?
+
     /// Context length the weights actually support, when it is lower than what the memory budget
     /// would grant — learned position tables (GPT-2 family) break past it instead of degrading.
     /// `nil` = no ceiling beyond memory. Absent in JSON decodes as `nil`.
@@ -348,8 +356,8 @@ public extension Model {
                                downloadURL: URL?, localFileURL: URL?) -> Model {
         Model(id: id, repoID: repoID, displayName: displayName, category: .text, domain: nil, docTags: false,
               format: .gguf, approximateSizeMB: 0, isUncensored: false, ggufFilename: filename,
-              defaultDocumentPrompt: nil, numLayers: 0, kvHeads: 0, headDim: 0, maxContextLength: nil,
-              downloadURL: downloadURL, localFileURL: localFileURL)
+              defaultDocumentPrompt: nil, numLayers: 0, kvHeads: 0, headDim: 0, kvLayers: nil, experts: nil,
+              maxContextLength: nil, downloadURL: downloadURL, localFileURL: localFileURL)
     }
 }
 

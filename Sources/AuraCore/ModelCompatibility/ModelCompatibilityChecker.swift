@@ -21,6 +21,8 @@ public struct ModelCompatibilityChecker: Sendable {
 
     /// Unreferenced safetensors files whose headers are read to count their tensors.
     static let maxExtraHeaders = 4
+    /// Shards whose headers are read to size a mixture of experts' tensors; larger repos keep the dense estimate.
+    static let maxExpertHeaders = 64
     static let safetensorsProbeBytes = 256 << 10
 
     public init(transport: URLSession = .shared,
@@ -89,8 +91,24 @@ public struct ModelCompatibilityChecker: Sendable {
         if let weightMap = snapshot.liveWeightMap {
             snapshot.extraTensorCounts = await extraTensorCounts(repoID: repoID, files: listing.files, weightMap: weightMap)
         }
+        if (snapshot.configuration?.routedExperts ?? 0) > 1 {
+            snapshot.tensorBytes = await expertTensorBytes(repoID: repoID, snapshot: snapshot,
+                                                           shipped: readsShippedHeaders ? shippedSafetensors : [])
+        }
         snapshot.problems = problems
         return snapshot
+    }
+
+    /// Every loaded tensor's size, for a mixture of experts' decode estimate. Reuses the shipped-file headers when
+    /// they already cover every loaded file. `nil` (keep the dense estimate) when any header cannot be read.
+    private func expertTensorBytes(repoID: String, snapshot: RepoSnapshot, shipped: [String]) async -> [String: Int64]? {
+        let paths = snapshot.loadedSafetensorsPaths
+        guard !paths.isEmpty, paths.count <= Self.maxExpertHeaders else { return nil }
+        if let merged = snapshot.singleFileHeader, Set(paths).isSubset(of: shipped.prefix(Self.maxExtraHeaders)) {
+            return merged.tensorBytes
+        }
+        guard case .success(let header)? = await mergedSafetensorsHeader(repoID: repoID, paths: paths) else { return nil }
+        return header.tensorBytes
     }
 
     private static func unwrap<T>(_ result: Result<T, FetchProblem>?, into problems: inout [FetchProblem]) -> T? {
@@ -191,7 +209,11 @@ public struct ModelCompatibilityChecker: Sendable {
             }
         }
         guard let first = headers.first else { return nil }
-        return .success(SafetensorsHeader(tensorNames: headers.flatMap(\.tensorNames).sorted(), metadata: first.metadata))
+        let sizes = headers.reduce(into: [String: Int64]()) { merged, header in
+            merged.merge(header.tensorBytes) { kept, _ in kept }
+        }
+        return .success(SafetensorsHeader(tensorNames: headers.flatMap(\.tensorNames).sorted(), metadata: first.metadata,
+                                          tensorBytes: sizes))
     }
 
     private func extraTensorCounts(repoID: String, files: [RepoFile], weightMap: [String: String]) async -> [String: Int] {

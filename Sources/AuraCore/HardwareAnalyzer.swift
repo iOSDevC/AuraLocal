@@ -215,12 +215,17 @@ public struct ModelCompatibility: Sendable {
     public let availableMemoryGB: Double
 
     /// Estimated decode speed in tokens/sec, or `nil` when the chip's memory
-    /// bandwidth is unknown (iOS, unrecognised chips).
+    /// bandwidth is unknown (iOS, unrecognised chips). For a mixture of experts
+    /// this is the low end of ``estimatedDecodeTokensPerSecondRange``.
     ///
     /// Fitting in RAM is only half the answer: a model that fits but decodes at
     /// 3 tok/s is unusable, and reporting it as ``ModelFitLevel/excellent`` is
     /// actively misleading. See ``speedLevel``.
     public let estimatedDecodeTokensPerSecond: Double?
+
+    /// Uncalibrated decode range for a mixture of experts (no MoE has been measured
+    /// yet); `nil` for dense models, whose estimate is a single figure.
+    public let estimatedDecodeTokensPerSecondRange: ClosedRange<Double>?
 
     /// Percentage of available memory consumed (0–100+).
     public var utilizationPercent: Double {
@@ -248,6 +253,10 @@ public struct ModelCompatibility: Sendable {
     /// The honest one-liner: RAM **and** wall-clock.
     public var verdict: String {
         guard let tps = estimatedDecodeTokensPerSecond else { return fitLevel.label }
+        if let range = estimatedDecodeTokensPerSecondRange {
+            return String(format: "%@ · ~%.0f–%.0f tok/s (%@, uncalibrated MoE)",
+                          fitLevel.label, range.lowerBound, range.upperBound, speedLevel.label)
+        }
         return String(format: "%@ · ~%.0f tok/s (%@)", fitLevel.label, tps, speedLevel.label)
     }
 }
@@ -314,22 +323,21 @@ public extension Model {
         return (weightsGB * 0.95) / layers
     }
 
-    /// GQA-aware KV cache estimate in GB.
+    /// GQA-aware KV cache estimate in GB, per layer type when ``kvLayers`` is known.
     ///
     /// Modern models (Llama 3, Mistral, Qwen2) use grouped-query attention
     /// with fewer KV heads than query heads, reducing KV cache by 4-8x.
-    /// Formula: `2 * n_layers * n_kv_heads * head_dim * seq_len * bytes / 1 GB`
+    /// Formula: `2 * n_layers * n_kv_heads * head_dim * seq_len * bytes / 1 GB`.
+    /// With ``kvLayers``, only full-attention layers grow with `seq_len`; sliding
+    /// layers stop at their window and recurrent layers add a fixed state.
     ///
-    /// For MLX models (kvHeads == 0), returns a flat 0.15 GB estimate.
+    /// Without KV metadata (kvHeads == 0, e.g. older MLX entries), returns a flat 0.15 GB.
     func estimatedKVCacheGB(contextLength: Int) -> Double {
-        // MLX models use a flat estimate (managed differently at runtime)
         guard kvHeads > 0, headDim > 0 else {
             return 0.15
         }
-        // 2 (K+V) * layers * kv_heads * head_dim * seq_len * 2 bytes (fp16). Double, because these
-        // values can come from untrusted headers, where Int math would trap on overflow.
-        let bytes = 4 * Double(max(numLayers, 0)) * Double(kvHeads) * Double(headDim) * Double(max(contextLength, 0))
-        return bytes / 1_073_741_824  // to GB
+        let layout = kvLayers ?? KVCacheLayout(fullAttentionLayers: max(numLayers, 0))
+        return layout.cacheBytes(contextLength: contextLength, kvHeads: kvHeads, headDim: headDim) / 1_073_741_824
     }
 }
 
@@ -455,8 +463,11 @@ public enum HardwareAnalyzer {
     /// the window from the model's own GQA-aware KV cost and the memory left
     /// after weights, so each model gets the window it can actually afford.
     ///
+    /// Sliding-window and recurrent layers (``Model/kvLayers``) cost less per token than
+    /// full-attention ones, so a hybrid model earns a longer window than its layer count suggests.
+    ///
     /// Falls back to the platform tier when the catalog lacks KV metadata
-    /// (`kvHeads == 0`, e.g. MLX entries, which manage their cache differently).
+    /// (`kvHeads == 0`, e.g. MLX entries written before the checker filled it).
     ///
     /// Never exceeds ``Model/maxContextLength`` when the catalog declares one.
     ///
@@ -492,12 +503,20 @@ public enum HardwareAnalyzer {
         let freeForKV = available - weightsGB - reserveGB
         guard freeForKV > 0.05 else { return 1024 }
 
-        // estimatedKVCacheGB is linear in context length — derive the per-token cost.
-        let perTokenGB = model.estimatedKVCacheGB(contextLength: 4096) / 4096
-        guard perTokenGB > 0 else { return fallback }
-
-        let fits = Int(freeForKV / perTokenGB)
-        return max(1024, min((fits / 512) * 512, ceiling))
+        // Sliding and recurrent layers make the KV cost non-linear in the context, but it never shrinks as the
+        // context grows, so search the largest multiple of 512 that fits.
+        guard model.estimatedKVCacheGB(contextLength: 1024) <= freeForKV else { return 1024 }
+        var fitting = 2                       // 1024 tokens, in 512-token steps
+        var tooLarge = ceiling / 512 + 1
+        while tooLarge - fitting > 1 {
+            let middle = (fitting + tooLarge) / 2
+            if model.estimatedKVCacheGB(contextLength: middle * 512) <= freeForKV {
+                fitting = middle
+            } else {
+                tooLarge = middle
+            }
+        }
+        return fitting * 512
     }
 
     /// Assess a single model against the hardware profile.
@@ -544,14 +563,14 @@ public enum HardwareAnalyzer {
             }
         }
 
+        let decode = decodeTokensPerSecondRange(for: model, profile: profile)
         return ModelCompatibility(
             model: model,
             fitLevel: fitLevel,
             requiredMemoryGB: required,
             availableMemoryGB: available,
-            estimatedDecodeTokensPerSecond: estimatedDecodeTokensPerSecond(
-                for: model, profile: profile
-            )
+            estimatedDecodeTokensPerSecond: decode?.lowerBound,
+            estimatedDecodeTokensPerSecondRange: decode.flatMap { $0.lowerBound < $0.upperBound ? $0 : nil }
         )
     }
 
@@ -568,15 +587,32 @@ public enum HardwareAnalyzer {
     /// ~12.7, measured 12.12).
     ///
     /// Returns `nil` when bandwidth is unknown rather than inventing a number.
-    /// Conservative for MoE models — they stream only the active experts, so the
-    /// real speed is higher than this whole-weights estimate.
+    /// A mixture of experts reads only ``ExpertRouting/activeSizeMB`` per token,
+    /// and its estimate is the low end of ``decodeTokensPerSecondRange(for:profile:)``.
     static func estimatedDecodeTokensPerSecond(
         for model: Model,
         profile: HardwareProfile
     ) -> Double? {
+        decodeTokensPerSecondRange(for: model, profile: profile)?.lowerBound
+    }
+
+    /// Low end of an uncalibrated MoE range, as a fraction of its bandwidth bound. MLX MoE decode also pays
+    /// for routing, expert gathers and many small matmuls, which the bandwidth model ignores; no MoE has been
+    /// measured on this hardware yet, so this is a deliberately wide guess, not a fit.
+    static let uncalibratedMoEFloor = 0.5
+
+    /// Decode range: a single point for dense models (the bandwidth bound on the whole download); for a mixture
+    /// of experts, the bandwidth bound on the bytes a token reads, widened down by ``uncalibratedMoEFloor``.
+    static func decodeTokensPerSecondRange(
+        for model: Model,
+        profile: HardwareProfile
+    ) -> ClosedRange<Double>? {
         guard let bandwidth = profile.memoryBandwidthGBs else { return nil }
-        let weightsGB = Double(model.approximateSizeMB) / 1024.0
-        guard weightsGB > 0 else { return nil }
-        return (bandwidth * bandwidthEfficiency) / weightsGB
+        let active = model.experts.map(\.activeSizeMB).flatMap { $0 > 0 ? $0 : nil }
+        let streamedGB = Double(active ?? model.approximateSizeMB) / 1024.0
+        guard streamedGB > 0 else { return nil }
+        let bound = (bandwidth * bandwidthEfficiency) / streamedGB
+        guard active != nil else { return bound...bound }
+        return (bound * uncalibratedMoEFloor)...bound
     }
 }

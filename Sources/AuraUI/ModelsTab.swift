@@ -288,7 +288,12 @@ struct SpeedBadge: View {
     let compatibility: ModelCompatibility
 
     var body: some View {
-        if let tps = compatibility.estimatedDecodeTokensPerSecond {
+        if let range = compatibility.estimatedDecodeTokensPerSecondRange {
+            Text(String(format: "~%.0f–%.0f tok/s", range.lowerBound, range.upperBound))
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(speedColor)
+                .help("Mixture of experts: uncalibrated decode range on this device — \(compatibility.speedLevel.label)")
+        } else if let tps = compatibility.estimatedDecodeTokensPerSecond {
             Text(String(format: "~%.0f tok/s", tps))
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(speedColor)

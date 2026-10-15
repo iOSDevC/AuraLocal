@@ -236,6 +236,55 @@ let results = HardwareAnalyzer.compatibleModels(profile: profile)
 | `.streamingRequired` | Full load impossible, mmap streaming viable | ✅ |
 | `.tooLarge` | Exceeds even streaming budget | ❌ |
 
+### KV cache per layer type and mixtures of experts
+
+Two optional `models.json` objects refine the estimate. Entries without them keep the old math: every one of
+`numLayers` caches the whole context (`4 × kvHeads × headDim` bytes per token per layer), and an entry with
+`kvHeads` or `headDim` 0 gets a flat 0.15 GB.
+
+```json
+"kvLayers": {"fullAttentionLayers": 6, "slidingLayers": 0, "slidingWindow": 0, "recurrentLayers": 18, "recurrentStateBytes": 10100736},
+"experts": {"routedExperts": 256, "expertsPerToken": 8, "activeSizeMB": 1865}
+```
+
+- **`kvLayers`** (`KVCacheLayout`) mirrors the caches mlx-swift-lm 3.31.3 allocates in `newCache(parameters:)`:
+  full-attention layers grow with the context, sliding-window layers stop at `slidingWindow` tokens
+  (`RotatingKVCache`), and linear-attention / state-space layers hold a fixed `recurrentStateBytes` (`MambaCache`).
+  `estimatedKVCacheGB(contextLength:)` sums the three. Gemma 4 adds `fullAttentionKVHeads` / `fullAttentionHeadDim`
+  for its wider global layers.
+- **`experts`** (`ExpertRouting`) holds the MiB a decoded token reads: the non-expert tensors plus
+  `expertsPerToken / routedExperts` of the expert tensors (`.experts.`, `switch_mlp`, Granite's
+  `input_linear` / `output_linear`). Shared experts count as non-expert; vision towers and `mtp` heads are left out.
+  Memory fit still uses the whole download, because every expert stays resident.
+
+The checker derives `kvLayers` from `config.json` (the top level, else `text_config`):
+
+| Family (`model_type`) | Rule |
+|-----------------------|------|
+| `qwen3_next`, `qwen3_5`, `qwen3_5_moe`, `qwen3_5_text` | layer `i` is full attention when `(i + 1) % full_attention_interval == 0` (default 4), else Gated DeltaNet; `layer_types` is ignored, as the runtime ignores it |
+| `gemma3`, `gemma3_text` | global when `i % sliding_window_pattern == pattern - 1` (default 6), else sliding; missing heads take the runtime defaults (4 / 256 for `gemma3`, 1 / 256 for `gemma3_text`). `gemma4` / `gemma4_text` without `layer_types` use the same rule with default 5 |
+| `gemma3n`, `gemma4`, `gemma4_text`, `gpt_oss`, `olmo3`, `mistral3`, `afmoe` | `layer_types`; the last `num_kv_shared_layers` layers hold no cache (`gemma3n`, `gemma4*`) |
+| `exaone4` | `sliding_window_pattern` string: `L` is sliding |
+| `lfm2`, `lfm2_moe`, `lfm2_vl` | `full_attn_idxs` (else `layer_types`), the rest short convolutions |
+| `nemotron_h` | `hybrid_override_pattern`: `M` Mamba, `*` attention, others no cache |
+| anything else | `layer_types`, where `sliding_attention` counts as full (the runtime gives it a full cache) and `linear` / `mamba` / `conv` names are recurrent; else `full_attention_interval`; else every layer full |
+
+Recurrent states are sized at 2 bytes per element from `linear_*` keys (Gated DeltaNet), `mamba_*` keys (Mamba 2) or
+`conv_L_cache` × `hidden_size` (LFM2). A sliding layer with no plausible `sliding_window` counts as full. Families the
+table does not list (Jamba, Falcon H1, Baichuan M1, MiMo V2 Flash) are sized as every layer full attention,
+without the recurrent state some of them also keep.
+GGUF sizing still reads only the header, so it stays uniform; the `kvLayers` and `experts` objects come from MLX
+repos. The 256-token allocation step of `KVCacheSimple` is ignored.
+
+`HardwareAnalyzer.recommendedContextWindow(for:)` searches the largest multiple of 512 whose cache fits, so a
+sliding or hybrid model earns a longer window than its layer count suggests.
+
+**Decode range for a mixture of experts.** `ModelCompatibility.estimatedDecodeTokensPerSecondRange` (and
+`FitEstimate.tokensPerSecondRange`) is the bandwidth bound on `activeSizeMB` at its top and half of it at its bottom
+(`uncalibratedMoEFloor` in `HardwareAnalyzer.swift`): MLX MoE decode also pays for routing and expert gathers, and no MoE has been
+measured on this hardware yet. `estimatedDecodeTokensPerSecond` and `speedLevel` use the low end; `verdict` says
+"uncalibrated MoE". Dense models keep a single figure and a `nil` range.
+
 ---
 
 ## Finding compatible models
@@ -246,8 +295,9 @@ for any Hugging Face repo: will AuraLocal, with the runtimes it pins — **mlx-s
 
 It reads the repo listing (`/api/models/{id}?blobs=true`), `config.json`, `model.safetensors.index.json` and, with
 HTTP Range requests, the first 4 MiB of one GGUF file or the headers of the shipped safetensors files (when there is
-no index or it is stale; a `qwen3_5` vision repo's first shard when its `__metadata__` decides the verdict). Weights
-are never downloaded. Network errors, 401/403 and 404 come back as findings — the verdict is `unknown` when they hide
+no index or it is stale; a `qwen3_5` vision repo's first shard when its `__metadata__` decides the verdict; every
+loaded shard, up to 64, when `config.json` declares more than one routed expert, to size each tensor from its
+`data_offsets`). Weights are never downloaded. Network errors, 401/403 and 404 come back as findings — the verdict is `unknown` when they hide
 the repo listing, an MLX `config.json` or a GGUF architecture — and the checker never throws. Gated repos use the
 Hugging Face token saved in the Keychain (`download.huggingface`).
 
@@ -305,7 +355,11 @@ decides it. Any blocker means **Won't run**.
 unreadable headers, an ignored mmproj, trained contexts below 32768 tokens) but never block.
 
 Fit uses the existing `HardwareAnalyzer` math: weights + runtime overhead + a GQA-aware KV cache at 2048 tokens,
-with `kvHeads` / `headDim` from `config.json` or the GGUF header. Every GGUF quant gets its own fit. Sizes are
+with `kvHeads` / `headDim` from `config.json` or the GGUF header and, for MLX, the cache per layer type described in
+[KV cache per layer type and mixtures of experts](#kv-cache-per-layer-type-and-mixtures-of-experts). A `kv` finding
+reports the layer split when not every layer keeps the whole context, and a `moe` finding the bytes a token reads
+and the decode range. Suggested MLX entries carry `kvHeads`, `headDim`, `kvLayers` (omitted when every layer is full)
+and `experts`. Every GGUF quant gets its own fit. Sizes are
 binary: catalog `approximateSizeMB` is MiB, because `HardwareAnalyzer` divides it by 1024 to get GiB. Layer, KV-head
 and head-width values past 4096, 1024 and 8192 come from a corrupt or hostile file and count as unknown.
 
@@ -331,12 +385,21 @@ Verified on 2026-09-29 with `aura models check <repo> --device mac-32gb` (M1 Pro
 | `mlx-community/MiniCPM5-1B-4bit` | Runs | `model_type` `llama`; 0.57 GB — fits the iPhone 4 GB class |
 | `mlx-community/MiniCPM4.1-8B-4bit` | Runs | `minicpm`; its `longrope` carries the fields RoPEUtils needs |
 | `mlx-community/MiniCPM3-4B-4bit` | Won't run | `minicpm3` is not registered ("v3 uses a different architecture", MLXLLM README) |
-| `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | Runs, with caveats | `qwen3_5_moe`, Marginal · 18.8 of 20.0 GB; no license declared |
+| `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | Runs, with caveats | `qwen3_5_moe`, Marginal · 18.8 of 20.0 GB; no license declared (2026-10-14: 18.7 GB with the per-layer KV; decode ~41–82 tok/s, uncalibrated MoE range) |
 | `Qwen/Qwen2.5-7B-Instruct-GGUF` | Runs, with caveats | Q4_K_M and 6 other quants are split; Q2_K and Q3_K_M are single files |
 | `Qwen/Qwen3.8-Flash-Next` | Won't run | unconverted safetensors (335 GB); `qwen4_exp` is not registered |
 | `mlx-community/gemma-3-4b-it-qat-4bit` | Runs, with caveats | vision; its index names two shards the repo no longer ships, so the checker reads `model.safetensors` itself |
 | `mlx-community/gemma-3n-E4B-it-bf16` | Won't run | `gemma3n` is LLM-only here; `model.vision_tower` / `model.audio_tower` would be unhandled keys |
 | `mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ` | Won't run | an embedding model (`sentence-transformers` tags) despite `pipeline_tag: text-generation` |
+
+Re-checked on 2026-10-14 with the per-layer KV and the MoE estimate (`--device mac-32gb`):
+
+| Repository | KV layers | KV at 8192 tokens | Decode |
+|------------|-----------|-------------------|--------|
+| `ornith-ai/Ornith-1.5-35B-A3B-MLX-4bit` | 10 of 40 full, 30 Gated DeltaNet (31.4 MB state) | 191 MB (640 MB if every layer kept it) | ~41–82 tok/s, uncalibrated MoE range: a token reads ≈1.82 of 18.17 GB |
+| `mlx-community/Qwen3.5-2B-4bit` | 6 of 24 full, 18 Gated DeltaNet (9.6 MB state) | 106 MB (384 MB) | ~94 tok/s |
+| `mlx-community/gemma-3-12b-it-qat-4bit` | 8 of 48 full, 40 sliding (1024 tokens) | 832 MB (3072 MB) | ~20 tok/s |
+| `mlx-community/gemma-3-4b-it-4bit` | 5 of 34 full, 29 sliding (1024 tokens); heads from the runtime defaults | 276 MB (1088 MB) | ~47 tok/s |
 
 ### Device presets
 

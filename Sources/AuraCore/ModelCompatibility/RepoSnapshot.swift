@@ -123,13 +123,20 @@ public struct ModelConfigFacts: Sendable, Equatable {
     public let hasVisionConfig: Bool
     /// Multi-token-prediction layers (`mtp_num_hidden_layers` / `num_nextn_predict_layers`).
     public let mtpLayers: Int?
+    /// Full-attention, sliding-window and recurrent layers as the pinned runtime caches them.
+    public let kvLayers: KVCacheLayout?
+    /// `num_experts` / `num_local_experts` / `n_routed_experts`: routed experts per MoE layer.
+    public let routedExperts: Int?
+    /// `num_experts_per_tok`: experts each token is routed to.
+    public let expertsPerToken: Int?
 
     public init(modelType: String?, textModelType: String? = nil, architectures: [String] = [],
                 isMLXQuantized: Bool = false, quantizationBits: Int? = nil, foreignQuantMethod: String? = nil,
                 numLayers: Int? = nil, kvHeads: Int? = nil, headDim: Int? = nil, contextLength: Int? = nil,
                 ropeType: String? = nil, ropeKeys: [String] = [], ropeSource: String? = nil,
                 hasVisionConfig: Bool = false,
-                mtpLayers: Int? = nil) {
+                mtpLayers: Int? = nil, kvLayers: KVCacheLayout? = nil, routedExperts: Int? = nil,
+                expertsPerToken: Int? = nil) {
         self.modelType = modelType
         self.textModelType = textModelType
         self.architectures = architectures
@@ -145,18 +152,25 @@ public struct ModelConfigFacts: Sendable, Equatable {
         self.ropeSource = ropeSource
         self.hasVisionConfig = hasVisionConfig
         self.mtpLayers = mtpLayers
+        self.kvLayers = kvLayers
+        self.routedExperts = routedExperts
+        self.expertsPerToken = expertsPerToken
     }
+
+    /// Attention widths the pinned runtime assumes when `config.json` omits them (mlx-swift-lm 3.31.3:
+    /// MLXVLM Gemma3.swift `_kvHeads ?? 4`, `_headDim ?? 256`; MLXLLM Gemma3Text.swift `?? 1`, `?? 256`).
+    static let runtimeAttentionDefaults: [String: (kvHeads: Int, headDim: Int)] = [
+        "gemma3": (4, 256), "gemma3_text": (1, 256),
+    ]
 
     /// Decode `config.json` (JSON5 accepted, as mlx-swift-lm does). `nil` when it is not a JSON object.
     public static func parse(_ data: Data) -> ModelConfigFacts? {
         guard let root = try? JSONSerialization.jsonObject(with: data, options: [.json5Allowed]) as? [String: Any]
         else { return nil }
         let text = root["text_config"] as? [String: Any] ?? [:]
+        let values = ConfigValues(root: root)
         func int(_ keys: String...) -> Int? {
-            for key in keys {
-                if let value = (root[key] as? NSNumber) ?? (text[key] as? NSNumber) { return value.intValue }
-            }
-            return nil
+            keys.lazy.compactMap { values.int($0) }.first
         }
         let mlxQuant = root["quantization"] as? [String: Any]
         let quantConfig = root["quantization_config"] as? [String: Any]
@@ -166,22 +180,27 @@ public struct ModelConfigFacts: Sendable, Equatable {
         let heads = int("num_attention_heads", "n_head")
         let hidden = int("hidden_size", "n_embd")
         let derivedHeadDim = heads.flatMap { count in hidden.map { count > 0 ? $0 / count : 0 } }
+        let modelType = root["model_type"] as? String
+        let defaults = modelType.flatMap { runtimeAttentionDefaults[$0] }
         return ModelConfigFacts(
-            modelType: root["model_type"] as? String,
+            modelType: modelType,
             textModelType: text["model_type"] as? String,
             architectures: root["architectures"] as? [String] ?? [],
             isMLXQuantized: mlxQuant != nil || (quantConfig != nil && method == nil),
             quantizationBits: ((mlxQuant ?? quantConfig)?["bits"] as? NSNumber)?.intValue,
             foreignQuantMethod: method,
             numLayers: int("num_hidden_layers", "n_layer", "num_layers", "n_layers"),
-            kvHeads: int("num_key_value_heads") ?? heads,
-            headDim: int("head_dim") ?? derivedHeadDim,
+            kvHeads: int("num_key_value_heads") ?? heads ?? defaults?.kvHeads,
+            headDim: int("head_dim") ?? derivedHeadDim ?? defaults?.headDim,
             contextLength: int("max_position_embeddings", "n_positions", "seq_length", "max_sequence_length"),
             ropeType: (rope?["type"] as? String) ?? (rope?["rope_type"] as? String),
             ropeKeys: rope.map { $0.keys.sorted() } ?? [],
             ropeSource: ropeSource,
             hasVisionConfig: root["vision_config"] != nil,
-            mtpLayers: int("mtp_num_hidden_layers", "num_nextn_predict_layers"))
+            mtpLayers: int("mtp_num_hidden_layers", "num_nextn_predict_layers"),
+            kvLayers: KVCacheLayout.derive(modelType: modelType, config: values),
+            routedExperts: int("num_experts", "num_local_experts", "n_routed_experts", "moe_num_experts"),
+            expertsPerToken: int("num_experts_per_tok", "num_experts_per_token", "experts_per_token", "moe_topk"))
     }
 }
 
@@ -231,13 +250,15 @@ public struct RepoSnapshot: Sendable {
     /// Header of one GGUF file (``ggufSamplePath``) — all quants of a repo share it.
     public var ggufMetadata: GGUFHeader?
     public var ggufSamplePath: String?
+    /// Exact size of every weight tensor (from `data_offsets`), read only for a mixture of experts.
+    public var tensorBytes: [String: Int64]?
     public var problems: [FetchProblem]
 
     public init(repoID: String, listing: HFRepoInfo? = nil, configuration: ModelConfigFacts? = nil,
                 weightMap: [String: String]? = nil, singleFileHeader: SafetensorsHeader? = nil,
                 weightMetadata: [String: String]? = nil,
                 extraTensorCounts: [String: Int] = [:], ggufMetadata: GGUFHeader? = nil,
-                ggufSamplePath: String? = nil, problems: [FetchProblem] = []) {
+                ggufSamplePath: String? = nil, tensorBytes: [String: Int64]? = nil, problems: [FetchProblem] = []) {
         self.repoID = repoID
         self.listing = listing
         self.configuration = configuration
@@ -247,6 +268,7 @@ public struct RepoSnapshot: Sendable {
         self.extraTensorCounts = extraTensorCounts
         self.ggufMetadata = ggufMetadata
         self.ggufSamplePath = ggufSamplePath
+        self.tensorBytes = tensorBytes
         self.problems = problems
     }
 
@@ -266,6 +288,12 @@ public struct RepoSnapshot: Sendable {
     /// The weight map, unless it is absent or stale.
     public var liveWeightMap: [String: String]? {
         isWeightMapStale ? nil : weightMap
+    }
+
+    /// The safetensors files mlx-swift-lm loads: the live weight map's files, else every top-level one.
+    public var loadedSafetensorsPaths: [String] {
+        if let liveWeightMap { return Set(liveWeightMap.values).sorted() }
+        return (listing?.files ?? []).filter { $0.isSafetensors && $0.isTopLevel }.map(\.path)
     }
 
     /// Decode `model.safetensors.index.json` into its weight map.
