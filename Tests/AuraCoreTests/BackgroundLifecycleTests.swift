@@ -9,6 +9,9 @@ final class SlowFakeBackend: InferenceBackend {
     private(set) var producedTokens = 0
     private(set) var isGenerating = false
     private(set) var lastGenerationStats: GenerationStats?
+    private(set) var lastContextOverflow: ContextWindowOverflow?
+    /// Reported as ``lastContextOverflow`` by every generation that runs.
+    var overflowToReport: ContextWindowOverflow?
 
     func load(onProgress: @escaping @MainActor (String) -> Void) async throws {
         isLoaded = true
@@ -29,6 +32,7 @@ final class SlowFakeBackend: InferenceBackend {
         lastGenerationStats = GenerationStats(backend: .llamaCpp, source: .measured, promptTokens: 1,
                                               generatedTokens: producedTokens, promptTime: 0, timeToFirstToken: 0,
                                               decodeTime: 0)
+        lastContextOverflow = overflowToReport
         return text
     }
 
@@ -119,6 +123,23 @@ final class BackgroundLifecycleTests: XCTestCase {
         XCTAssertThrowsError(try result.get()) { XCTAssertTrue($0 is GenerationInterrupted, "\($0)") }
         XCTAssertNotNil(backend.lastGenerationStats, "the backend returned normally after the cancel")
         XCTAssertNil(engine.lastGenerationStats, "an interrupted call must not report the cut-off decode as finished")
+    }
+
+    func testRefusedGenerationLeavesNoContextOverflow() async throws {
+        let lifecycle = makeLifecycle()
+        let backend = SlowFakeBackend()
+        backend.overflowToReport = ContextWindowOverflow.detect(promptTokens: 1900, generatedTokens: 300,
+                                                                windowSize: 2048)
+        let engine = AuraEngine(model: model, backend: backend, lifecycle: lifecycle)
+        try await engine.load { _ in }
+        _ = try await engine.generate(prompt: "x", maxTokens: 2) { _ in }
+        XCTAssertNotNil(engine.lastContextOverflow)
+
+        notifications.post(name: background, object: nil)
+        _ = try? await engine.generate(prompt: "x", maxTokens: 4) { _ in }
+
+        XCTAssertNotNil(backend.lastContextOverflow, "the backend still holds the previous call's value")
+        XCTAssertNil(engine.lastContextOverflow)
     }
 
     func testGenerationIsRefusedInTheBackgroundAndAllowedAfterReturning() async throws {

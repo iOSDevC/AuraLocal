@@ -155,7 +155,7 @@ var lastGenerationStats: GenerationStats? { get }  // the last generation that r
 var deviceGuard: DeviceConditions?
 
 // Set when the last generation outgrew the MLX KV window (which drops old tokens silently);
-// nil when it fit or the model does not run on MLX.
+// nil when it fit, the model does not run on MLX, or the last generation threw.
 var lastContextOverflow: ContextWindowOverflow? { get }
 ```
 

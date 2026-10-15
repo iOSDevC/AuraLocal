@@ -54,10 +54,8 @@ public final class AuraLocal {
     }
 
     /// Set when the last generation outgrew the MLX KV window, which drops the oldest context without an error.
-    /// `nil` when it fit or the model does not run on MLX.
-    public var lastContextOverflow: ContextWindowOverflow? {
-        engine.backend.lastContextOverflow
-    }
+    /// `nil` when it fit, the model does not run on MLX, or the last generation threw.
+    public var lastContextOverflow: ContextWindowOverflow? { engine.lastContextOverflow }
 
     // MARK: - Init
 
@@ -67,6 +65,12 @@ public final class AuraLocal {
     init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = []) {
         self.model = model
         self.engine = AuraEngine(model: model, temperature: temperature, tools: tools)
+    }
+
+    /// An instance around a prepared engine (tests).
+    init(engine: AuraEngine) {
+        self.model = engine.model
+        self.engine = engine
     }
     
     // MARK: - Factory methods

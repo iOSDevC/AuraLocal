@@ -230,6 +230,13 @@ public actor ConversationStore {
     /// Delete a single turn.
     public func deleteTurn(id: UUID) throws {
         try ensureOpen()
+        try exec(
+            """
+            UPDATE conversations SET turn_count = MAX(turn_count - 1, 0)
+            WHERE id = (SELECT conversation_id FROM turns WHERE id = ?);
+            """,
+            bindings: [id.uuidString]
+        )
         try exec("DELETE FROM turns WHERE id = ?;", bindings: [id.uuidString])
     }
     

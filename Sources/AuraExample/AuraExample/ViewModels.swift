@@ -89,9 +89,14 @@ final class TextChatViewModel: ObservableObject {
             try? await llm.summarizeAndPrune(conversationID: convID, store: store)
             
         } catch {
+            // The stream already showed this text, and the store saved it as the reply; keep it on screen.
+            if let stop = error as? GenerationInterrupted, !stop.partialText.isEmpty {
+                messages.append(ChatMessage(id: UUID(), role: .assistant, text: stop.partialText))
+            }
+            streamingText = ""
             messages.append(ChatMessage(id: UUID(), role: .assistant, text: "❌ \(error.localizedDescription)"))
         }
-        
+
         isStreaming = false
         progress = ""
     }

@@ -24,6 +24,8 @@ final class AuraEngine {
     /// Copied from the backend when a call returns and cleared when one starts, so a call that throws before
     /// decoding cannot leave the previous call's numbers behind.
     private(set) var lastGenerationStats: GenerationStats?
+    /// Kept the same way as ``lastGenerationStats``.
+    private(set) var lastContextOverflow: ContextWindowOverflow?
     let appLifecycle: BackgroundLifecycle
     /// Opt-in guard checked before and during every generation; `nil` is off.
     var deviceGuard: DeviceConditions?
@@ -118,8 +120,10 @@ final class AuraEngine {
         _ body: @escaping @MainActor (_ onToken: @escaping @MainActor (String) -> Void) async throws -> String
     ) async throws -> String {
         lastGenerationStats = nil
+        lastContextOverflow = nil
         let reply = try await supervised(onToken: onToken, body)
         lastGenerationStats = backend.lastGenerationStats
+        lastContextOverflow = backend.lastContextOverflow
         return reply
     }
 

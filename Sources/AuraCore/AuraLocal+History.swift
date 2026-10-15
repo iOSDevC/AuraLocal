@@ -17,6 +17,9 @@ public extension AuraLocal {
     /// - Streams the response, finalizing the assistant turn when done.
     /// - Returns the complete assistant reply.
     ///
+    /// When inference throws, the transcript stays one assistant turn per user turn: a ``GenerationInterrupted``
+    /// with text is saved as the assistant turn, and any other failure removes the user turn again.
+    ///
     /// ```swift
     /// let llm   = try await AuraLocal.text(.qwen3_1_7b)
     /// let conv  = try await ConversationStore.shared.createConversation(model: .qwen3_1_7b)
@@ -46,7 +49,7 @@ public extension AuraLocal {
         }
 
         // Persist the user turn
-        try await store.appendTurn(Turn(
+        let userTurn = try await store.appendTurn(Turn(
             conversationID: conversationID,
             role: .user,
             content: prompt
@@ -62,7 +65,13 @@ public extension AuraLocal {
         }
 
         // Run inference with the full context
-        let reply = try await chatWithMessages(messages, maxTokens: maxTokens)
+        let reply: String
+        do {
+            reply = try await chatWithMessages(messages, maxTokens: maxTokens)
+        } catch {
+            await Self.settleFailedTurn(userTurn, error: error, store: store)
+            throw error
+        }
 
         // Persist the assistant reply
         try await store.appendTurn(Turn(
@@ -76,7 +85,8 @@ public extension AuraLocal {
 
     /// Stream tokens within a persistent conversation.
     ///
-    /// The assistant turn is persisted when the stream finishes successfully.
+    /// The assistant turn is persisted when the stream finishes successfully. When it finishes with an error, the
+    /// transcript is settled as in ``chat(_:in:systemPrompt:maxTokens:maxContextTokens:store:)``.
     ///
     /// ```swift
     /// for try await token in llm.stream("Tell me more", in: conv.id) {
@@ -108,7 +118,7 @@ public extension AuraLocal {
                     }
 
                     // Persist user turn
-                    try await store.appendTurn(Turn(
+                    let userTurn = try await store.appendTurn(Turn(
                         conversationID: conversationID,
                         role: .user,
                         content: prompt
@@ -129,16 +139,21 @@ public extension AuraLocal {
                     var fullReply = ""
                     var lastLength = 0
 
-                    _ = try await engine.generate(
-                        messages: messages,
-                        maxTokens: maxTokens
-                    ) { @MainActor partial in
-                        let newText = String(partial.dropFirst(lastLength))
-                        lastLength = partial.count
-                        if !newText.isEmpty {
-                            fullReply += newText
-                            continuation.yield(newText)
+                    do {
+                        _ = try await engine.generate(
+                            messages: messages,
+                            maxTokens: maxTokens
+                        ) { @MainActor partial in
+                            let newText = String(partial.dropFirst(lastLength))
+                            lastLength = partial.count
+                            if !newText.isEmpty {
+                                fullReply += newText
+                                continuation.yield(newText)
+                            }
                         }
+                    } catch {
+                        await Self.settleFailedTurn(userTurn, error: error, store: store)
+                        throw error
                     }
 
                     // Persist completed assistant turn
@@ -239,7 +254,21 @@ public extension AuraLocal {
         )
     }
 
-    // MARK: - Internal helper
+    // MARK: - Internal helpers
+
+    /// Keeps the transcript one assistant turn per user turn after a failed generation. Store errors are dropped:
+    /// the caller is already throwing the generation's error.
+    private static func settleFailedTurn(_ userTurn: Turn, error: any Error, store: ConversationStore) async {
+        if let stop = error as? GenerationInterrupted, !stop.partialText.isEmpty {
+            _ = try? await store.appendTurn(Turn(
+                conversationID: userTurn.conversationID,
+                role: .assistant,
+                content: stop.partialText
+            ))
+        } else {
+            try? await store.deleteTurn(id: userTurn.id)
+        }
+    }
 
     /// Run inference with a pre-built messages array (used by history methods).
     /// Forwards the full multi-turn context to the engine so the LLM sees
