@@ -52,7 +52,9 @@ static let shared: DocumentLibrary
 ```swift
 // Actor-isolated, so call with await. visionLLM is needed to index image files.
 func configure(embeddingProvider: any EmbeddingProvider, llm: AuraLocal, visionLLM: AuraLocal? = nil)
-func open() async throws   // also removes duplicate entries earlier versions stored for one file, keeping the newest with chunks
+// open() also removes duplicate entries earlier versions stored for one file (keeping the newest with chunks),
+// and replaces their full-text triggers, rebuilding the search index once
+func open() async throws
 func close() async
 ```
 

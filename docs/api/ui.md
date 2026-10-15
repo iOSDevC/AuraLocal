@@ -81,7 +81,8 @@ Fit level badges show device compatibility (label and SF Symbol from `ModelFitLe
 | Streaming | `arrow.down.circle.fill` | purple | Layer-streaming required |
 | Too Large | `xmark.octagon.fill` | red | Not runnable on this device; the row is dimmed |
 
-A speed badge (`~N tok/s`) follows when the chip's memory bandwidth is known; it is omitted otherwise.
+A speed badge follows when the chip's memory bandwidth is known: `~N tok/s`, or `~N–M tok/s` for a mixture of
+experts (an uncalibrated range). It is omitted otherwise, including on iPhone, where AuraLocal knows no bandwidth.
 
 ---
 

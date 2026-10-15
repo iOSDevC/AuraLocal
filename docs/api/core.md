@@ -43,6 +43,10 @@ static func specialized(
 ) async throws -> AuraLocal
 ```
 
+The factories download MLX weights on first use but not GGUF files: an uncached GGUF throws *GGUF file not
+found*. They also skip `ModelManager`'s cache and memory guard. Use `ModelManager.shared.load(_:)`, which
+downloads, caches and applies the guard, or fetch the file first with [`ModelDownloads`](#modeldownloads).
+
 ### One-Liners
 
 ```swift
@@ -95,6 +99,8 @@ func chat(_ prompt: String, in conversationID: UUID, systemPrompt: String? = nil
           maxContextTokens: Int = 3072, store: ConversationStore = .shared) async throws -> String
 func stream(_ prompt: String, in conversationID: UUID, systemPrompt: String? = nil, maxTokens: Int = 1024,
             maxContextTokens: Int = 3072, store: ConversationStore = .shared) -> AsyncThrowingStream<String, Error>
+// Stopping iteration does not cancel this stream's generation: it runs to the end and the reply is stored.
+// stream(_:systemPrompt:maxTokens:constraint:) cancels its decode when the consumer stops.
 ```
 
 ### Constrained Generation
@@ -155,7 +161,9 @@ var lastGenerationStats: GenerationStats? { get }  // the last generation that r
 var deviceGuard: DeviceConditions?
 
 // Set when the last generation outgrew the MLX KV window (which drops old tokens silently);
-// nil when it fit, the model does not run on MLX, or the last generation threw.
+// nil when it fit, the model does not run on MLX, its architecture ignores the window (for example
+// Qwen3.5 text, Gemma 3/4 and LFM2 keep their own caches, so nothing was dropped),
+// or the last generation threw.
 var lastContextOverflow: ContextWindowOverflow? { get }
 ```
 
@@ -202,7 +210,9 @@ public struct GenerationStats: Sendable, Hashable {
 LocalLLMClient 0.5.0 exposes no tokenizer or prompt count, so llama.cpp prompt counts stay estimates. A constrained
 call's clock starts after its dedicated client loads. `InferenceBackend` gained `var lastGenerationStats:
 GenerationStats? { get }` and `var lastContextOverflow: ContextWindowOverflow? { get }`, both with a public
-protocol-extension default of `nil`, so existing conformers still compile.
+protocol-extension default of `nil`. It also requires `generate(prompt:systemPrompt:maxTokens:constraint:onToken:)`
+with no default, so a conformer written before constrained generation must add it; throwing
+`GenerationConstraintError.unsupportedBackend` is enough. No public API accepts a custom backend.
 
 Loaded state is queried on `ModelManager`, not on `AuraLocal`:
 
@@ -235,6 +245,12 @@ func load(
 ) async throws -> AuraLocal
 ```
 
+Before downloading, `load` throws `AuraError.modelTooLarge` when `HardwareAnalyzer` rates the model
+`.tooLarge` on its own. It keeps at most `memoryBudget` models loaded and evicts the least recently used
+to make room. On iOS, where `HardwareProfile.current()` reports the app's memory limit, it also evicts
+least-recently-used models until the new one is no longer `.tooLarge` beside the ones that stay
+([Memory Management]({{ '/guide/memory' | relative_url }})).
+
 {: .warning }
 > `tools` reach only the llama.cpp backends (GGUF models). For an MLX model they are dropped without
 > an error, and the model answers without calling them.
@@ -252,8 +268,13 @@ public enum ModelLoadState: Equatable {
     case loading
     case ready
     case failed(String)
+
+    var isActive: Bool { get }           // .downloading or .loading
 }
 ```
+
+`ModelLoadingOverlay(model:)` is a SwiftUI view that shows a spinner and the progress text while that
+model's state `isActive`, and nothing otherwise.
 
 ### Backend Query
 
@@ -276,6 +297,9 @@ public enum BackendKind: String, Sendable {
 ```swift
 func evict(_ model: Model)
 func evictAll()
+func evictAllButMostRecent()             // also runs on memory pressure or a memory warning
+func release(_ instance: AuraLocal)      // unloads one instance; drops the cache entry only if it is the shared one
+private(set) var memoryBudget: Int       // max models kept loaded (1–4), sized once from available memory
 ```
 
 ### GGUF Download Progress
@@ -283,6 +307,12 @@ func evictAll()
 ```swift
 // Detailed download progress for GGUF models
 let ggufDownloader: GGUFModelDownloader
+
+func cancelLoad(_ model: Model)          // also cancels the GGUF download
+func pauseDownload()
+func resumeDownload()
+var isDownloadPaused: Bool { get }
+var isDownloading: Bool { get }          // false while paused
 
 // GGUFModelDownloader published properties (read-only):
 @Published private(set) var progress: Double           // 0.0–1.0
@@ -318,9 +348,23 @@ func deleteConversation(id: UUID) async throws
 ### Messages
 
 ```swift
-func turns(for conversationID: UUID) async throws -> [Turn]
+init(directory: URL? = nil)                   // nil = Application Support/AuraLocal/conversations.sqlite
+func open() async throws                      // also runs on first use
+func close() async
+@discardableResult func appendTurn(_ turn: Turn) async throws -> Turn
+func deleteTurn(id: UUID) async throws
+func turns(for conversationID: UUID) async throws -> [Turn]   // oldest first; insertion order within one millisecond
+func contextWindow(for conversationID: UUID, maxTokens: Int = 2048) async throws -> [Turn]  // system turns + newest that fit
+func pruneAndSummarize(conversationID: UUID, keepLastN: Int = 10, summary: String) async throws
+func stats(for conversationID: UUID) async throws -> ConversationStats  // turnCount, totalTokenEstimate, oldestTurn, newestTurn
 func search(_ query: String, limit: Int = 20) async throws -> [Turn]
+func searchAgentMemory(_ query: String, limit: Int = 8) async throws -> [Turn]   // "AgentCrew:" conversations only
 ```
+
+{: .warning }
+> `search` and `searchAgentMemory` can return the wrong turn, or throw, after turns were deleted
+> (`deleteTurn`, `deleteConversation`, `pruneAndSummarize`, or a failed `chat(_:in:)` / `stream(_:in:)`
+> that removes its prompt turn): the full-text index does not follow deletes.
 
 ### Types
 
@@ -341,6 +385,9 @@ public struct Turn: Identifiable, Codable, Sendable, Equatable {
     let content: String
     let createdAt: Date
     let tokenEstimate: Int
+
+    init(id: UUID = UUID(), conversationID: UUID, role: Role, content: String,
+         createdAt: Date = Date(), tokenEstimate: Int? = nil)   // nil = about 4 characters per token
 
     public enum Role: String, Codable, Sendable { case system, user, assistant }
 }
@@ -404,9 +451,10 @@ common profiles.
 
 With `outputSchema` set, `AuraSession` enforces the schema by **validation and repair**, not
 constrained decoding, so the model can still write anything and the session checks what comes
-back. The pinned llama.cpp client accepts a GBNF grammar only when a context is created, and
-`ModelManager` caches one instance per model; AuraLocal has no JSON-Schema-to-GBNF converter, and
-MLX exposes only a raw `LogitProcessor` hook.
+back. AuraLocal has no JSON-Schema-to-GBNF converter, MLX exposes only a raw `LogitProcessor` hook,
+and the `AuraProfileEngine` a session drives takes no constraint. On a GGUF model,
+`AuraLocal.chat(_:constraint: .json)` (see [Constrained Generation](#constrained-generation)) guarantees
+JSON syntax, but not your schema.
 
 1. `init` and `switchProfile` compile the schema before building an engine. A schema that does not
    compile throws `OutputSchemaError` and leaves the current profile and engine untouched. A
@@ -680,7 +728,8 @@ Face model search; `tag:` (`"mlx"`, `"gguf"`, …) filters on the server.
 
 A device to judge against: this one, measured now, or a fixed class of iPhone or Mac. `budgetGB`
 is the memory an app may fill with weights and KV cache. Only `thisDevice()` and `mac32GB` are
-measured; every other budget is an estimate and says so in `source`.
+measured (on iOS, `thisDevice()` falls back to an estimate of 60% of RAM when iOS reports its memory
+limit as unknown); every other budget is an estimate and says so in `source`.
 
 ```swift
 public struct DevicePreset: Sendable, Hashable, Identifiable {
@@ -731,6 +780,10 @@ static var mlxModels: [Model]
 static var ggufModels: [Model]
 static var runnableModels: [Model]     // filtered by HardwareAnalyzer
 
+// Unavailable (a compile error that gives the reason): the catalog was checked against Hugging Face
+// and these repos hold no loadable weights or do not exist:
+// graniteVision_3_3, granite4_compact, gemma4_1b, gemma4_4b, lfm25_3_2b, ministral_3b
+
 // Metadata
 var displayName: String
 var approximateSizeMB: Int
@@ -740,6 +793,9 @@ var ggufFilename: String?              // nil for MLX models
 var isMacOSRecommended: Bool          // true for models ≥15 GB
 var isDownloaded: Bool
 var cacheDirectory: URL
+var kvLayers: KVCacheLayout?           // cache per layer type (sliding, recurrent); nil = all full attention
+var experts: ExpertRouting?            // mixture of experts: routedExperts, expertsPerToken, activeSizeMB; nil = dense
+var maxContextLength: Int?             // a ceiling the weights impose below the memory budget; nil = none
 ```
 
 ### ModelRegistry
@@ -758,6 +814,53 @@ func register(_ model: Model)                         // adds, or replaces the m
 func refreshFromRemote(url: URL) async throws
 func loadCachedRemote(maxAge: TimeInterval = 86_400)
 ```
+
+### ModelDownloads
+
+Downloads a model to the exact path its backend loads from, without loading it. Each file arrives in
+`Range` chunks appended to `<file>.partial`, which survives a cancel, a network cut or a relaunch; a
+partial whose ETag no longer matches restarts from zero, and a file moves into place only when its size
+matches. Guide: [Downloading without loading]({{ '/guide/models' | relative_url }}#downloading-without-loading).
+
+```swift
+public enum ModelDownloads {
+    static func plan(for model: Model, auth: any DownloadAuthorizing = KeychainDownloadAuth()) async throws -> DownloadPlan
+    // Resumes <file>.partial; returns the GGUF file or the MLX snapshot folder. progress: (bytes on disk, total)
+    static func download(_ model: Model, auth: any DownloadAuthorizing = KeychainDownloadAuth(),
+                         progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL
+    static func delete(_ model: Model) throws               // finished and partial files; evict the model first
+    static func bytesOnDisk(for model: Model) -> Int64
+    static func availableDiskBytes() -> Int64?              // download needs the remaining bytes + 20%
+
+    // One folder of a repo at a pinned revision (e.g. a Core ML pipeline); sends no token by default
+    static func downloadFolder(repoID: String, revision: String, folder: String, include: [String],
+                               auth: any DownloadAuthorizing = NoDownloadAuth(),
+                               progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL
+    static func planFolder(repoID: String, revision: String, folder: String, include: [String],
+                           auth: any DownloadAuthorizing = NoDownloadAuth()) async throws -> DownloadPlan
+    static func localFolder(repoID: String, folder: String) -> URL
+    static func isFolderComplete(repoID: String, folder: String, revision: String) -> Bool
+    static func deleteRepo(_ repoID: String) throws
+}
+
+public struct DownloadPlan: Sendable, Equatable {
+    let repoID: String
+    let files: [PlannedFile]          // path, sizeBytes
+    let totalBytes: Int64
+    let bytesOnDisk: Int64            // finished files plus .partial bytes
+    var remainingBytes: Int64
+}
+
+public enum ModelDownloadError: LocalizedError, Equatable, Sendable {
+    case unauthorized(repoID: String), notFound(repoID: String, path: String), notFoundOrPrivate(repoID: String)
+    case insufficientSpace(neededBytes: Int64, availableBytes: Int64), http(status: Int)
+    case incompleteRepo(repoID: String), sizeMismatch(path: String, expected: Int64, actual: Int64), unsupported(String)
+}
+```
+
+Only single-file GGUF quants at the top level of a repo download; a split or subfolder quant, or a model
+backed by a local file, throws `.unsupported`. `DownloadedModels.scan()`, `scanSnapshots()` and
+`partialFiles()` list the GGUF files, MLX snapshots and `.partial` files on disk.
 
 ### DownloadRecords
 
@@ -994,7 +1097,8 @@ See the [Hybrid Inference guide]({{ '/guide/hybrid' | relative_url }}) for the f
 ```swift
 @MainActor
 public enum LocalProviderDetector {
-    // Probe Ollama (:11434) and llama-server (:8080/v1). Never throws.
+    // By default probes Ollama (http://localhost:11434) and llama-server (http://127.0.0.1:8080/v1)
+    // on this machine; pass LocalProviderEndpoint(kind:baseURL:) for another host. Never throws.
     static func detectAll(
         endpoints: [LocalProviderEndpoint] = LocalProviderEndpoint.defaults,
         timeout: TimeInterval = 2.0
@@ -1045,7 +1149,8 @@ public final class HybridEscalator {
         onToken: @escaping @MainActor (String) -> Void = { _ in }
     ) async throws -> Result
 
-    // Your llama-server (preferred) or Ollama, with its largest-context model; nil if none runs.
+    // A llama-server (preferred) or Ollama on this machine (LocalProviderEndpoint.defaults), with its
+    // largest-context model; nil if none runs. Nothing scans the network.
     // Skips models with runsLocally == false (Ollama cloud models forward prompts off the machine).
     static func bestLocalTarget() async -> RemoteTarget?
     // BYOK targets from the Keychain: "cloud.anthropic", then "cloud.openai". [] when !allowCloud.
@@ -1054,7 +1159,7 @@ public final class HybridEscalator {
         anthropicModel: String = RemoteTarget.defaultAnthropicModel,   // "claude-sonnet-4-5"
         openAIModel: String = RemoteTarget.defaultOpenAIModel          // "gpt-4o"
     ) -> [RemoteTarget]
-    // The LAN box first, then cloudTargets(allowCloud: policy.allowCloud).
+    // bestLocalTarget() first, then cloudTargets(allowCloud: policy.allowCloud).
     static func candidateTargets(policy: EscalationPolicy) async -> [RemoteTarget]
 
     public struct Result: Sendable {
@@ -1201,13 +1306,16 @@ A `baseURL` host that is loopback, private (RFC 1918, IPv6 ULA), link-local, `lo
 // BYOK API keys — Keychain only (WhenUnlockedThisDeviceOnly, never iCloud-synced).
 // Accounts read by AuraLocal: "cloud.anthropic" · "cloud.openai" · "download.huggingface"
 // (Hugging Face token for gated repos, KeychainDownloadAuth.huggingFaceAccount; also used by
-// ModelCompatibilityChecker). "cloud.github-models" is no longer read (GitHub Models was retired).
+// ModelCompatibilityChecker) · "download.<host>" (bearer token for any other download host).
+// "cloud.github-models" is no longer read (GitHub Models was retired).
 public enum KeychainStore {
     static func save(_ key: String, for account: String) throws
     static func read(for account: String) -> String?
     static func delete(for account: String)
     static func hasKey(for account: String) -> Bool
 }
+// KeychainDownloadAuth.saveHuggingFaceToken(_:) (trims; throws on empty), .deleteHuggingFaceToken(),
+// .hasHuggingFaceToken
 
 // USD per 1M tokens.
 public struct TokenPrice: Sendable, Hashable {

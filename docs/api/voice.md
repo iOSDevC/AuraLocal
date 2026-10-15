@@ -74,6 +74,11 @@ func cancel()        // also stops recording; same effect on TTS as interrupt()
 > end, its later sentences are still queued and spoken, and the assistant turn is saved to the
 > conversation.
 
+On iOS, moving the app to the background stops the reply: the session ends in `.error` with the
+`GenerationInterrupted` message ("Generation stopped because the app moved to the background."), and the
+text generated so far is stored as the assistant turn; with none yet, the prompt turn is removed
+([Background Lifecycle]({{ '/guide/memory' | relative_url }}#background-lifecycle-ios)).
+
 ### Config
 
 ```swift
@@ -116,8 +121,8 @@ Full voice chat UI — transcript bubble, response bubble, and `VoiceButton`.
 // New conversation (created in ConversationStore.shared on the first utterance)
 VoiceChatView(llm: llm)
 
-// Continue an existing conversation
-VoiceChatView(llm: llm, conversationID: conv.id)
+// Continue an existing conversation, with a custom config
+VoiceChatView(llm: llm, conversationID: conv.id, config: config)
 ```
 
 ### VoiceTab
