@@ -555,17 +555,20 @@ public enum HardwareAnalyzer {
         )
     }
 
-    /// Fraction of spec memory bandwidth llama.cpp actually achieves.
-    /// Measured on an M1 Pro (200 GB/s spec): 12.1 tok/s for 11.78 GB of weights
-    /// ⇒ ~143 GB/s effective. Consistent with published Apple Silicon benchmarks.
-    static let bandwidthEfficiency = 0.75
-
-    /// First-order decode-speed estimate.
+    /// Share of spec bandwidth the weight stream gets. Weights are GiB and bandwidth decimal GB/s, so this
+    /// also absorbs the 1.074 GiB/GB ratio.
     ///
-    /// Decode is memory-bound, not compute-bound: each token streams the whole
-    /// weight set through the memory bus once, so `tok/s ≈ bandwidth / weights`.
-    /// Validated against a measured point (M1 Pro, Llama-3.1-8B Q8: predicts
-    /// ~12.7, measured 12.12).
+    /// Fitted with ``perTokenOverhead`` (least squares on log tok/s) to the M1 and M2 rows of llama.cpp
+    /// discussion #4167 (LLaMA 2 7B F16/Q8_0/Q4_0, build 8e672ef); its M3 and M4 rows are held out.
+    /// `EstimatorAccuracyTests` gates both against measured points.
+    static let bandwidthEfficiency = 0.865
+
+    /// Seconds per token that do not shrink with bandwidth: kernel dispatch and synchronization. A bandwidth-only
+    /// model reads them as low efficiency and overestimates Max and Ultra chips (M2 Ultra Q4_0: 169 vs 94 tok/s).
+    static let perTokenOverhead: TimeInterval = 0.0066
+
+    /// First-order decode-speed estimate: each token streams the whole weight set through the memory bus once,
+    /// plus a fixed per-token cost, so `tok/s ≈ 1 / (weights / (bandwidth × efficiency) + overhead)`.
     ///
     /// Returns `nil` when bandwidth is unknown rather than inventing a number.
     /// Conservative for MoE models — they stream only the active experts, so the
@@ -574,9 +577,9 @@ public enum HardwareAnalyzer {
         for model: Model,
         profile: HardwareProfile
     ) -> Double? {
-        guard let bandwidth = profile.memoryBandwidthGBs else { return nil }
+        guard let bandwidth = profile.memoryBandwidthGBs, bandwidth > 0 else { return nil }
         let weightsGB = Double(model.approximateSizeMB) / 1024.0
         guard weightsGB > 0 else { return nil }
-        return (bandwidth * bandwidthEfficiency) / weightsGB
+        return 1 / (weightsGB / (bandwidth * bandwidthEfficiency) + perTokenOverhead)
     }
 }

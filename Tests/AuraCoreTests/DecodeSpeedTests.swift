@@ -3,7 +3,7 @@ import XCTest
 
 /// "Does it fit?" was only half the question. A model can sit comfortably in RAM and
 /// still take minutes per answer — reporting that as `.excellent` is worse than useless.
-/// These lock the wall-clock half: decode is memory-bound, so tok/s ≈ bandwidth ÷ weights.
+/// These lock the wall-clock half: decode is memory-bound, so tok/s falls as weights grow and rises with bandwidth.
 final class DecodeSpeedTests: XCTestCase {
 
     /// Chips we have no bandwidth figure for (iOS, future silicon) must say "unknown",
@@ -12,16 +12,7 @@ final class DecodeSpeedTests: XCTestCase {
         totalMemoryGB: 32, availableMemoryGB: 13, deviceName: "Mystery", memoryBandwidthGBs: nil
     )
 
-    // MARK: - The anchor
-
-    /// The efficiency constant is not a vibe: it is fitted to the one point we actually
-    /// measured with llama-bench on this machine. If someone edits it, this fails.
-    func testEstimateMatchesTheLlamaBenchMeasurement() {
-        // M1 Pro, 200 GB/s spec, 11.78 GB of weights → 12.12 tok/s measured.
-        let predicted = (200.0 * HardwareAnalyzer.bandwidthEfficiency) / 11.78
-        XCTAssertEqual(predicted, 12.12, accuracy: 2.0,
-            "efficiency constant must keep tracking the measured llama-bench point")
-    }
+    // Accuracy against measured points is gated in EstimatorAccuracyTests.
 
     #if os(macOS)
     /// The table must actually resolve this Mac's chip — an undetected chip degrades

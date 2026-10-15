@@ -12,13 +12,50 @@ description: "AuraLocal performance benchmarks — tokens per second, RAM usage,
 Illustrative performance figures for on-device LLM inference across Apple devices.
 
 {: .note }
-> These figures are carried over from the first version of these docs (2026-03-31) and have not been re-measured on the current release, so treat them as illustrative. They assume Q4_K_M quantization for GGUF and 4-bit for MLX; results vary by prompt complexity and thermal state. The one measured point, recorded in `HardwareAnalyzer`'s decode-speed estimate: an M1 Pro decodes 11.78 GB of GGUF weights at 12.1 tok/s.
+> The per-device tables below are carried over from the first version of these docs (2026-03-31) and have not been re-measured on the current release, so treat them as illustrative. They assume Q4_K_M quantization for GGUF and 4-bit for MLX; results vary by prompt complexity and thermal state. Measured figures are in [Measured on an M1 Pro](#measured-on-an-m1-pro).
 
 ## Table of contents
 {: .no_toc .text-delta }
 
 1. TOC
 {:toc}
+
+---
+
+## Measured on an M1 Pro
+
+One MacBook Pro M1 Pro, 32 GB, 200 GB/s spec bandwidth. Weights are the file sizes on Hugging Face.
+
+| Model | Runtime | Weights | Decode | Source |
+|---|---|---|---|---|
+| Gemma 4 12B (11.91 B params) Q8_0 | llama.cpp build 9660, `llama-bench` tg64, one repetition | 11.78 GiB | 12.12 tok/s (prefill pp512: 175.69) | own run, 2026-07 |
+| Qwen3-14B Q4_K_M | llama.cpp build 9660, `llama-bench` tg64 | 8.38 GiB | 13.9 tok/s | [Distributed inference]({{ '/guide/distributed' | relative_url }}#measured-results) |
+| Qwen3-14B 4-bit (`mlx-community`) | mlx-lm 0.31.3, greedy | 7.74 GiB | 19.0–19.8 tok/s on a clean run | same |
+| Qwen3-0.6B 4-bit (`mlx-community`) | mlx-lm 0.31.3, alone on the GPU | 0.31 GiB | 218 tok/s | same |
+
+The 14B MLX baseline moves between sessions: a run with a download going in parallel measured 16.6–18.5 tok/s, with one outlier at 12.1.
+
+## Speed estimate
+
+`HardwareAnalyzer` predicts decode speed before a download as
+`1 / (weights ÷ (bandwidth × 0.865) + 0.0066 s)`: each token streams every weight once, plus a fixed per-token cost
+that does not shrink with bandwidth. A bandwidth-only formula reads that fixed cost as poor efficiency on the
+fastest chips and overestimates them (M2 Ultra, LLaMA 2 7B Q4_0: 169 predicted, 94 measured).
+
+The two constants are a least-squares fit to the M1 and M2 rows of
+[llama.cpp discussion #4167](https://github.com/ggml-org/llama.cpp/discussions/4167) (third-party, LLaMA 2 7B,
+build 8e672ef). `EstimatorAccuracyTests` fails when the median relative error exceeds 25 % for any of:
+
+| Gate | Points | Median error |
+|---|---|---|
+| Our measurements (table above) | 4 | 21 % |
+| #4167 M3 and M4 rows, not used in the fit, per chip tier | 5–12 per tier | 3–10 % |
+| #4167 M1–M4 rows, per chip tier | 14–24 per tier | 3–7 % |
+
+Known misses on our own Mac: Qwen3-0.6B is predicted at 119 tok/s (measured 218) and Qwen3-14B Q4_K_M at
+18.2 (measured 13.9). The #4167 rows for M5 and newer are excluded: `HardwareProfile` has no bandwidth for
+those chips yet, so the estimate is `nil` there. Those rows, measured with a newer build (c1d0e7a), show a smaller
+per-token cost: the formula underestimates M5 Max and Ultra by up to 44 % (median 31 %).
 
 ---
 
@@ -123,23 +160,19 @@ GGUF layer-streaming loads faster because only the first few layers are paged in
 import Foundation
 import AuraCore
 
-let start = Date()
+let start = ContinuousClock.now
 let llm = try await ModelManager.shared.load(.qwen3_1_7b)
-let loadTime = Date().timeIntervalSince(start)
-print("Load: \(loadTime)s")
-
-var firstToken = true
-var firstTokenTime: TimeInterval = 0
-let genStart = Date()
+print("Load: \(ContinuousClock.now - start)")
 
 for try await token in llm.stream("Write a haiku about Swift programming.") {
-    if firstToken {
-        firstTokenTime = Date().timeIntervalSince(genStart)
-        firstToken = false
-    }
     print(token, terminator: "")
 }
 
-let totalTime = Date().timeIntervalSince(genStart)
-print("\nFirst token: \(firstTokenTime)s | Total: \(totalTime)s")
+if let stats = llm.lastGenerationStats {
+    print("\n\(stats.source.label): TTFT \(stats.timeToFirstToken)s, "
+        + "\(stats.generatedTokens) tokens at \(stats.decodeTokensPerSecond ?? 0) tok/s")
+}
 ```
+
+`lastGenerationStats` reports MLX runtime counters as they are; on llama.cpp, prompt tokens are estimated. See
+[Generation Stats]({{ '/api/core' | relative_url }}#generation-stats).
