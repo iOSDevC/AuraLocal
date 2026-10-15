@@ -5,7 +5,8 @@ import LocalLLMClient
 
 /// Keeps a rendered conversation inside the KV window. LocalLLMClient 0.5.0 exposes no tokenizer, so tokens are
 /// estimated from UTF-8 bytes with a ratio learned from the overflows llama.cpp reports. Until the first overflow
-/// nothing is trimmed ahead of a prefill.
+/// nothing is trimmed ahead of a prefill, so a prompt that fits but leaves less than the reply reserve gets its reply
+/// cut by the window; the exact count after a prefill, `Context.position`, is `package`.
 struct GGUFPromptFitter: Sendable {
     let windowSize: Int
     /// Tokens per UTF-8 byte, a lower bound taken from the largest overflow seen.

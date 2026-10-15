@@ -135,8 +135,13 @@ aborted; the fix it needs upstream is prepared as `contrib/localllmclient/0004`.
 - **Overflow:** when the rendered history does not fit the context, its oldest exchanges are dropped until it does;
   the system turn and the newest user turn always stay. LocalLLMClient exposes no tokenizer, so the first overflow
   costs a refused prefill; from it the backend learns a tokens-per-byte ratio and from then on trims before
-  prefilling, keeping room for the reply (`maxTokens`, at most a quarter of the context). Trimming is not reported
-  in `lastContextOverflow`. A system turn plus newest user turn that alone exceed the context throw
+  prefilling, keeping room for the reply (`maxTokens`, at most a quarter of the context). Every load of the model
+  starts without that ratio, an eviction and reload on iOS included, so until its first overflow a history that
+  fits but leaves less room than `maxTokens` gets a reply cut at the end of the context, with no error. Resuming a
+  saved conversation is the usual case: `chat(_:in:)` sends up to `maxContextTokens` (3072 by default), more than
+  the 1024 or 2048 tokens iOS falls back to. On a small context pass a `maxContextTokens` that leaves room for
+  `maxTokens`, with a margin, since it is an estimate (about 4 characters per token). Trimming is not reported in
+  `lastContextOverflow`. A system turn plus newest user turn that alone exceed the context throw
   `LLMError.failedToDecode` (`context size exceeded`).
 - **Cost:** the whole history is prefilled on every turn, so prefill time grows linearly with it: 1.28 s for a
   3038-token history with Qwen2.5-0.5B Q4_K_M on an M1 Pro (about 0.42 ms per token, measured with other builds
@@ -148,8 +153,10 @@ aborted; the fix it needs upstream is prepared as `contrib/localllmclient/0004`.
 - **With tools** a turn runs on a LocalLLMClient `LlamaClient` (its tool-call parser), with the same rendering, the
   call → execute → resume loop `LLMSession` runs, and the same clean start. That client decodes in a task nobody can
   cancel, so a reply cut short returns at once but the **next** turn waits until that decode reaches the end of
-  generation or fills the context (seconds on a 0.5B model). A tool that throws fails the turn with its own error;
-  arguments that do not decode fail it with LocalLLMClient's `ToolError.argumentDecodingFailed`.
+  generation or fills the context (seconds on a 0.5B model). After `unload()` (an eviction too) the model stays in
+  memory until that decode ends, so a reload in the meantime holds two copies, and a process that exits before it
+  ends aborts in `ggml_metal_device_free`. A tool that throws fails the turn with its own error; arguments that do
+  not decode fail it with LocalLLMClient's `ToolError.argumentDecodingFailed`.
 - **Not reset:** the sampler's repetition-penalty window and random state carry over between turns (no public reset
   in LocalLLMClient 0.5.0; see `contrib/localllmclient/0003`). At temperature 0 they have no effect.
 

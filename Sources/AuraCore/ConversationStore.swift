@@ -250,9 +250,9 @@ public actor ConversationStore {
     /// let context = try await store.contextWindow(for: conv.id, maxTokens: 2048)
     /// let messages = context.map { ["role": $0.role.rawValue, "content": $0.content] }
     /// ```
-    /// How many turns the context window's oldest-kept boundary stays put before it moves.
-    /// Larger = the prompt prefix (and llama.cpp's KV cache) survives more turns, at the cost of
-    /// dropping up to this many extra turns of history.
+    /// How many turns the context window's oldest-kept boundary stays put before it moves. Meant to keep
+    /// a cached prompt prefix matching, it saves no prefill now (GGUF turns prefill the whole history)
+    /// and only drops up to this many minus one extra turns of history.
     static let contextAnchorStride = 4
 
     public func contextWindow(for conversationID: UUID, maxTokens: Int = 2048) throws -> [Turn] {
@@ -294,12 +294,11 @@ public actor ConversationStore {
         // Whole history fits — no boundary to stabilise.
         guard idealStart > 0 else { return systemTurns + chrono }
 
-        // History is being evicted, so the prompt's PREFIX (its oldest kept turn) moves. Recomputing
-        // it per turn slides it by one every single time, and llama.cpp's prompt cache matches on a
-        // literal text prefix — so every turn would re-prefill the whole history. Snap the boundary
-        // up to a multiple of `contextAnchorStride` instead: it then stays byte-identical for that
-        // many turns, and only the new tail is prefilled. Snapping UP never exceeds the budget; the
-        // cost is dropping up to stride-1 extra turns of history.
+        // History is being evicted, so the prompt's PREFIX (its oldest kept turn) moves. Snapping the
+        // boundary up to a multiple of `contextAnchorStride` keeps it byte-identical for that many
+        // turns, which only pays off on a backend that reuses a cached prefix; none does now (GGUF
+        // turns prefill the whole history). Snapping UP never exceeds the budget; the cost is
+        // dropping up to stride-1 extra turns of history.
         // Never let anchoring eat more than a quarter of the turns that actually fit: on a small
         // window the stride collapses to 1 (i.e. exact, unanchored behaviour) instead of gutting
         // the history to buy cache hits.
