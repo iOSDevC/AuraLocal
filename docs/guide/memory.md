@@ -24,8 +24,9 @@ On-device LLMs can consume significant RAM. AuraLocal has multiple layers of pro
 1. **`HardwareAnalyzer`** — flags models that won't fit (pure analysis). Enforcement lives in `ModelManager.load`, which refuses a `.tooLarge` model up front by throwing `AuraError.modelTooLarge` **before** downloading it or risking a jetsam kill mid-load.
 2. **`ModelManager` LRU cache** — evicts the least-recently-used model when RAM is needed
 3. **`MemoryBudgetManager`** (layer-streaming backend only) — checks available memory every 32 tokens during generation and stops early if RAM becomes critical. When the OS reports *unknown* — which on iOS is exactly what happens once the process is at or over its jetsam limit — this is treated as **pressure**, never as "plenty free". Full-load llama.cpp and MLX do not check memory mid-generation.
-4. **`BackgroundLifecycle`** — sets `isPaused` when the app is backgrounded (iOS); informational only, nothing in AuraCore reads it. GGUF generation is paused by LocalLLMClient while the app is inactive; MLX is not. See [Background Lifecycle](#background-lifecycle-ios).
+4. **`BackgroundLifecycle`** — when an iOS app enters the background, cancels every running local generation (text and Core ML images) and refuses new ones until it returns. Installed when a model loads. See [Background Lifecycle](#background-lifecycle-ios).
 5. **Memory pressure listener** — `DispatchSource.makeMemoryPressureSource` + `UIApplication.didReceiveMemoryWarningNotification` trigger immediate eviction of non-active models
+6. **`DeviceConditions`** (opt-in) — stops a generation on critical heat, and optionally in Low Power Mode or on a low battery. See [Device conditions](#device-conditions).
 
 ---
 
@@ -74,9 +75,10 @@ if let bytes = HardwareProfile.availableMemoryBytes() {
     // Do not substitute a fraction-of-RAM guess here — that is the bug this replaced.
 }
 
-// For display and fit estimates, the convenience property falls back to a rough
-// number so the UI always has something to show:
-let availableGB = HardwareProfile.current().availableMemoryGB
+// For display and fit estimates (on iOS: the app's memory limit, see Platform Memory
+// Budgets), the convenience property falls back to a rough number so the UI always
+// has something to show:
+let budgetGB = HardwareProfile.current().availableMemoryGB
 ```
 
 If memory becomes critical mid-generation (checked every 32 tokens), the layer-streaming
@@ -87,6 +89,28 @@ backend stops early and returns the partial text generated so far — it does no
 ## Platform Memory Budgets
 
 ### iOS
+
+On the running iPhone or iPad the budget is the app's memory limit, read by
+`HardwareProfile.memoryLimitBytes()`: `os_proc_available_memory()` plus the app's `phys_footprint`
+(`task_vm_info`), capped at 74 % of physical RAM. `<os/proc.h>` defines `os_proc_available_memory()` as
+the limit minus `phys_footprint`, so the sum is the limit itself. The cap is there because one 8 GB iPad
+reported 8142 MiB available.
+
+- `HardwareProfile.current().availableMemoryGB` carries this figure on iOS, so `DevicePreset.thisDevice()`
+  (the Model Finder, `aura models check`), `HardwareAnalyzer.assess` and the refusal in
+  `ModelManager.load` agree, and a verdict does not shrink while a model is loaded.
+- What is left right now, `HardwareProfile.availableMemoryBytes()`, still drives the safety checks: the
+  layer-streaming pressure check, the `ModelManager` cache size, the Core ML image memory gate, and the
+  context window (the KV cache is allocated on top of what the app already holds).
+- When iOS reports unknown (at the jetsam limit, or not an app), `memoryLimitBytes()` returns `nil`,
+  `current()` shows 60 % of RAM for display, and `thisDevice()` labels it an estimate. The safety checks
+  still treat unknown as pressure.
+- The limit includes what the app already uses for everything else, so a model rated Marginal against it
+  can exceed the limit by that amount.
+- Metal and Neural Engine memory: `<mach/task_info.h>` splits memory tagged graphics and neural into
+  footprint and no-footprint ledgers, so tagged GPU and ANE allocations count toward `phys_footprint`
+  unless the allocator marks them no-footprint. Which Metal and ANE allocations land in which ledger is
+  not documented and was not measured on a device.
 
 What actually fits depends far more on the **entitlements** than on the device, because they set
 the app's budget. Streaming is offered only while RAM can still cache a third of the weights —
@@ -119,21 +143,83 @@ KV cost and the memory left after the weights (1024–32768 tokens on macOS). Fo
 reaches the 32768 ceiling with about 9 GB available and falls to the 1024 floor when little memory is
 left after the weights.
 
+### MLX KV window
+
+MLX uses the same window as its KV cache size (`maxKVSize`), fixed when the backend is created. Past it,
+MLX keeps the first 4 tokens and overwrites the oldest of the rest without an error; after such a
+generation `AuraLocal.lastContextOverflow` says how many tokens no longer fit. Entries without KV metadata
+(`kvHeads == 0`) get the fallback window: 8192 or 4096 on a Mac, 2048 or 1024 on iOS.
+Architectures that build their own caches, such as Qwen 3.5 text models, Gemma 3 and 4, and LFM2, ignore
+the window: their cache still grows with the conversation, and `lastContextOverflow` stays `nil`.
+
 ---
 
 ## Background Lifecycle (iOS)
 
-{: .warning }
-> `BackgroundLifecycle` does not pause inference. It sets `isPaused` on backgrounding, but nothing in AuraCore reads it, and it is not automatic: its observers exist only after your code first touches `BackgroundLifecycle.shared`. GGUF generation is paused anyway by LocalLLMClient (llama.cpp waits between tokens from `willResignActive` until `didBecomeActive`); MLX generation keeps running, so cancel it yourself when the app backgrounds.
+When the app enters the background, `BackgroundLifecycle.shared`:
 
-What it can do is free memory on backgrounding:
+- cancels every generation running through `AuraLocal` (MLX, llama.cpp, layer streaming) or
+  `CoreMLDiffusionEngine`. Each call throws `GenerationInterrupted` with `reason == .appBackgrounded`;
+  `partialText` holds the text produced so far (a stream has already yielded it, then finishes with the error);
+- sets `isPaused`. Until the app returns to the foreground, new generations throw the same error without starting;
+- with `aggressiveMemorySaving`, evicts every model except the most recently used one.
+
+Its observers are installed when a model loads or an image generation starts, so there is nothing to set up.
+An app that is already in the background when it loads its first model reads as foreground until it returns.
 
 ```swift
-// Touching .shared registers the observers.
+do {
+    reply = try await llm.chat(prompt)
+} catch let stop as GenerationInterrupted {
+    reply = stop.partialText   // truncated
+}
+
+// Optional: free RAM on backgrounding; evicted models reload lazily on next use.
 BackgroundLifecycle.shared.aggressiveMemorySaving = true
-// When set, entering the background calls ModelManager.evictAllButMostRecent(),
-// freeing every loaded model except the active one. It reloads lazily on next use.
 ```
+
+When each engine actually stops:
+
+- **MLX:** at the next token.
+- **llama.cpp** (full load and streaming): the call returns at once. LocalLLMClient has already paused
+  the decode on `willResignActive`; per its source, that decode runs one more token after the app becomes
+  active and then stops, so a generation started right after returning can overlap that token. A prompt
+  being prefilled cannot be interrupted.
+- **Core ML Stable Diffusion:** at the next denoising step. Loading the model and the final decode cannot
+  be interrupted.
+
+macOS has no background notifications, so nothing is cancelled there.
+
+---
+
+## Device conditions
+
+`DeviceConditions` is an opt-in guard for long generations on a hot or nearly flat device. It is assessed
+before a generation starts and every `checkInterval` streamed tokens or denoising steps (default 8):
+
+| Reading | Default | Configure |
+|---------|---------|-----------|
+| `ProcessInfo.thermalState` | warn at `.serious`, block at `.critical` | `warnAtThermalState`, `blockAtThermalState` (`nil` turns either off) |
+| Low Power Mode | warn | `lowPowerMode: .normal / .warn / .block` |
+| Battery level, unplugged | ignored | `warnBelowBatteryLevel`, `blockBelowBatteryLevel` (0...1) |
+
+At **warn** the generation continues and `onWarning` is called once per transition into warn. At **block**
+it is cancelled and the call throws `GenerationInterrupted` with `reason == .deviceConditions(assessment)` and
+the text produced so far. A device already at block refuses to start.
+
+```swift
+llm.deviceGuard = DeviceConditions(onWarning: { assessment in
+    print("Device is \(assessment.causes)")  // e.g. [.thermal(.serious)]
+})
+
+let images = CoreMLDiffusionEngine(deviceGuard: DeviceConditions())
+```
+
+The battery is read only when your app has turned on `UIDevice.current.isBatteryMonitoringEnabled`. That
+switch is process-wide, so AuraLocal never turns it on; without it, or on a Mac, the battery thresholds are
+ignored. Image generation reads the battery once when the run starts and the thermal state and Low Power
+Mode at every check. `deviceGuard` is set per `AuraLocal` instance, and instances from `ModelManager` are
+shared.
 
 ---
 

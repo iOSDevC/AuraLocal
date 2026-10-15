@@ -24,23 +24,30 @@ final class AuraEngine {
     /// Copied from the backend when a call returns and cleared when one starts, so a call that throws before
     /// decoding cannot leave the previous call's numbers behind.
     private(set) var lastGenerationStats: GenerationStats?
+    let appLifecycle: BackgroundLifecycle
+    /// Opt-in guard checked before and during every generation; `nil` is off.
+    var deviceGuard: DeviceConditions?
 
     // MARK: - Init
 
-    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = []) {
+    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = [],
+         lifecycle: BackgroundLifecycle = .shared) {
         self.model = model
         self.backend = BackendRouter.selectBackend(for: model, temperature: temperature, tools: tools)
+        self.appLifecycle = lifecycle
     }
 
     /// Create an engine with a specific backend (used by BackendRouter for GGUF models).
-    init(model: Model, backend: any InferenceBackend) {
+    init(model: Model, backend: any InferenceBackend, lifecycle: BackgroundLifecycle = .shared) {
         self.model = model
         self.backend = backend
+        self.appLifecycle = lifecycle
     }
 
     // MARK: - Load
 
     func load(onProgress: @escaping @MainActor (String) -> Void) async throws {
+        appLifecycle.startObserving()
         try await backend.load(onProgress: onProgress)
     }
 
@@ -53,7 +60,7 @@ final class AuraEngine {
         constraint: GenerationConstraint? = nil,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        try await recordingStats {
+        try await recordingStats(onToken: onToken) { [self] onToken in
             if let constraint {
                 return try await backend.generate(
                     prompt: prompt,
@@ -80,7 +87,7 @@ final class AuraEngine {
         maxTokens: Int = 800,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        try await recordingStats {
+        try await recordingStats(onToken: onToken) { [self] onToken in
             try await backend.generate(
                 prompt: prompt,
                 image: image,
@@ -97,7 +104,7 @@ final class AuraEngine {
         maxTokens: Int = 1024,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        try await recordingStats {
+        try await recordingStats(onToken: onToken) { [self] onToken in
             try await backend.generate(
                 messages: messages,
                 maxTokens: maxTokens,
@@ -106,9 +113,12 @@ final class AuraEngine {
         }
     }
 
-    private func recordingStats(_ body: () async throws -> String) async rethrows -> String {
+    private func recordingStats(
+        onToken: @escaping @MainActor (String) -> Void,
+        _ body: @escaping @MainActor (_ onToken: @escaping @MainActor (String) -> Void) async throws -> String
+    ) async throws -> String {
         lastGenerationStats = nil
-        let reply = try await body()
+        let reply = try await supervised(onToken: onToken, body)
         lastGenerationStats = backend.lastGenerationStats
         return reply
     }

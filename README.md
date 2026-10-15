@@ -689,24 +689,30 @@ let results = HardwareAnalyzer.compatibleModels(profile: profile)
 
 ## Background Lifecycle (iOS)
 
-`BackgroundLifecycle` tracks whether an iOS app is in the background. It does **not** stop a running
-generation, and nothing in AuraCore reads `isPaused`, so check it before starting one. Touch
-`BackgroundLifecycle.shared` at launch so it starts observing. With `aggressiveMemorySaving`,
-backgrounding evicts every model except the most recently used.
+When an iOS app enters the background, AuraLocal cancels every running text generation (MLX, llama.cpp)
+and Core ML image generation, and refuses new ones until the app returns. The call throws
+`GenerationInterrupted` with the text produced so far. `BackgroundLifecycle` starts observing when a
+model loads; nothing to set up. With `aggressiveMemorySaving`, backgrounding also evicts every model
+except the most recently used.
 
 ```swift
 import AuraCore
 
-// true while the app is in the background
-if BackgroundLifecycle.shared.isPaused {
-    // wait before starting a new generation
+do {
+    reply = try await llm.chat(prompt)
+} catch let stop as GenerationInterrupted {
+    reply = stop.partialText   // truncated: backgrounded, or a DeviceConditions guard blocked
 }
 
 // Evict every model except the most recently used when backgrounded
 BackgroundLifecycle.shared.aggressiveMemorySaving = true
+
+// Opt in: stop on critical heat, warn on .serious and in Low Power Mode
+llm.deviceGuard = DeviceConditions()
 ```
 
-This is a no-op on macOS where apps are not suspended.
+Nothing is cancelled on macOS, where apps are not suspended. See the
+[memory guide](https://iosdevc.github.io/AuraLocal/guide/memory#background-lifecycle-ios).
 
 ---
 
@@ -1134,7 +1140,7 @@ AuraLocal is designed for Swift 6 strict concurrency:
 | `LlamaCppBackend` | `@MainActor` | Owns `LLMSession` from LocalLLMClient |
 | `LayerStreamingBackend` | `@MainActor` | Owns streaming session + `MemoryBudgetManager` |
 | `MemoryBudgetManager` | `@MainActor` | Reads `os_proc_available_memory()` and publishes pressure state |
-| `BackgroundLifecycle` | `@MainActor` | Drives UIApplication notifications and published `isPaused` |
+| `BackgroundLifecycle` | `@MainActor` | Cancels running generations on UIApplication background notifications; published `isPaused` |
 | `ModelManager` | `@MainActor` | `ObservableObject` publishing `@Published` state |
 | `GGUFModelDownloader` | `@MainActor` | `ObservableObject` publishing download progress |
 | `ConversationStore` | `actor` | Serializes SQLite reads/writes without locks |
@@ -1162,7 +1168,7 @@ AuraCore
 ├── HardwareAnalyzer        →  fit levels (excellent / good / marginal / streamingRequired / tooLarge)
 │                              GQA-aware KV cache estimates, streaming memory budget
 ├── MemoryBudgetManager     →  jetsam monitoring, adaptive context, per-generation pressure checks
-├── BackgroundLifecycle     →  iOS background flag (isPaused) + optional eviction
+├── BackgroundLifecycle     →  cancels generations on iOS backgrounding + optional eviction
 │
 ├── ModelManager            →  LRU cache, memory-pressure eviction, GGUF download orchestration
 ├── GGUFModelDownloader     →  HuggingFace downloads with resume + @Published progress

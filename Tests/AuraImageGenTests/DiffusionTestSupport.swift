@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import Synchronization
+import AuraCore
 @testable import AuraImageGen
 
 /// Stands in for the Core ML pipeline: returns solid-colour images and records what the engine asked for.
@@ -143,7 +144,8 @@ enum DiffusionFixtures {
     static func engine(resources: URL, runner: FakeRunner?, memoryMode: DiffusionMemoryMode = .automatic,
                        availableMemory: @escaping @Sendable () -> Int? = { nil },
                        runsInSimulator: Bool = false, unknownMemoryMeansExhausted: Bool = false,
-                       factoryLog: FactoryLog = FactoryLog()) -> CoreMLDiffusionEngine {
+                       factoryLog: FactoryLog = FactoryLog(), deviceGuard: DeviceConditions? = nil,
+                       lifecycle: BackgroundLifecycle? = nil) -> CoreMLDiffusionEngine {
         var factory: CoreMLDiffusionEngine.RunnerFactory?
         if let runner {
             factory = { @Sendable _, _, reduceMemory in
@@ -154,6 +156,7 @@ enum DiffusionFixtures {
         return CoreMLDiffusionEngine(model: .stableDiffusion21Base, computeUnits: .neuralEngine,
                                      memoryMode: memoryMode, resourcesDirectory: resources, makeRunner: factory,
                                      availableMemory: availableMemory, runsInSimulator: runsInSimulator,
-                                     unknownMemoryMeansExhausted: unknownMemoryMeansExhausted)
+                                     unknownMemoryMeansExhausted: unknownMemoryMeansExhausted,
+                                     deviceGuard: deviceGuard, lifecycle: lifecycle)
     }
 }

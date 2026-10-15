@@ -300,6 +300,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan tickets and other images";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connects to a model server on your local network, such as Ollama or llama-server on your Mac.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save images you generate to your photo library.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Used to capture your voice for the AI assistant.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Used for voice input to the local AI assistant.";
@@ -352,6 +353,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan tickets and other images";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Connects to a model server on your local network, such as Ollama or llama-server on your Mac.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "Save images you generate to your photo library.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Used to capture your voice for the AI assistant.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Used for voice input to the local AI assistant.";

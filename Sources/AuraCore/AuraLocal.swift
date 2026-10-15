@@ -45,7 +45,20 @@ public final class AuraLocal {
     /// ``GenerationStats/Provenance``. Read it after `chat` returns or a stream finishes; `nil` before the first
     /// generation and after one that threw.
     public var lastGenerationStats: GenerationStats? { engine.lastGenerationStats }
-    
+
+    /// Opt-in ``DeviceConditions`` guard for this instance's generations; `nil` (the default) is off. Instances
+    /// from ``ModelManager`` are shared, so this applies to every caller of the cached instance.
+    public var deviceGuard: DeviceConditions? {
+        get { engine.deviceGuard }
+        set { engine.deviceGuard = newValue }
+    }
+
+    /// Set when the last generation outgrew the MLX KV window, which drops the oldest context without an error.
+    /// `nil` when it fit or the model does not run on MLX.
+    public var lastContextOverflow: ContextWindowOverflow? {
+        engine.backend.lastContextOverflow
+    }
+
     // MARK: - Init
 
     /// Internal init — creates an instance with backend auto-selected by ``BackendRouter``. `tools` (when

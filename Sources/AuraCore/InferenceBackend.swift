@@ -55,10 +55,14 @@ public protocol InferenceBackend: AnyObject {
     /// Counts and timings of the last generation that returned. Defaults to `nil`, so conformers that cannot
     /// measure need not implement it.
     var lastGenerationStats: GenerationStats? { get }
+
+    /// Set when the last generation outgrew a KV cache that drops history silently (MLX); `nil` otherwise.
+    var lastContextOverflow: ContextWindowOverflow? { get }
 }
 
 public extension InferenceBackend {
     var lastGenerationStats: GenerationStats? { nil }
+    var lastContextOverflow: ContextWindowOverflow? { nil }
 }
 
 // MARK: - BackendKind

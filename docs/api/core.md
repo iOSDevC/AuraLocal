@@ -149,6 +149,14 @@ func summarizeAndPrune(
 ```swift
 var model: Model { get }                           // the loaded model
 var lastGenerationStats: GenerationStats? { get }  // the last generation that returned; nil after one that threw
+
+// Opt-in guard checked before and during every generation; nil (default) is off.
+// Instances from ModelManager are shared, so this applies to every caller of the cached one.
+var deviceGuard: DeviceConditions?
+
+// Set when the last generation outgrew the MLX KV window (which drops old tokens silently);
+// nil when it fit or the model does not run on MLX.
+var lastContextOverflow: ContextWindowOverflow? { get }
 ```
 
 ### Generation Stats
@@ -193,7 +201,8 @@ public struct GenerationStats: Sendable, Hashable {
 
 LocalLLMClient 0.5.0 exposes no tokenizer or prompt count, so llama.cpp prompt counts stay estimates. A constrained
 call's clock starts after its dedicated client loads. `InferenceBackend` gained `var lastGenerationStats:
-GenerationStats? { get }`, with a protocol-extension default of `nil`, so existing conformers still compile.
+GenerationStats? { get }` and `var lastContextOverflow: ContextWindowOverflow? { get }`, both with a public
+protocol-extension default of `nil`, so existing conformers still compile.
 
 Loaded state is queried on `ModelManager`, not on `AuraLocal`:
 
@@ -510,7 +519,8 @@ static func assess(
 
 public struct HardwareProfile: Sendable {
     let totalMemoryGB: Double
-    let availableMemoryGB: Double        // convenience: falls back to an estimate for display
+    let availableMemoryGB: Double        // what a model may fill; from current(): iOS = memoryLimitBytes(),
+                                         // macOS = reclaimable memory; 60% of RAM when the OS cannot tell
     let deviceName: String
     let memoryBandwidthGBs: Double?      // nil on iOS and for unrecognised chips
 
@@ -520,6 +530,10 @@ public struct HardwareProfile: Sendable {
     /// iOS returns nil exactly when the process is at or over its jetsam limit —
     /// safety-critical callers must treat nil as danger, never as "plenty free".
     static func availableMemoryBytes() -> Int?
+
+    /// iOS: the app's memory limit, os_proc_available_memory() + phys_footprint, capped at 74% of RAM.
+    /// Does not shrink while a model is loaded. nil when iOS reports unknown, and on macOS.
+    static func memoryLimitBytes() -> Int?
 }
 
 public struct ModelCompatibility: Sendable {
@@ -676,7 +690,8 @@ public struct DevicePreset: Sendable, Hashable, Identifiable {
     var budgetText: String                   // "20.0 GB (measured)" / "≈3.0 GB (estimate)"
 
     // Without a profile, a Mac is judged by Metal's recommendedMaxWorkingSetSize and an
-    // iPhone by the memory the process can still allocate. A given profile is used as is.
+    // iPhone by the app's memory limit (HardwareProfile.memoryLimitBytes()), the figure
+    // ModelManager.load checks too. A given profile is used as is.
     static func thisDevice(profile: HardwareProfile? = nil) -> DevicePreset
 
     static let iPhone4GB: DevicePreset
@@ -767,8 +782,10 @@ records.
 
 ## BackgroundLifecycle (iOS)
 
-Sets `isPaused` when the app enters the background and clears it when the app returns. With
-`aggressiveMemorySaving`, it also evicts every loaded model except the most recently used one.
+When the app enters the background it cancels every generation running through `AuraLocal` or
+`CoreMLDiffusionEngine`, and until the app returns new ones throw at once. Both throw
+`GenerationInterrupted`. With `aggressiveMemorySaving`, it also evicts every loaded model except the
+most recently used one. The observers are installed when a model loads or an image generation starts.
 Guide: [Background Lifecycle]({{ '/guide/memory' | relative_url }}#background-lifecycle-ios).
 
 ```swift
@@ -776,16 +793,76 @@ Guide: [Background Lifecycle]({{ '/guide/memory' | relative_url }}#background-li
 public final class BackgroundLifecycle
 static let shared: BackgroundLifecycle
 
-@Published private(set) var isPaused: Bool     // true while the app is backgrounded
+@Published private(set) var isPaused: Bool     // true while the app is backgrounded; generations are refused
 var aggressiveMemorySaving: Bool = false       // evicts all but the most recently used model on background
 ```
 
-{: .warning }
-> It does not pause generation: nothing in AuraLocal reads `isPaused`, so observe
-> `BackgroundLifecycle.shared.$isPaused` and stop your own streams. Its notification observers are
-> installed when `BackgroundLifecycle.shared` is first accessed, so touch it once at launch.
+Nothing is cancelled on macOS.
 
-No-op on macOS.
+### GenerationInterrupted
+
+Thrown when AuraLocal stops a generation itself. A stream yields the text first, then finishes with it.
+
+```swift
+public struct GenerationInterrupted: Error, LocalizedError, Sendable, Equatable {
+    enum Trigger: Sendable, Equatable {
+        case appBackgrounded
+        case deviceConditions(DeviceConditions.Assessment)
+    }
+    let reason: Trigger
+    let partialText: String      // what was produced; always truncated, always "" for images
+}
+```
+
+### DeviceConditions
+
+Opt-in guard: assessed before a generation and every `checkInterval` tokens or denoising steps. At warn
+the generation continues and `onWarning` runs; at block it throws `GenerationInterrupted`. The battery is
+read only when the app has enabled `UIDevice.isBatteryMonitoringEnabled` (process-wide; AuraLocal never
+sets it). Guide: [Device conditions]({{ '/guide/memory' | relative_url }}#device-conditions).
+
+```swift
+public struct DeviceConditions: Sendable {
+    enum Level: Int, Comparable { case normal, warn, block }
+    enum Cause: Equatable { case thermal(ProcessInfo.ThermalState), lowPowerMode, lowBattery(Float) }
+
+    struct Reading: Sendable, Equatable {
+        var thermalPressure: ProcessInfo.ThermalState
+        var isLowPowerModeEnabled: Bool
+        var batteryLevel: Float?             // nil unless battery monitoring is on
+        var isCharging: Bool?
+        static func system() -> Reading                  // any thread; no battery
+        @MainActor static func current() -> Reading      // plus battery when monitoring is on (iOS)
+    }
+
+    struct Assessment: Sendable, Equatable {
+        let severity: Level
+        let causes: [Cause]                  // every cause at warn or block
+        let snapshot: Reading
+    }
+
+    var warnAtThermalState: ProcessInfo.ThermalState?   // .serious
+    var blockAtThermalState: ProcessInfo.ThermalState?  // .critical
+    var lowPowerMode: Level                             // .warn
+    var warnBelowBatteryLevel: Float?                   // nil: battery ignored
+    var blockBelowBatteryLevel: Float?                  // nil
+    var checkInterval: Int                              // 8
+    var onWarning: (@Sendable (Assessment) -> Void)?    // once per transition into warn
+
+    func assess(_ reading: Reading) -> Assessment
+}
+```
+
+### ContextWindowOverflow
+
+```swift
+public struct ContextWindowOverflow: Sendable, Equatable {
+    let promptTokens: Int
+    let generatedTokens: Int
+    let windowSize: Int
+    var droppedTokens: Int { get }   // promptTokens + generatedTokens - windowSize
+}
+```
 
 ---
 

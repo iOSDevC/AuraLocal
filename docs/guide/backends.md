@@ -89,6 +89,7 @@ Used for all `.mlx` format models, from Granite Docling 258M up to Ornith 1.5 35
 - Model weights loaded into unified memory as MLX arrays
 - Supports text generation and vision (multimodal) models
 - GPU cache scaled by model weight size (~1/12 of the weights), clamped to 128 MB – 512 MB
+- KV cache bounded by `HardwareAnalyzer.recommendedContextWindow(for:)` (`maxKVSize`). Past it MLX overwrites the oldest tokens without an error, which `AuraLocal.lastContextOverflow` reports. Qwen 3.5 text models, Gemma 3 and 4, and LFM2 build their own caches and ignore the bound (see [Memory]({{ '/guide/memory' | relative_url }}#mlx-kv-window))
 - 20–45 tokens/second for ≤4B models on iPhone 15 Pro / M-series Mac
 
 **When it's used:** Any model case without `_gguf` suffix — Qwen3, Llama 3.2, Gemma 3, Phi-3.5, SmolVLM, FastVLM, Granite Docling.
@@ -268,26 +269,27 @@ Modern models use Grouped-Query Attention (GQA), which dramatically reduces KV c
 | Context window | Full load: memory-derived, 1024–32768; streaming: 4096, cut to 1024/512 under pressure | Full load: memory-derived, 1024–8192; streaming: 2048, cut to 1024/512 |
 | Threads | ≤8 (full) / ≤6 (streaming) | ≤4 (full) / ≤3 (streaming) |
 | Max viable model | 70B (full load at a 64 GB Mac's ~48 GB budget estimate) | 32B (streaming at the ~6.4 GB `iphone-17-pro` estimate); 14B at ~3 GB |
-| Background inference | Continues | GGUF: paused by LocalLLMClient while the app is inactive; MLX: continues |
+| Background inference | Continues | Cancelled on entering the background; the call throws `GenerationInterrupted` with the text so far |
 
 ---
 
 ## Background Lifecycle (iOS)
 
-{: .warning }
-> `BackgroundLifecycle` does not pause inference. `BackgroundLifecycle.shared` observes `didEnterBackground` / `willEnterForeground` and sets `isPaused`, but nothing in AuraCore reads `isPaused`, and its observers exist only after your code first touches `BackgroundLifecycle.shared`.
+`BackgroundLifecycle.shared` starts observing when a model loads. On `didEnterBackground` it cancels every
+running generation and, until `willEnterForeground`, refuses new ones; both throw `GenerationInterrupted`
+(`reason == .appBackgrounded`, `partialText` = the text so far).
 
-What actually happens when the app leaves the foreground:
+- **MLX:** stops at the next token.
+- **GGUF** (full load and streaming): the call returns at once. LocalLLMClient pauses llama.cpp between
+  tokens from `willResignActive`; the paused decode runs one more token after `didBecomeActive` and then
+  stops, so a generation started right after returning can overlap it.
 
-- **GGUF:** LocalLLMClient itself pauses llama.cpp between tokens from `willResignActive` until `didBecomeActive`.
-- **MLX:** generation keeps running. Cancel the task that consumes the stream when the app backgrounds.
-
-To free memory on backgrounding:
+To free memory on backgrounding as well:
 
 ```swift
-// Registers the observers; on backgrounding, evicts every model
-// except the most recently used (ModelManager.shared.evictAllButMostRecent()).
+// Evicts every model except the most recently used (ModelManager.shared.evictAllButMostRecent()).
 BackgroundLifecycle.shared.aggressiveMemorySaving = true
 ```
 
-This is a no-op on macOS.
+Nothing is cancelled on macOS. Details and the opt-in `DeviceConditions` guard (heat, Low Power Mode,
+battery): [Memory]({{ '/guide/memory' | relative_url }}#background-lifecycle-ios).

@@ -53,8 +53,9 @@ public struct DevicePreset: Sendable, Hashable, Identifiable {
     public static let thisDeviceID = "this-device"
 
     /// The running device. Without a `profile`, a Mac is judged by its Metal working-set limit (what the GPU may
-    /// keep resident, the same budget as ``mac32GB``) and an iPhone by the memory the process can still allocate.
-    /// A given `profile` is used as is.
+    /// keep resident, the same budget as ``mac32GB``) and an iPhone by the app's memory limit
+    /// (``HardwareProfile/memoryLimitBytes()``), the figure `ModelManager.load` checks too. A given `profile` is
+    /// used as is.
     public static func thisDevice(profile: HardwareProfile? = nil) -> DevicePreset {
         #if os(macOS)
         let platform = TargetOS.macOS
@@ -65,15 +66,23 @@ public struct DevicePreset: Sendable, Hashable, Identifiable {
         var budget = measured.availableMemoryGB
         var source = "Measured now by HardwareProfile: memory this process can still allocate."
         #if os(macOS)
+        let isMeasured = true
         // Free + inactive pages swing with other apps and ignore compression; the Metal limit does not.
         if profile == nil, let limit = metalWorkingSetGB {
             budget = limit
             source = "Measured now: Metal recommendedMaxWorkingSetSize, the memory the GPU may keep resident."
         }
+        #else
+        let isMeasured = profile != nil || HardwareProfile.memoryLimitBytes() != nil
+        if profile == nil {
+            source = isMeasured
+                ? "Measured now: this app's memory limit, os_proc_available_memory() + phys_footprint, capped at 74% of RAM."
+                : "Estimate: iOS reported the memory limit as unknown, so 60% of RAM is assumed."
+        }
         #endif
         return DevicePreset(
             id: thisDeviceID, displayName: "This device (\(measured.deviceName))", platform: platform,
-            totalMemoryGB: measured.totalMemoryGB, budgetGB: budget, isMeasured: true, source: source,
+            totalMemoryGB: measured.totalMemoryGB, budgetGB: budget, isMeasured: isMeasured, source: source,
             bandwidthGBs: measured.memoryBandwidthGBs)
     }
 
