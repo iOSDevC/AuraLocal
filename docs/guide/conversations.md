@@ -60,14 +60,14 @@ for try await token in llm.stream("Tell me more", in: conv.id) {
 }
 ```
 
-Before each call AuraLocal loads the newest turns that fit `maxContextTokens` (default 3072, estimated at ~4 characters per token). When older turns have to be dropped, it snaps the oldest kept turn to a stride of up to 4 turns so llama.cpp's prompt cache survives, which can drop up to 3 extra old turns.
+Before each call AuraLocal loads the newest turns that fit `maxContextTokens` (default 3072, estimated at ~4 characters per token). When older turns have to be dropped, it snaps the oldest kept turn to a stride of up to 4 turns, which can drop up to 3 extra old turns. The stride was meant to keep llama.cpp's prompt cache matching; the GGUF backends now prefill the whole window on every turn, so it no longer saves work on any backend.
 
 The user turn is saved before the model runs. If the call throws, the conversation keeps one reply per prompt:
 a `GenerationInterrupted` that carries text (the app moved to the background, or the device guard stopped it)
 saves that text as the assistant turn; any other error removes the user turn again.
 
 {: .note }
-> MLX models receive the turns with their roles. GGUF models receive them flattened into one prompt: roles are dropped and only the most recent system turn is kept, so on GGUF a `summarizeAndPrune` summary replaces your system prompt.
+> MLX and GGUF models receive the turns with their roles. On GGUF every system turn, a `summarizeAndPrune` summary included, merges into one leading system turn, so the summary is added to your system prompt rather than replacing it. If the window still exceeds the model's context, the GGUF backends drop the oldest exchanges until it fits, keeping the system turn and your new message. See [Multi-turn conversations]({{ '/guide/backends' | relative_url }}#multi-turn-conversations-gguf).
 
 ---
 

@@ -194,7 +194,7 @@ public struct GenerationStats: Sendable, Hashable {
 | Backend | `source` | Prompt tokens | Output tokens | Durations |
 |---|---|---|---|---|
 | `MLXBackend` | `.runtime` | exact | exact | runtime prefill; decode and TTFT from AuraLocal's clock (first token callback to last) |
-| `LlamaCppBackend`, no tools; constrained calls | `.measured` | estimated | one per streamed piece (one per sampled token in LocalLLMClient 0.5.0) | AuraLocal's clock |
+| `LlamaCppBackend`, no tools; constrained calls | `.measured` | estimated from the rendered prompt | one per streamed piece (one per sampled token in LocalLLMClient 0.5.0) | AuraLocal's clock |
 | `LlamaCppBackend` / `LayerStreamingBackend` with tools | `.estimated` | estimated | estimated | AuraLocal's clock |
 | `LayerStreamingBackend`, no tools | `.measured` | estimated | one per streamed piece | AuraLocal's clock |
 | Remote (`HybridEscalator`) | — | — | — | no stats; provider-reported usage is in `HybridEscalator.Result.usage` |

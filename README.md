@@ -1136,8 +1136,8 @@ AuraLocal is designed for Swift 6 strict concurrency:
 | `AuraLocal` | `@MainActor` | Wraps MLX/llama.cpp callbacks that fire on main thread |
 | `AuraEngine` | `@MainActor` | Delegates to `InferenceBackend` protocol |
 | `MLXBackend` | `@MainActor` | Owns MLX model container and GPU state |
-| `LlamaCppBackend` | `@MainActor` | Owns `LLMSession` from LocalLLMClient |
-| `LayerStreamingBackend` | `@MainActor` | Owns streaming session + `MemoryBudgetManager` |
+| `LlamaCppBackend` | `@MainActor` | Owns the llama.cpp context (a `LlamaClient` with tools) and starts every turn from an empty KV cache |
+| `LayerStreamingBackend` | `@MainActor` | Same per-turn context, plus `MemoryBudgetManager` |
 | `MemoryBudgetManager` | `@MainActor` | Reads `os_proc_available_memory()` and publishes pressure state |
 | `BackgroundLifecycle` | `@MainActor` | Cancels running generations on UIApplication background notifications; published `isPaused` |
 | `ModelManager` | `@MainActor` | `ObservableObject` publishing `@Published` state |

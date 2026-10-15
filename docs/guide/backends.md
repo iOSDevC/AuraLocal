@@ -29,11 +29,11 @@ AuraLocal uses two inference engines internally, selected automatically by `Back
 
 All three implement the same `InferenceBackend` protocol — your code looks identical regardless of which backend is running.
 After each generation, `AuraLocal.lastGenerationStats` reports token counts and timings: MLX passes on its runtime
-counters, the llama.cpp backends time the stream and estimate the prompt (see
+counters, the llama.cpp backends time the stream and estimate the prompt from its rendered text (see
 [Generation Stats]({{ '/api/core' | relative_url }}#generation-stats)).
 
 {: .warning }
-> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:onProgress:)`, `AuraProfile.tools`) reach only the GGUF backends; an MLX model silently ignores them. The llama.cpp backends are text-only (an `image:` argument is ignored) and flatten a multi-turn history into one prompt (roles dropped, only the last system turn kept); MLX passes the messages with their roles. A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `AuraSession` enforces `AuraProfile.outputSchema` the same way on every backend, by validating each reply and re-prompting, not by constrained decoding; other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). Of `AuraProfile.sampling` only `maxTokens` reaches generation.
+> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:onProgress:)`, `AuraProfile.tools`) reach only the GGUF backends; an MLX model silently ignores them. The llama.cpp backends are text-only (an `image:` argument is ignored). Both families pass a multi-turn history with its roles; the llama.cpp backends render it with the GGUF's own chat template (see [Multi-turn conversations](#multi-turn-conversations-gguf)). A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `AuraSession` enforces `AuraProfile.outputSchema` the same way on every backend, by validating each reply and re-prompting, not by constrained decoding; other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). Of `AuraProfile.sampling` only `maxTokens` reaches generation.
 
 `BackendKind` also declares `.remote` and `.hybrid`, but no AuraCore API returns them; remote inference goes through `HybridEscalator` (see [Hybrid inference]({{ '/guide/hybrid' | relative_url }})).
 
@@ -114,6 +114,44 @@ Used for `.gguf` models when the full file fits in available RAM.
 let llm = try await ModelManager.shared.load(.llama3_1_8b_gguf)
 ```
 
+### Multi-turn conversations (GGUF)
+
+Both llama.cpp backends treat every call (`chat`, `stream`, `chat(_:in:)`, `stream(_:in:)`, `generate(messages:)`)
+as one self-contained turn: it starts from an empty KV cache and an empty decode batch, and the model stays loaded.
+The pinned LocalLLMClient (0.5.0) never cleared the cache when a new prompt did not extend the cached one, so the
+cache grew every turn until the context overflowed (around turn 8 at 1024 tokens) and later turns failed or
+aborted; the fix it needs upstream is prepared as `contrib/localllmclient/0004`.
+
+- **Roles:** the history is rendered with the GGUF's `tokenizer.chat_template` and special tokens (`bos_token`,
+  `eos_token`, …), read from the file the way llama.cpp resolves them, with the same Jinja engine and message shapes
+  LocalLLMClient's `.chat` input uses. A single `chat(_:systemPrompt:)` call sends the system prompt as a system
+  turn, not as text inside the user turn. A GGUF without a template gets a `System:` / `User:` / `Assistant:`
+  transcript.
+- **What every template accepts:** all system turns (a `summarizeAndPrune` summary included) merge, in order, into
+  one leading system turn; assistant turns before the first user turn join the system text; consecutive user or
+  assistant turns merge; empty assistant turns are dropped. A template that rejects a system role (Gemma 2) or
+  renders part of the conversation empty gets plain-string content, then the system text at the start of the first
+  user turn.
+- **Overflow:** when the rendered history does not fit the context, its oldest exchanges are dropped until it does;
+  the system turn and the newest user turn always stay. LocalLLMClient exposes no tokenizer, so the first overflow
+  costs a refused prefill; from it the backend learns a tokens-per-byte ratio and from then on trims before
+  prefilling, keeping room for the reply (`maxTokens`, at most a quarter of the context). Trimming is not reported
+  in `lastContextOverflow`. A system turn plus newest user turn that alone exceed the context throw
+  `LLMError.failedToDecode` (`context size exceeded`).
+- **Cost:** the whole history is prefilled on every turn, so prefill time grows linearly with it: 1.28 s for a
+  3038-token history with Qwen2.5-0.5B Q4_K_M on an M1 Pro (about 0.42 ms per token, measured with other builds
+  running); larger models cost proportionally more. The previous path paid the same, since its prompt cache never
+  matched.
+- **Cut replies:** a reply ended by `maxTokens`, cancellation or backgrounding leaves the next turn unaffected. The
+  decode runs in a task of its own, so the call returns at once; the next turn waits until that decode has stopped
+  (at most one token, or the end of a prefill) and flushes the token it left queued.
+- **With tools** a turn runs on a LocalLLMClient `LlamaClient` (its tool-call parser), with the same rendering, the
+  call → execute → resume loop `LLMSession` runs, and the same clean start. That client decodes in a task nobody can
+  cancel, so a reply cut short returns at once but the **next** turn waits until that decode reaches the end of
+  generation or fills the context (seconds on a 0.5B model). A tool that throws fails the turn with its own error.
+- **Not reset:** the sampler's repetition-penalty window and random state carry over between turns (no public reset
+  in LocalLLMClient 0.5.0; see `contrib/localllmclient/0003`). At temperature 0 they have no effect.
+
 ---
 
 ## Constrained Generation (GGUF only)
@@ -155,18 +193,17 @@ end-of-generation or the grammar's trailing whitespace: the replies come back em
 carries the reset (prepared as `contrib/localllmclient/0003`), `LlamaCppBackend` runs each constrained call on a
 dedicated, short-lived client built on the same GGUF file:
 
-- **Context:** UTF-8 bytes of the prompt + `maxTokens` + 256 for the chat template, rounded up to a multiple of
+- **Context:** UTF-8 bytes of the rendered prompt + `maxTokens` + 256, rounded up to a multiple of
   256 (llama.cpp pads to that anyway) and capped at `HardwareAnalyzer.recommendedContextWindow(for:)`. A token
   never covers less than one byte, so below the cap the prompt always fits; the price is over-reserving, since
   English text averages several bytes per token. When the cap applies, the window can fill before the answer
   ends, and generation then stops without an error, cutting the output as `maxTokens` does.
-- **Sampling:** the main session's temperature, top-p and thread count. No tools.
+- **Sampling:** the loaded model's temperature, top-p and thread count. No tools.
 - **Scheduling:** calls on one backend, constrained or not, take turns in arrival order; the dedicated client is
-  freed before the call returns, and the main session is never touched. A call cancelled before its turn throws
-  `CancellationError` without decoding. The turns do **not** cover decodes LocalLLMClient keeps running in its own
-  tasks after a main-session call has returned: a call cancelled during its prefill, or a call with tools cut
-  short by `maxTokens`, keeps decoding, and the next call overlaps it (a constrained one on its own context, an
-  unconstrained one on the same context, where it has crashed or hung).
+  freed before the call returns, and the loaded model's context is never touched. A call cancelled before its turn
+  throws `CancellationError` without decoding. A chat turn cut short can still be finishing its last token (with
+  tools, decoding to the end of generation) when a constrained call starts; the constrained call overlaps it on
+  its own context.
 
 Measured on an M1 Pro (32 GB, macOS 26.7.1) with Qwen2.5-0.5B-Instruct Q4_K_M (491 MB), a ~150-byte prompt,
 `maxTokens: 128` and ~26 generated tokens (768-token dedicated context; the main session ran at 8192). Other builds
@@ -195,7 +232,8 @@ iOS it counts toward the jetsam limit, and so does the per-call peak.
 - `maxTokens` still cuts the output, and a cut JSON object does not parse. Budget for the whole object. Reaching
   the context cap cuts it the same way, also without an error.
 - A cancelled constrained call throws `CancellationError`; it never returns the partial output.
-- The prompt is flattened the same way as an unconstrained call (`System: …` / `User: …` in one user turn).
+- The prompt is rendered with the model's chat template like an unconstrained call, the system prompt in its own
+  turn, but without tool instructions.
 - Only `chat(_:systemPrompt:maxTokens:constraint:)` and `stream(_:systemPrompt:maxTokens:constraint:)` take a
   constraint; the history, vision and `AuraSession` paths do not.
 
@@ -282,7 +320,7 @@ running generation and, until `willEnterForeground`, refuses new ones; both thro
 - **MLX:** stops at the next token.
 - **GGUF** (full load and streaming): the call returns at once. LocalLLMClient pauses llama.cpp between
   tokens from `willResignActive`; the paused decode runs one more token after `didBecomeActive` and then
-  stops, so a generation started right after returning can overlap it.
+  stops. The next turn on that model waits for it; a constrained call, on its own context, can overlap it.
 
 To free memory on backgrounding as well:
 
