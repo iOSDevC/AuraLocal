@@ -57,10 +57,10 @@ complete downloads with a known size whose `HardwareAnalyzer` fit on this device
 *Streaming*), and never for MLX on the Simulator.
 
 **Gated repos.** Accept the license on the repo page, create a read token, and save it in the **Settings** tab
-or from **Add a token** (also the key button) in the detail view. It
-goes to the Keychain item that AuraLocal's downloaders (`ModelDownloads`, `GGUFModelDownloader`, `ChunkedDownloader`)
-and the checker read, as does AuraUI's `ModelSection` — not the MLX load path (service `dev.auralocal.remote`,
-account `download.huggingface`) and is sent to `huggingface.co` only. On iOS that item belongs to this app; other
+or from **Add a token** (also the key button) in the detail view. It is stored in the Keychain (service
+`dev.auralocal.remote`, account `download.huggingface`) and read by AuraLocal's downloaders (`ModelDownloads`,
+`GGUFModelDownloader`, `ChunkedDownloader`), by the checker and by AuraUI's `ModelSection`; the MLX load path does
+not read it. It is sent only to `huggingface.co` and `hf.co`. On iOS that item belongs to this app; other
 AuraLocal apps don't see it. Search stays anonymous, so private repos don't appear in results. No OAuth sign-in
 (it would need a registered Hugging Face OAuth app and URL scheme).
 

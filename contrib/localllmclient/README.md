@@ -193,8 +193,10 @@ Tempting, but it re-introduces exactly the failure fixed in `4dfcbb6`: SwiftPM h
 every downstream integrator. Wait for these to land upstream in a tagged release.
 
 Nothing in AuraLocal depends on these patches. The iOS work that shipped without them —
-jetsam fail-safe, the `extended-virtual-addressing` entitlement, prefill batch sizing, and the
-context-window anchor — is already in the repo and stands on its own.
+jetsam fail-safe, the `extended-virtual-addressing` entitlement and prefill batch sizing — is
+already in the repo and stands on its own. The context-window anchor is in the repo too, but it
+saves nothing while GGUF turns prefill the whole history; it matters again only once they reuse a
+cached prefix (see above).
 
 ## Separately blocked on upstream: the vendored llama.cpp build
 
