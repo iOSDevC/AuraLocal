@@ -346,7 +346,7 @@ says where it comes from (the CLI and the app show it). The 32 GB figure was mea
 
 | Preset (`--device`) | Budget | Source |
 |---------------------|--------|--------|
-| `this-device` | measured now | Mac: Metal `recommendedMaxWorkingSetSize`; iPhone: `os_proc_available_memory()` |
+| `this-device` | measured now | Mac: Metal `recommendedMaxWorkingSetSize`; iPhone: the app's memory limit, `os_proc_available_memory()` + `phys_footprint`, capped at 74% of RAM |
 | `iphone-4gb` | ≈2.0 GB | estimate: third-party jetsam measurement, ActiveHard 2098 MB on an iPhone 12 |
 | `iphone-6gb` | ≈3.0 GB | estimate: this guide's [memory budgets]({{ '/guide/memory' | relative_url }}), increased-memory-limit entitlement |
 | `iphone-8gb` | ≈4.5 GB | estimate: same source |

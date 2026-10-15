@@ -85,6 +85,11 @@ base (`apple/coreml-stable-diffusion-2-1-base-palettized`, `split_einsum_v2/comp
 - **One at a time.** A second concurrent `generate` on the same engine throws `.busy`.
 - **Cancellation.** Cancelling the calling task stops at the next denoising step and throws
   `CancellationError`. Loading the model and the final decode cannot be interrupted.
+- **Background and device conditions.** Moving the app to the background stops the run the same way and
+  throws `GenerationInterrupted` (`.appBackgrounded`); while the app is in the background, `generate` throws it
+  before loading. `CoreMLDiffusionEngine(deviceGuard: DeviceConditions())` opts in to the heat, Low Power Mode
+  and battery guard, checked before the run and every `checkInterval` steps; at block it throws
+  `GenerationInterrupted` (`.deviceConditions`). See [Memory]({{ '/guide/memory' | relative_url }}#device-conditions).
 
 Errors are `OnDeviceImageGenError`: `.unsupportedPlatform` (visionOS), `.simulatorUnsupported`,
 `.modelNotDownloaded`, `.insufficientMemory`, `.invalidRequest`, `.busy`, `.modelLoadFailed`,
