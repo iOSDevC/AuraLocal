@@ -491,7 +491,7 @@ enum LayoutFixture {
 
     static func model(sizeMB: Int = 1000, layers: Int, kvHeads: Int, headDim: Int, kvLayers: KVCacheLayout?) -> Model {
         Model(id: "layout", repoID: "o/layout", displayName: "layout", category: .text, domain: nil, docTags: false,
-              format: .mlx, approximateSizeMB: sizeMB, isUncensored: false, ggufFilename: nil,
+              format: .mlx, approximateSizeMB: sizeMB, isUncensored: false, license: nil, ggufFilename: nil,
               defaultDocumentPrompt: nil, numLayers: layers, kvHeads: kvHeads, headDim: headDim, kvLayers: kvLayers,
               experts: nil, maxContextLength: nil, downloadURL: nil, localFileURL: nil)
     }

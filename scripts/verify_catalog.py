@@ -15,9 +15,10 @@ the same code that writes `aura models check --entry` (GGUF entries read their o
 build it first with `swift build --product aura`.
 
 Per entry it checks: the repo exists (301/307 = renamed, `gated` = needs a token, 401/404 = gone or private);
-the GGUF file name exactly as listed (case, subfolders, split parts); the size; numLayers / kvHeads / headDim /
-kvLayers / experts / maxContextLength. Requests are capped at --max-requests per 300 s (HF allows 500) and a 429
-backs off using Retry-After or the RateLimit header. HF_TOKEN, when set, is sent to huggingface.co only.
+the license on the model card; the GGUF file name exactly as listed (case, subfolders, split parts); the size;
+numLayers / kvHeads / headDim / kvLayers / experts / maxContextLength. Requests are capped at --max-requests per
+300 s (HF allows 500) and a 429 backs off using Retry-After or the RateLimit header. HF_TOKEN, when set, is sent
+to huggingface.co only.
 """
 from __future__ import annotations
 
@@ -43,7 +44,7 @@ HF = "https://huggingface.co"
 WINDOW_SECONDS = 300
 # CatalogEntry.jsonText order; `domain` sits after `id` in the hand-written entries.
 KEY_ORDER = ["id", "domain", "repoID", "displayName", "category", "docTags", "format", "approximateSizeMB",
-             "isUncensored", "ggufFilename", "defaultDocumentPrompt", "numLayers", "kvHeads", "headDim",
+             "isUncensored", "license", "ggufFilename", "defaultDocumentPrompt", "numLayers", "kvHeads", "headDim",
              "maxContextLength", "kvLayers", "experts"]
 CONTEXT_CEILING = 32_768  # CatalogEntry.contextCeiling
 SHARD = re.compile(r"-\d{5}-of-\d{5}\.gguf$")
@@ -135,6 +136,7 @@ class RepoState:
     status: str  # ok | renamed | gone | error
     canonical: str
     gated: str | None = None
+    license: str | None = None
     files: dict = field(default_factory=dict)  # path -> bytes
     detail: str = ""
 
@@ -155,7 +157,18 @@ def fetch_repo(repo: str, limiter: RateLimiter) -> RepoState:
     canonical = info.get("id", canonical)
     files = {s["rfilename"]: (s.get("lfs") or {}).get("size", s.get("size", 0)) for s in info.get("siblings", [])}
     gated = info.get("gated") or None
-    return RepoState(status, canonical, gated=gated if isinstance(gated, str) else None, files=files)
+    return RepoState(status, canonical, gated=gated if isinstance(gated, str) else None,
+                     license=card_license(info.get("cardData") or {}), files=files)
+
+
+def card_license(card: dict) -> str | None:
+    """CatalogEntry.catalogLicense: the card's `license_name` when its license is `other`, else the license id."""
+    value = card.get("license")
+    if isinstance(value, list):
+        value = value[0] if value else None
+    if not isinstance(value, str) or not value:
+        return None
+    return (card.get("license_name") or value) if value.lower() == "other" else value
 
 
 def aura_cost(files: dict) -> int:
@@ -223,6 +236,10 @@ def compare(entry: dict, state: RepoState, report: dict | None, tolerance: float
     diffs: list[Diff] = []
     if state.status == "renamed" or state.canonical != entry["repoID"]:
         diffs.append(Diff("repoID", entry["repoID"], state.canonical, True, "renamed on HF (old name redirects)"))
+    if state.license is None and entry.get("license") is not None:
+        diffs.append(Diff("license", entry["license"], None, False, "the model card declares no license"))
+    elif state.license is not None and entry.get("license") != state.license:
+        diffs.append(Diff("license", entry.get("license"), state.license, True, "from the model card"))
 
     if entry["format"] == "gguf":
         size = gguf_file_diffs(entry, state, diffs)
@@ -312,7 +329,7 @@ def dump(catalog: dict) -> str:
 
 def set_field(entry: dict, key: str, value) -> dict:
     """Set or drop `key`, placing a new key where CatalogEntry.jsonText would."""
-    if value is None and key in ("kvLayers", "experts", "maxContextLength"):
+    if value is None and key in ("license", "kvLayers", "experts", "maxContextLength"):
         entry.pop(key, None)
         return entry
     if key in entry:
@@ -395,6 +412,8 @@ def main() -> int:
         notes = []
         if state.gated:
             notes.append(f"gated ({state.gated}): downloads need a Hugging Face token")
+        if state.status in ("ok", "renamed") and state.license is None:
+            notes.append("the model card declares no license")
         if verdict == "notRunnable":
             notes.append(f"aura: not runnable — {report.get('headline')}")
         print_entry(entry, open_diffs, [d for d in diffs if d.field in skipped], notes)

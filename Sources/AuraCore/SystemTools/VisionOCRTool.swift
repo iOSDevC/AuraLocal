@@ -81,6 +81,12 @@ public struct VisionOCRTool: SystemTool {
         public let text: String
         public let confidence: Float   // 0…1
         public let boundingBox: CGRect
+
+        public init(text: String, confidence: Float, boundingBox: CGRect) {
+            self.text = text
+            self.confidence = confidence
+            self.boundingBox = boundingBox
+        }
     }
 
     /// OCR a `CGImage` line by line, in Vision's reading order. Same options as

@@ -413,13 +413,14 @@ public enum HardwareAnalyzer {
         Double(bytes) / 1_073_741_824 * kind.peakMultiplier
     }
 
-    /// Analyze all models against the current device hardware.
+    /// Analyze `models` (by default ``Model/listedModels``, which leaves uncensored ones out) against the current
+    /// device hardware.
     ///
     /// Results are sorted: best fit first, `.tooLarge` models last.
     /// Within the same fit level, downloaded models appear first,
     /// then sorted by memory utilization (most efficient first).
     public static func compatibleModels(
-        from models: [Model] = Model.allModels,
+        from models: [Model] = Model.listedModels,
         profile: HardwareProfile = .current()
     ) -> [ModelCompatibility] {
         models

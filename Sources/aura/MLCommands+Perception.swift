@@ -65,6 +65,41 @@ extension AuraCLI {
         }
     }
 
+    static func runDocument(_ args: [String]) async throws {
+        let parsed = try CLIArguments(args, options: ["--lang"])
+        let data = try imageData(parsed, usage: "aura ml document <image> [--lang es-ES]...")
+        let tool = VisionDocumentTool()
+        try await requireAvailable(tool)
+        #if compiler(>=6.2)
+        // requireAvailable has already thrown on an earlier macOS.
+        guard #available(iOS 26.0, macOS 26.0, visionOS 26.0, *) else { return }
+        let documents = try await tool.readDocuments(inImageData: data, languages: parsed.values("--lang"))
+        if documents.isEmpty { err("(no document found)\n") }
+        for (index, document) in documents.enumerated() {
+            if documents.count > 1 { print("document \(index + 1)") }
+            if let title = document.title { print("title      \(oneLine(title))") }
+            for paragraph in document.paragraphs {
+                print("paragraph  \(box(paragraph.boundingBox))  \(oneLine(paragraph.text))")
+            }
+            for (number, table) in document.tables.enumerated() {
+                print("table \(number + 1)    \(box(table.boundingBox))")
+                for row in table.textRows { print("  " + row.map(oneLine).joined(separator: " | ")) }
+            }
+            for match in document.detectedData {
+                var value = ""
+                if let amount = match.amount { value = "\(amount) \(match.currency ?? "")  " }
+                if let date = match.date { value = "\(date.formatted(.iso8601))  " }
+                let kind = match.kind.rawValue.padding(toLength: 22, withPad: " ", startingAt: 0)
+                print("\(kind) \(value)\(match.boundingBox.map(box) ?? "no box")  \(oneLine(match.text))")
+            }
+        }
+        #endif
+    }
+
+    private static func oneLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline).joined(separator: " / ")
+    }
+
     // MARK: - Language
 
     static func runLanguage(_ args: [String]) async throws {

@@ -10,6 +10,7 @@ extension AuraCLI {
         "barcodes": runBarcodes,
         "faces": runFaces,
         "ocr-lines": runOCRLines,
+        "document": runDocument,
         "language": runLanguage,
         "entities": runEntities,
         "sentiment": runSentiment,
@@ -43,6 +44,7 @@ extension AuraCLI {
           aura ml barcodes <image> [--symbology QR]... | --list  Read QR codes and barcodes
           aura ml faces <image>                                  Detect faces and head pose
           aura ml ocr-lines <image> [--lang es-ES]... [--fast]   Text line by line with boxes
+          aura ml document <image> [--lang es-ES]...             Paragraphs, tables, amounts, dates (macOS 26)
 
         LANGUAGE (language, entities and sentiment read stdin when the text is -)
           aura ml language "<text>" [--max N] [--only es,en]     Identify the language

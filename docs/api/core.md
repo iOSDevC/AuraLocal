@@ -652,10 +652,10 @@ public struct ModelCompatibility: Sendable {
 ### Compatible Models
 
 ```swift
-// Every model assessed, none filtered out. Order: .tooLarge last; otherwise downloaded first,
-// then better fit, then lower memory utilization.
+// Every model passed in is assessed, none filtered out; the default leaves uncensored models out.
+// Order: .tooLarge last; otherwise downloaded first, then better fit, then lower memory utilization.
 static func compatibleModels(
-    from models: [Model] = Model.allModels,
+    from models: [Model] = Model.listedModels,
     profile: HardwareProfile = .current()
 ) -> [ModelCompatibility]
 ```
@@ -825,13 +825,18 @@ no `rawValue` initializer). Named models like `.qwen3_1_7b` are static factory p
 ```swift
 public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible
 
-// Collections
+// Collections. allModels has every registered model; the others draw from listedModels, which
+// leaves uncensored models out: only uncensoredModels lists those.
+static var allModels: [Model]
+static var listedModels: [Model]
 static var textModels: [Model]
 static var visionModels: [Model]
 static var specializedModels: [Model]
 static var mlxModels: [Model]
 static var ggufModels: [Model]
 static var runnableModels: [Model]     // filtered by HardwareAnalyzer
+static var uncensoredModels: [Model]
+static func models(in domain: Domain) -> [Model]
 
 // Unavailable (a compile error that gives the reason): the catalog was checked against Hugging Face
 // and these repos hold no loadable weights or do not exist:
@@ -843,6 +848,9 @@ var approximateSizeMB: Int
 var purpose: Purpose
 var format: ModelFormat                // .mlx or .gguf
 var ggufFilename: String?              // nil for MLX models
+var isUncensored: Bool
+var license: String?                   // the card's license, or its license_name when "other"; nil = not recorded
+var hasPermissiveLicense: Bool         // license is apache-2.0 or mit (Model.permissiveLicenses); false when nil
 var isMacOSRecommended: Bool          // true for models ≥15 GB
 var isDownloaded: Bool                 // in ModelStorage.rootDirectory, or a copy an earlier version left in Caches
 var cacheDirectory: URL                // GGUF download folder: <root>/models/<repoID> (not in Caches, despite the name)

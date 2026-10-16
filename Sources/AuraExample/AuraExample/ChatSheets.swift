@@ -180,6 +180,7 @@ struct ChatModelSheet: View {
 /// AuraLocal's catalog of chat models that fit this device, with download, cancel and delete per row.
 struct ChatCatalogList: View {
     @State private var testTarget: DomainTestTarget?
+    @AppStorage("auraExample.showsUncensored") private var showsUncensored = false
 
     var body: some View {
         // Read so the sections are rebuilt when a download finishes or a model is deleted.
@@ -214,6 +215,18 @@ struct ChatCatalogList: View {
                                  color: Self.color(for: domain), models: models) { model in
                         testTarget = DomainTestTarget(model: model, domain: domain)
                     }
+                }
+            }
+            Section {
+                Toggle("Show uncensored models", isOn: $showsUncensored)
+            } footer: {
+                Text("Abliterated and uncensored fine-tunes have their refusal training removed. AuraLocal leaves them "
+                     + "out of its model lists unless an app asks for Model.uncensoredModels.")
+            }
+            if showsUncensored {
+                let uncensored = ChatModels.catalog(Model.uncensoredModels)
+                if !uncensored.isEmpty {
+                    ModelSection(title: "Uncensored", icon: "exclamationmark.shield", color: .gray, models: uncensored)
                 }
             }
         }

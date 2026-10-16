@@ -108,11 +108,13 @@ public struct VisionTab: View {
         }
     }
 
-    /// Downloaded models that fit now first; downloaded ones too large for free memory are left out.
+    /// Downloaded models that fit now first; downloaded ones too large for free memory are left out. Downloaded
+    /// uncensored models are listed too: `visionModels` leaves them out, but the user downloaded them.
     private var modelPicker: some View {
-        let all = Model.visionModels
-        let downloaded = all.filter { $0.isDownloaded && HardwareAnalyzer.assess($0).fitLevel != .tooLarge }
-        let available = all.filter { !$0.isDownloaded }
+        let downloaded = Model.allModels.filter {
+            $0.category == .vision && $0.isDownloaded && HardwareAnalyzer.assess($0).fitLevel != .tooLarge
+        }
+        let available = Model.visionModels.filter { !$0.isDownloaded }
         return HStack {
             Text("Model")
                 .font(.subheadline)

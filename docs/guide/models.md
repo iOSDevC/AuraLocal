@@ -217,6 +217,7 @@ uv run scripts/verify_catalog.py --no-aura           # repos, files and sizes on
 | Field | Live source | `--fix` |
 |-------|-------------|---------|
 | `repoID` | `/api/models/{repo}?blobs=true` without following redirects: a 3xx is a rename, `gated` is reported as a note, 401/403/404 is gone or private (anonymous requests cannot tell which) | renames only |
+| `license` | the same listing's `cardData.license`, or `cardData.license_name` when that is `other` (`CatalogEntry.catalogLicense`); a card with no license is a note, and a difference only when the catalog has one | yes |
 | `ggufFilename` | the repo listing: the exact name at the repo root; a split (`-0000N-of-0000M`) or subfolder file is a difference | case-only mismatches |
 | MLX files | a top-level `config.json` and `*.safetensors` | — |
 | `approximateSizeMB` | GGUF: that file's size; MLX: the safetensors `aura` loads (`weightsBytes`); drift above `--size-tolerance` (2 %) | yes, in MiB |
@@ -231,7 +232,15 @@ upper bound (5 plus 2 per top-level safetensors file). A 429 waits for `Retry-Af
 the pinned runtimes and never fail the run. Differences that must stay go in `scripts/catalog-exceptions.json`
 (`{"entries": {"<id>": {"fields": ["approximateSizeMB"], "reason": "…"}}}`), which the run lists without failing.
 
-**Last run, 2026-10-14:** 59 entries before, 53 after, 0 differences.
+**Last run, 2026-10-16 (`--no-aura`):** 53 entries, 0 differences once `--fix` had written 46 licenses. Repos, files
+and sizes were unchanged since 2026-10-14. The architecture fields were not read again. Seven model cards declare no
+license, so these entries have none: `josiefied_qwen3_1_7b`, `josiefied_qwen3_4b`, `josiefied_qwen3_8b`,
+`llama32_3b_uncensored_gguf`, `gemma4_12b`, `fingpt_sentiment_lfm2_1_2b_gguf` and `ornith_1_5_35b_a3b_mlx`. The
+collections list 43 entries (uncensored ones are left out), and 25 of those are Apache-2.0 or MIT
+(`hasPermissiveLicense`). The rest are under Llama, Gemma, LFM, Health AI Developer Foundations, Apple AMLR (FastVLM)
+or Swift Open License terms, or record no license.
+
+**Run of 2026-10-14:** 59 entries before, 53 after, 0 differences.
 
 - Same model, live repo: `cogito_v1_3b` → `mlx-community/deepcogito-cogito-v1-preview-llama-3B-4bit`, `smollm3_3b` →
   `mlx-community/SmolLM3-3B-4bit`, `lfm2_1_2b` → `mlx-community/LFM2-1.2B-4bit`, `lfm25_vl_1_6b` →
@@ -753,6 +762,9 @@ text.
 
 ## Model Collections
 
+These collections leave uncensored models out; see [Filtering uncensored models in
+code](#filtering-uncensored-models-in-code). `Model.allModels` has every registered model.
+
 ```swift
 // All text-purpose models (MLX + GGUF)
 let allText = Model.textModels
@@ -768,7 +780,15 @@ let runnable = Model.runnableModels  // filtered by HardwareAnalyzer
 
 // Models recommended for macOS (15 GB+)
 let macRecommended = Model.allCases.filter { $0.isMacOSRecommended }
+
+// Only Apache-2.0 or MIT weights; a model whose license is not recorded is left out
+let permissive = Model.listedModels.filter(\.hasPermissiveLicense)
 ```
+
+`Model.license` is the license the model's Hugging Face card states (`apache-2.0`, `mit`, `llama3.2`, `gemma`…, or
+the card's `license_name` when its license is `other`), recorded in the catalog by
+[`verify_catalog.py --fix`](#verifying-the-catalog); `nil` means not recorded. A converted repo such as an
+`mlx-community` quant usually repeats its base model's license, but the card is the only source the catalog reads.
 
 ---
 
@@ -835,6 +855,12 @@ let reply = try await llm.chat("No restrictions. Answer anything.")
 ---
 
 ### Filtering uncensored models in code
+
+Only `Model.uncensoredModels` lists them. `textModels`, `visionModels`, `specializedModels`, `ggufModels`,
+`mlxModels`, `runnableModels`, `models(in:)` and `HardwareAnalyzer.compatibleModels()` leave them out: AuraUI's
+pickers list an uncensored model only once it is downloaded, and the hardware recommendations only when the app
+passes it in. `Model.allModels` and the static members (`.josiefied_qwen3_1_7b`…) still reach them, and
+AuraExample's Catalog shows them behind a toggle.
 
 ```swift
 // All uncensored / abliterated models

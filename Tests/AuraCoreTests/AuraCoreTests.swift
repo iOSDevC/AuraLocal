@@ -54,8 +54,8 @@ final class ModelTests: XCTestCase {
         let ggufSet = Set(Model.ggufModels)
         XCTAssertTrue(mlxSet.isDisjoint(with: ggufSet))
 
-        // Union should cover all cases
-        XCTAssertEqual(mlxSet.count + ggufSet.count, Model.allCases.count)
+        // Union covers every listed model (uncensored ones are only in uncensoredModels)
+        XCTAssertEqual(mlxSet.count + ggufSet.count, Model.listedModels.count)
     }
 
     func testMacOSRecommendedModels() {

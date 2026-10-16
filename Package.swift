@@ -149,9 +149,19 @@ let package = Package(
         // `aura` — a headless integration harness that drives the hybrid + tools
         // features (provider detection, local-first `aura ask` escalation, native OCR).
         // Cxx interop is required because it links AuraCore (llama.cpp).
+        // MARK: - Recibo spike (not a product)
+        // The deterministic half of the Recibo spike: the rule-based baseline, the prompt, the OCR anchors and the
+        // scoring that `aura receipt` drives. Recibo itself lives in its own repository.
+        .target(
+            name: "ReceiptSpike",
+            dependencies: ["AuraCore"],
+            path: "Sources/ReceiptSpike",
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
+
         .executableTarget(
             name: "aura",
-            dependencies: ["AuraCore", "AuraImageGen"],
+            dependencies: ["AuraCore", "AuraImageGen", "ReceiptSpike"],
             path: "Sources/aura",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
@@ -172,6 +182,12 @@ let package = Package(
             name: "AuraDocsTests",
             dependencies: ["AuraDocs", "AuraCore"],
             path: "Tests/AuraDocsTests",
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
+        .testTarget(
+            name: "ReceiptSpikeTests",
+            dependencies: ["ReceiptSpike", "AuraCore"],
+            path: "Tests/ReceiptSpikeTests",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         .testTarget(
