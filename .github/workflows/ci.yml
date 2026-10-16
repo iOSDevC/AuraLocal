@@ -74,7 +74,8 @@ jobs:
         run: swift test --skip-build --build-system swiftbuild
       - name: Report non-blocking test failures
         if: steps.test.outcome == 'failure'
-        run: echo "::warning::Tests failed on Xcode ${{ matrix.xcode }} and do not block this run; see issue #2."
+        run: |
+          echo "::warning::Tests failed on Xcode ${{ matrix.xcode }} and do not block this run; see issue #2."
 
   ios:
     name: AuraExample for iOS (Xcode ${{ matrix.xcode }})
@@ -174,7 +175,8 @@ jobs:
         run: swift test --skip-build --build-system swiftbuild
       - name: Report non-blocking test failures
         if: steps.test.outcome == 'failure'
-        run: echo "::warning::Tests failed on Xcode ${{ matrix.xcode }} and do not block this run; see issue #2."
+        run: |
+          echo "::warning::Tests failed on Xcode ${{ matrix.xcode }} and do not block this run; see issue #2."
 
   canary-ios:
     name: Canary, fresh resolve of AuraExample for iOS (Xcode ${{ matrix.xcode }})
