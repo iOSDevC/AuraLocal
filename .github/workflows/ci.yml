@@ -63,9 +63,12 @@ jobs:
         # Fails when Package.swift and the committed lockfile disagree.
         run: swift package resolve --force-resolved-versions
       - name: Build
-        run: swift build --build-tests --force-resolved-versions
+        # Swift 6.4 builds with swiftbuild by default; 6.3 (Xcode 26.6) still defaults to the native build
+        # system, which does not compile mlx-swift's Metal shaders, so the first MLX test aborts the run with
+        # "Failed to load the default metallib".
+        run: swift build --build-tests --force-resolved-versions --build-system swiftbuild
       - name: Test
-        run: swift test --skip-build
+        run: swift test --skip-build --build-system swiftbuild
 
   ios:
     name: AuraExample for iOS (Xcode ${{ matrix.xcode }})
@@ -157,9 +160,9 @@ jobs:
               print(f"| {name} | {old.get(name, '-')} | {new.get(name, '-')}{mark} |")
           PY
       - name: Build
-        run: swift build --build-tests
+        run: swift build --build-tests --build-system swiftbuild
       - name: Test
-        run: swift test --skip-build
+        run: swift test --skip-build --build-system swiftbuild
 
   canary-ios:
     name: Canary, fresh resolve of AuraExample for iOS (Xcode ${{ matrix.xcode }})
