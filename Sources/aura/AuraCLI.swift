@@ -20,6 +20,7 @@ struct AuraCLI {
             case "ml":               try await runML(rest)
             case "imagegen":         try await runImageGen(rest)
             case "models":           try await runModels(rest)
+            case "receipt":          try await runReceipt(rest)
             case "help", "-h", "--help": printUsage()
             default:
                 err("Unknown command: \(command)\n")
@@ -252,15 +253,19 @@ struct AuraCLI {
                                                 \(RemoteTarget.defaultAnthropicModel))
           aura ocr <image>                    Extract text from an image via native Vision OCR
           aura ml <subcommand> …              Run an on-device ML tool (`aura ml help` lists them):
-                                                classify-image, barcodes, faces, ocr-lines, language,
-                                                entities, sentiment, similarity, sounds, coreml-describe,
-                                                coreml-predict, train-text, classify-text
+                                                classify-image, barcodes, faces, ocr-lines, document,
+                                                language, entities, sentiment, similarity, sounds,
+                                                coreml-describe, coreml-predict, train-text, classify-text
           aura imagegen "<prompt>" [--lora <p>]  Generate an image via mflux/FLUX (macOS; needs mflux)
           aura models search "<query>" [--format mlx|gguf] [--device <preset>] [--limit N]
                                               Search Hugging Face with a runs-here verdict per repo
           aura models check <repo> [--device <preset>] [--json] [--entry]
                                               Why a repo does or doesn't run; its models.json entry
           aura models devices                 Device presets (this device, iPhone classes, Macs)
+          aura receipt extract <image>... [--model <id>]
+                                              Receipt fields by rule and, with --model, by a local model
+          aura receipt eval <labels.csv> [--model <id>] [--min-total 0.9]…
+                                              Score both against hand-labelled receipts (macOS 26)
 
         ENV (used by `ask`):
           OPENAI_API_KEY      --provider openai; else Keychain account cloud.openai

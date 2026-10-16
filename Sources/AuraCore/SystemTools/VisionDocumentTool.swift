@@ -42,11 +42,28 @@ public struct VisionDocumentTool: SystemTool {
 
         /// The ``DetectedData/Kind/moneyAmount`` matches, e.g. a receipt's subtotal, tax and total.
         public var amounts: [DetectedData] { detectedData.filter { $0.kind == .moneyAmount } }
+
+        /// For fixtures and tests; ``VisionDocumentTool`` builds these from Vision's observations.
+        public init(text: String, title: String? = nil, paragraphs: [Paragraph] = [],
+                    lines: [VisionOCRTool.RecognizedLine] = [], tables: [Table] = [],
+                    detectedData: [DetectedData] = []) {
+            self.text = text
+            self.title = title
+            self.paragraphs = paragraphs
+            self.lines = lines
+            self.tables = tables
+            self.detectedData = detectedData
+        }
     }
 
     public struct Paragraph: Sendable, Equatable {
         public let text: String
         public let boundingBox: CGRect
+
+        public init(text: String, boundingBox: CGRect) {
+            self.text = text
+            self.boundingBox = boundingBox
+        }
     }
 
     public struct Table: Sendable, Equatable {
@@ -56,6 +73,11 @@ public struct VisionDocumentTool: SystemTool {
 
         /// Each row's cell texts, for a caller that needs only the grid.
         public var textRows: [[String]] { rows.map { $0.map(\.text) } }
+
+        public init(rows: [[Cell]], boundingBox: CGRect) {
+            self.rows = rows
+            self.boundingBox = boundingBox
+        }
     }
 
     public struct Cell: Sendable, Equatable {
@@ -63,6 +85,13 @@ public struct VisionDocumentTool: SystemTool {
         public let rowRange: ClosedRange<Int>
         public let columnRange: ClosedRange<Int>
         public let boundingBox: CGRect
+
+        public init(text: String, rowRange: ClosedRange<Int>, columnRange: ClosedRange<Int>, boundingBox: CGRect) {
+            self.text = text
+            self.rowRange = rowRange
+            self.columnRange = columnRange
+            self.boundingBox = boundingBox
+        }
     }
 
     /// A span of the document's text that Data Detection matched to a kind of data.
@@ -83,6 +112,16 @@ public struct VisionDocumentTool: SystemTool {
         public let currency: String?
         /// The start of a ``Kind/date`` match.
         public let date: Date?
+
+        public init(kind: Kind, text: String, boundingBox: CGRect? = nil, amount: Decimal? = nil,
+                    currency: String? = nil, date: Date? = nil) {
+            self.kind = kind
+            self.text = text
+            self.boundingBox = boundingBox
+            self.amount = amount
+            self.currency = currency
+            self.date = date
+        }
     }
 
     public func availability() async -> SystemToolAvailability {

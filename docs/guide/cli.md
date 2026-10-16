@@ -40,6 +40,7 @@ aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>]
 aura ocr <image>                    # native Vision OCR; ignores EXIF orientation (camera photos: aura ml ocr-lines)
 aura ml <subcommand> …              # run an on-device ML tool (see below)
 aura models search|check|devices …  # which Hugging Face models AuraLocal can run (see below)
+aura receipt extract|eval …          # receipt fields by rule and by a local model, scored (macOS 26; see below)
 aura imagegen "<prompt>" [--model schnell|dev|<repo>] [--base-model schnell|dev]
               [--lora <file.safetensors> [--lora-scale S]]... [--steps N] [--seed N]
               [--quantize 3|4|6|8] [--low-ram] [--out <dir>]   # FLUX via mflux (macOS; needs uv tool install mflux)
@@ -169,6 +170,42 @@ blocker withholds the entry, and HF's `gated` mode. `--gguf <file>` reads that G
 whole top-level quant.
 `--device` defaults to `this-device` (see `aura models devices`); `--limit` defaults to 15 (1–100).
 `search` and `check` query huggingface.co, so they need a network connection.
+
+## Receipt fields (`aura receipt`)
+
+A harness for measuring how well a local model reads receipts. `VisionDocumentTool` reads the image, and the
+fields (merchant, date, total, tax, currency) are filled two ways from the same text:
+
+- **By rule (the baseline):** the last amount on the last line that names a total and is not a subtotal or tax,
+  the first line that names a tax, the first detected date, and the document title or first plain line as the
+  merchant.
+- **By a model (`--model`):** temperature 0, a JSON Schema the reply must follow, and the OCR text plus the
+  amounts and dates Data Detection found as the only input.
+
+Each model field is then checked against the receipt: whether its value is printed there ("anchored"). An app can
+send an unanchored field to review instead of trusting it.
+
+```
+aura receipt extract <image>... [--model <id | .gguf path>] [--lang es-MX]...
+aura receipt eval <labels.csv> [--images <dir>] [--model <id | .gguf path>] [--lang es-MX]...
+                  [--min-total 0.9] [--min-date 0.9] [--min-merchant 0.8] [--min-tax 0.8] [--report <out.json>]
+```
+
+The labels CSV has a header naming `file`, `merchant`, `date` (`YYYY-MM-DD`) and `total`, and optionally `tax` and
+`currency`. Amounts use a dot (`1234.50`), and an empty cell means the receipt does not show that field:
+
+```
+file,merchant,date,total,tax,currency
+plaza-0303.jpg,Supermercado La Plaza,2026-03-03,43.50,6.00,MXN
+cafe.heic,"Coffee Bar, Inc.",2026-02-14,8.75,,USD
+```
+
+`eval` prints which fields each receipt got right, then accuracy per field for the baseline and the model. With
+`--min-*` thresholds, decided before the run, it ends with `gate: PASS`, or `gate: FAIL` and exit status 1. The model
+is gated, or the baseline when there is no `--model`. Totals and taxes compare by value and dates exactly. Merchants
+compare by letters and digits, and either name may contain the other ("OXXO" matches "OXXO Tienda 123").
+`--report` writes every receipt's fields and results as JSON. `--model` takes a catalog id (`qwen35_2b_text`,
+`qwen3_4b`) or a local or Hugging Face `.gguf`, and the model is loaded once for the whole run.
 
 ## Homebrew
 
