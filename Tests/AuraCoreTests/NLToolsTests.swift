@@ -121,10 +121,10 @@ final class NLToolsTests: XCTestCase {
 
     // MARK: - Sentiment
 
-    func testSentimentSupportsEnglishAndSpanish() {
-        let tool = NLSentimentTool()
-        XCTAssertTrue(tool.supports(language: "en"))
-        XCTAssertTrue(tool.supports(language: "es"))
+    /// Spanish sentiment depends on assets some machines lack (some CI runners among them, #2), so only the Spanish
+    /// tests below are gated on it.
+    func testSentimentSupportsEnglish() {
+        XCTAssertTrue(NLSentimentTool().supports(language: "en"))
     }
 
     func testSentimentSignForClearEnglish() throws {
@@ -139,6 +139,7 @@ final class NLToolsTests: XCTestCase {
 
     func testSentimentSignForClearSpanish() throws {
         let tool = NLSentimentTool()
+        try XCTSkipUnless(tool.supports(language: "es"), "No Spanish sentiment model on this host.")
         for hint in [nil, "es"] {
             let positive = try XCTUnwrap(tool.score(
                 "Me encanta este producto, es absolutamente maravilloso y funciona perfectamente.", language: hint))
