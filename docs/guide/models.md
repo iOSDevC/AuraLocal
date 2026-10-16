@@ -232,7 +232,15 @@ upper bound (5 plus 2 per top-level safetensors file). A 429 waits for `Retry-Af
 the pinned runtimes and never fail the run. Differences that must stay go in `scripts/catalog-exceptions.json`
 (`{"entries": {"<id>": {"fields": ["approximateSizeMB"], "reason": "…"}}}`), which the run lists without failing.
 
-**Last run, 2026-10-14:** 59 entries before, 53 after, 0 differences.
+**Last run, 2026-10-16 (`--no-aura`):** 53 entries, 0 differences once `--fix` had written 46 licenses. Repos, files
+and sizes were unchanged since 2026-10-14. The architecture fields were not read again. Seven model cards declare no
+license, so these entries have none: `josiefied_qwen3_1_7b`, `josiefied_qwen3_4b`, `josiefied_qwen3_8b`,
+`llama32_3b_uncensored_gguf`, `gemma4_12b`, `fingpt_sentiment_lfm2_1_2b_gguf` and `ornith_1_5_35b_a3b_mlx`. The
+collections list 43 entries (uncensored ones are left out), and 25 of those are Apache-2.0 or MIT
+(`hasPermissiveLicense`). The rest are under Llama, Gemma, LFM, Health AI Developer Foundations, Apple AMLR (FastVLM)
+or Swift Open License terms, or record no license.
+
+**Run of 2026-10-14:** 59 entries before, 53 after, 0 differences.
 
 - Same model, live repo: `cogito_v1_3b` → `mlx-community/deepcogito-cogito-v1-preview-llama-3B-4bit`, `smollm3_3b` →
   `mlx-community/SmolLM3-3B-4bit`, `lfm2_1_2b` → `mlx-community/LFM2-1.2B-4bit`, `lfm25_vl_1_6b` →

@@ -75,7 +75,8 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   links Data Detection finds; `aura ml document <image>` prints them.
 - `Model.license`, the license the model's Hugging Face card states, and `Model.hasPermissiveLicense` (Apache-2.0
   or MIT; an unrecorded license is not permissive). The catalog's `license` key is checked and written by
-  `scripts/verify_catalog.py`, and `aura models check --entry` fills it in. `Model.listedModels` is the catalog
+  `scripts/verify_catalog.py`, and `aura models check --entry` fills it in. 46 of the 53 entries record one; the
+  other seven model cards declare none. `Model.listedModels` is the catalog
   without its uncensored entries.
 - Continuous integration (`.github/workflows/ci.yml`) and a weekly canary that resolves without the lockfile.
 
