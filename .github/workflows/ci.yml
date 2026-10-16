@@ -99,6 +99,23 @@ jobs:
           if ! xcrun -sdk iphoneos metal --version >/dev/null 2>&1; then
             xcodebuild -downloadComponent MetalToolchain
           fi
+      - name: Resolve packages
+        # A runner that loses DNS mid-clone (mlx-c, a submodule of mlx-swift) failed the build before it compiled.
+        # A failed attempt can leave a partial checkout, so it is removed before the next one.
+        run: |
+          for attempt in 1 2 3; do
+            if xcodebuild -resolvePackageDependencies \
+              -project Sources/AuraExample/AuraExample.xcodeproj \
+              -scheme AuraExample \
+              -derivedDataPath .build/xcode \
+              -onlyUsePackageVersionsFromResolvedFile; then
+              exit 0
+            fi
+            echo "::warning::Package resolution failed on attempt $attempt of 3."
+            rm -rf .build/xcode/SourcePackages
+            sleep 30
+          done
+          exit 1
       - name: Build
         run: |
           xcodebuild build \
