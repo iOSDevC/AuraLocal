@@ -106,7 +106,7 @@ final class ContextWindowTests: XCTestCase {
         Model(id: model.id, repoID: model.repoID, displayName: model.displayName,
               category: model.category, domain: model.domain, docTags: model.docTags,
               format: model.format, approximateSizeMB: model.approximateSizeMB,
-              isUncensored: model.isUncensored, ggufFilename: model.ggufFilename,
+              isUncensored: model.isUncensored, license: model.license, ggufFilename: model.ggufFilename,
               defaultDocumentPrompt: model.defaultDocumentPrompt, numLayers: model.numLayers,
               kvHeads: model.kvHeads, headDim: model.headDim, kvLayers: model.kvLayers, experts: model.experts,
               maxContextLength: nil,

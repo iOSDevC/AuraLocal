@@ -43,7 +43,9 @@ public struct TextChatTab: View {
                                     }
                                 }
                             }
-                            let downloaded = Model.textModels.filter(\.isDownloaded)
+                            // Every downloaded one, uncensored included: textModels leaves those out, but the
+                            // user downloaded them.
+                            let downloaded = Model.allModels.filter { $0.category == .text && $0.isDownloaded }
                             if !downloaded.isEmpty {
                                 Section("Downloaded") {
                                     ForEach(downloaded, id: \.self) { downloadedModel in
