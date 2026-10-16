@@ -73,7 +73,7 @@ public struct VisionDocumentTool: SystemTool {
         }
 
         public let kind: Kind
-        /// The matched span of ``Document/text``.
+        /// The matched span of ``Document/text``; empty when Vision gives no range for the match.
         public let text: String
         /// `nil` when Vision gives no region for the span.
         public let boundingBox: CGRect?
