@@ -81,6 +81,7 @@ public enum SystemToolRegistry {
     /// not listed: each wraps one model file, so create them with its URL and use them directly.
     public static let all: [any SystemTool] = [
         VisionOCRTool(),
+        VisionDocumentTool(),
         VisionImageClassificationTool(),
         VisionBarcodeTool(),
         VisionFaceDetectionTool(),

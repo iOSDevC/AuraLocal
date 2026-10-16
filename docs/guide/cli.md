@@ -116,6 +116,7 @@ aura ml classify-image <image> [--max N] [--min 0.1]   # label the scene / objec
 aura ml barcodes <image> [--symbology QR]... | --list  # QR codes and barcodes
 aura ml faces <image>                                  # face boxes and head pose (no identity)
 aura ml ocr-lines <image> [--lang es-ES]... [--fast]   # text line by line with boxes
+aura ml document <image> [--lang es-ES]...             # paragraphs, tables, amounts and dates (macOS 26)
 aura ml language "<text>" [--max N] [--only es,en]     # identify the language
 aura ml entities "<text>" [--lang es]                  # people, places, organizations
 aura ml sentiment "<text>" [--lang es]                 # score from -1 to 1

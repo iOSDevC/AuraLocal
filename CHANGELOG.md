@@ -70,6 +70,9 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 - `AuraSession` enforces an `OutputSchema` by validation and repair.
 - `temperature:` and `topP:` on `ModelManager.load` and `AuraLocal.text`, `.vision` and `.specialized`.
 - `PrivacyInfo.xcprivacy` manifests for `AuraCore`, `AuraImageGen` and the AuraExample app.
+- `VisionDocumentTool` (`system.vision.document`, iOS 26 / macOS 26): Vision's `RecognizeDocumentsRequest` with
+  paragraphs, tables and lines with boxes, and the money amounts (as `Decimal` plus currency), dates, contacts and
+  links Data Detection finds; `aura ml document <image>` prints them.
 - `Model.license`, the license the model's Hugging Face card states, and `Model.hasPermissiveLicense` (Apache-2.0
   or MIT; an unrecorded license is not permissive). The catalog's `license` key is checked and written by
   `scripts/verify_catalog.py`, and `aura models check --entry` fills it in. `Model.listedModels` is the catalog

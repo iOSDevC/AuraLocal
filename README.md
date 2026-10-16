@@ -416,7 +416,7 @@ OS embedding assets for the text's script.
 
 | Category | Tools |
 |---|---|
-| Vision | `VisionOCRTool` (text, or lines with boxes), `VisionImageClassificationTool`, `VisionBarcodeTool` (QR + 23 other symbologies), `VisionFaceDetectionTool` (detection only) |
+| Vision | `VisionOCRTool` (text, or lines with boxes), `VisionDocumentTool` (paragraphs, tables, amounts and dates; iOS 26 / macOS 26), `VisionImageClassificationTool`, `VisionBarcodeTool` (QR + 23 other symbologies), `VisionFaceDetectionTool` (detection only) |
 | Language | `NLLanguageIdentificationTool`, `NLEntityRecognitionTool`, `NLSentimentTool`, `NLEmbeddingTool` |
 | Audio | `SoundClassificationTool` (303 everyday sounds in an audio file) |
 | Custom models | `CoreMLModelTool` (describe and run your own Core ML models), `TextClassifierTool` (Create ML text classifiers), `CoreMLTextEmbeddingTool` (sentence embeddings from a Core ML bundle such as multilingual-e5-small) |
@@ -468,7 +468,7 @@ aura tools                          # list on-device ML tools by category, with 
 aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>] [--base-url <url>]
                                     # ask a bigger model: your llama-server/Ollama unless you name a cloud API
 aura ocr <image>                    # extract text via native Vision OCR
-aura ml <subcommand> …              # on-device ML: classify-image, barcodes, faces, ocr-lines,
+aura ml <subcommand> …              # on-device ML: classify-image, barcodes, faces, ocr-lines, document,
                                     # language, entities, sentiment, similarity, sounds,
                                     # coreml-describe, coreml-predict, train-text, classify-text
 aura imagegen "<prompt>" [--lora <path>] …  # FLUX image generation via mflux (macOS)

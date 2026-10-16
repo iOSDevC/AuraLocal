@@ -32,6 +32,7 @@ perception work (read the text, find the barcode, detect the language), or you c
 | Tool | id | Framework | What it gives you |
 |---|---|---|---|
 | `VisionOCRTool` | `system.vision.ocr` | Vision | Text, or text lines with boxes and confidence |
+| `VisionDocumentTool` | `system.vision.document` | Vision + Data Detection | Paragraphs, tables, and the amounts, dates and contacts in a document (iOS 26, macOS 26) |
 | `VisionImageClassificationTool` | `system.vision.classify` | Vision | Labels from a ~1,300-label taxonomy (`zebra`, `document`, `beach`…) |
 | `VisionBarcodeTool` | `system.vision.barcodes` | Vision | QR, EAN, UPC, Code 128, PDF417, Aztec, Data Matrix… (24 symbologies) |
 | `VisionFaceDetectionTool` | `system.vision.faces` | Vision | Face boxes and head pose. Detection only, never identity |
@@ -98,6 +99,7 @@ What changes is whether it can **run**:
 | Sound classification | ✓ | ✓ | ✓ |
 | `CoreMLModelTool`, `TextClassifierTool` | ✓ | ✓ | depends on the model (see below) |
 | `CoreMLTextEmbeddingTool` (e5 bundle) | ✓ | not run yet | not run yet |
+| `VisionDocumentTool` | macOS 26+ (CI) | not run yet; reports unavailable before iOS 26 | not run yet |
 | `TextClassifierTrainer` | ✓ | ✓ | reports unavailable (no Create ML in the Simulator SDKs) |
 
 {: .note }
@@ -220,6 +222,47 @@ $ aura ml ocr-lines receipt.png
 1.00  box x 0.37 y 0.54 w 0.19 h 0.10  1.25 EUR
 …
 ```
+
+### Documents (iOS 26, macOS 26)
+
+`VisionDocumentTool` runs Vision's `RecognizeDocumentsRequest`. It returns the page's structure, not only its
+lines, and passes the text through Data Detection, so a receipt's total arrives as a `Decimal` with its currency
+and its date as a `Date`. The returned `Document` has these fields:
+
+- `text`, `title` and `paragraphs`, each paragraph with its box.
+- `lines`, the same `RecognizedLine` values `VisionOCRTool.recognizeLines` returns.
+- `tables`, with each cell's text, its row and column ranges and its box. `textRows` gives just the grid.
+- `detectedData`: money amounts, dates, email addresses, phone numbers, postal addresses, links, flight numbers,
+  tracking numbers, payment identifiers and measurements, each with the matched text and its box. `amounts`
+  keeps only the money.
+
+Before iOS 26 / macOS 26 `availability()` reports the tool unavailable and the reading methods do not exist, so
+gate the call with `#available` and fall back to `VisionOCRTool`. `languages` works as in `VisionOCRTool`.
+
+```swift
+import Foundation
+import AuraCore
+
+let receipt = try Data(contentsOf: URL(fileURLWithPath: "/path/to/receipt.jpg"))
+if #available(iOS 26, macOS 26, *) {
+    let documents = try await VisionDocumentTool().readDocuments(inImageData: receipt, languages: ["es-MX"])
+    for document in documents {
+        for amount in document.amounts {
+            print(amount.text, amount.amount ?? 0, amount.currency ?? "?")   // "$12.75" 12.75 USD
+        }
+        for table in document.tables {
+            print(table.textRows.map { $0.joined(separator: " | ") }.joined(separator: "\n"))
+        }
+    }
+}
+```
+
+`aura ml document <image> [--lang es-ES]...` prints one line per paragraph, table row and detected value, each
+with its box.
+
+Data Detection decides which spans are amounts or dates. It does not decide which amount is the total, so an app
+still picks the right one, for example by the label on the same line. It has been run only on rendered test
+images in CI on macOS 26, not yet on photos of real receipts or on iOS.
 
 ### Drawing Vision boxes
 
