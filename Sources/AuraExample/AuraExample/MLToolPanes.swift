@@ -96,6 +96,7 @@ private nonisolated struct ImageAnalysis: Sendable {
     let barcodes: MLOutcome<[VisionBarcodeTool.DetectedBarcode]>
     let faces: MLOutcome<[VisionFaceDetectionTool.DetectedFace]>
     let lines: MLOutcome<[VisionOCRTool.RecognizedLine]>
+    let documents: MLOutcome<[VisionDocumentTool.Document]>
 
     /// Uses the `Data` overloads so EXIF orientation is honoured and boxes match the upright preview.
     static func make(for data: Data) async -> ImageAnalysis {
@@ -103,17 +104,26 @@ private nonisolated struct ImageAnalysis: Sendable {
         let reader = VisionBarcodeTool()
         let detector = VisionFaceDetectionTool()
         let ocr = VisionOCRTool()
+        let documentReader = VisionDocumentTool()
         return ImageAnalysis(
             labels: await MLOutcome.run(classifier) { try classifier.classify(inImageData: data, maxResults: 5) },
             barcodes: await MLOutcome.run(reader) { try reader.detectBarcodes(inImageData: data) },
             faces: await MLOutcome.run(detector) { try detector.detectFaces(inImageData: data) },
-            lines: await MLOutcome.run(ocr) { try ocr.recognizeLines(inImageData: data) })
+            lines: await MLOutcome.run(ocr) { try ocr.recognizeLines(inImageData: data) },
+            documents: await MLOutcome.run(documentReader) {
+                // Before iOS 26 / macOS 26 availability() has already reported the tool unavailable.
+                guard #available(iOS 26, macOS 26, *) else { return [] }
+                return try await documentReader.readDocuments(inImageData: data)
+            })
     }
 
     var boxes: [MLBox] {
         (barcodes.output ?? []).map { MLBox(rect: $0.boundingBox, tint: .blue) }
             + (faces.output ?? []).map { MLBox(rect: $0.boundingBox, tint: .green) }
             + (lines.output ?? []).map { MLBox(rect: $0.boundingBox, tint: .orange) }
+            + (documents.output ?? []).flatMap(\.amounts).compactMap { amount in
+                amount.boundingBox.map { MLBox(rect: $0, tint: .purple) }
+            }
     }
 }
 
@@ -190,6 +200,24 @@ struct MLImageToolsView: View {
                         }
                     }
                 }
+                Section("Document — VisionDocumentTool, amounts in purple") {
+                    MLOutcomeView(outcome: analysis.documents) { documents in
+                        let matches = documents.flatMap(\.detectedData)
+                            .filter { $0.kind == .moneyAmount || $0.kind == .date }
+                        let tables = documents.flatMap(\.tables)
+                        if documents.allSatisfy({ $0.text.isEmpty }) {
+                            Text("No document text found.").foregroundStyle(.secondary)
+                        } else if matches.isEmpty && tables.isEmpty {
+                            Text("No amounts, dates or tables found.").foregroundStyle(.secondary)
+                        }
+                        ForEach(Array(matches.enumerated()), id: \.offset) { _, match in
+                            LabeledContent(match.text, value: Self.value(of: match))
+                        }
+                        ForEach(Array(tables.enumerated()), id: \.offset) { index, table in
+                            LabeledContent("Table \(index + 1)", value: "\(table.rows.count) rows")
+                        }
+                    }
+                }
             }
         }
         .formStyle(.grouped)
@@ -199,6 +227,13 @@ struct MLImageToolsView: View {
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.image]) { result in
             load(try? MLSamples.readImported(result.get()))
         }
+    }
+
+    private static func value(of match: VisionDocumentTool.DetectedData) -> String {
+        if let amount = match.amount {
+            return "\(amount) \(match.currency ?? "")"
+        }
+        return match.date?.formatted(date: .abbreviated, time: .omitted) ?? match.kind.rawValue
     }
 
     private func load(_ data: Data?) {
