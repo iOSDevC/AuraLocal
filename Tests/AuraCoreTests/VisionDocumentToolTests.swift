@@ -61,11 +61,16 @@ final class VisionDocumentToolTests: XCTestCase {
         let latte = try XCTUnwrap(document.lines.first { $0.text.localizedCaseInsensitiveContains("latte") })
         XCTAssertGreaterThan(latte.boundingBox.midY, total.boundingBox.midY, "bottom-left origin")
 
+        let matches = document.detectedData.map {
+            "\($0.kind.rawValue) '\($0.text)' \(String(describing: $0.amount)) \(String(describing: $0.boundingBox))"
+        }
         let amounts = document.amounts
-        XCTAssertTrue(amounts.contains { $0.amount == Decimal(string: "12.75") },
-                      "amounts: \(amounts.map { "\($0.text) → \(String(describing: $0.amount))" })")
+        let total = try XCTUnwrap(amounts.first { $0.amount == Decimal(string: "12.75") }, "matches: \(matches)")
+        XCTAssertTrue(total.text.contains("12.75"), "matches: \(matches); text: \(document.text)")
         XCTAssertTrue(amounts.allSatisfy { $0.currency?.isEmpty == false }, "currencies: \(amounts.map(\.currency))")
-        XCTAssertTrue(document.detectedData.allSatisfy { document.text.contains($0.text) })
+        // A span Vision gives no range for has empty text; every other span comes from the document's text.
+        XCTAssertTrue(document.detectedData.allSatisfy { $0.text.isEmpty || document.text.contains($0.text) },
+                      "matches: \(matches); text: \(document.text)")
 
         let date = try XCTUnwrap(document.detectedData.first { $0.kind == .date }?.date,
                                  "matches: \(document.detectedData.map { "\($0.kind): \($0.text)" })")
