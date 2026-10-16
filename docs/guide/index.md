@@ -26,8 +26,17 @@ the Model Finder example app.
 ## Images on device
 
 [Image Generation]({{ '/guide/imagegen' | relative_url }}#on-device-iphone-and-mac-core-ml-stable-diffusion) runs Core ML
-Stable Diffusion 2.1 base on iPhone and Mac after a one-time ~1.07 GB download. It also covers Apple's Image
+Stable Diffusion 2.1 base on iPhone and Mac after a one-time ~1.07 GB download, or another Core ML SD 1.x/2.x
+model from Hugging Face that `CoreMLDiffusionInspector` accepts. It also covers Apple's Image
 Playground sheet (Private Cloud Compute from iOS 27) and FLUX + LoRA on macOS.
+
+## Conversations
+
+[Conversations & History]({{ '/guide/conversations' | relative_url }}) stores multi-turn chats in SQLite with
+full-text search. Cancelling the task that runs a `stream(_:in:)` loop cancels the generation and saves the text
+generated so far as the reply, or removes the user turn when there was none; on a GGUF model loaded with tools,
+llama.cpp keeps decoding until generation ends, and the next turn waits for it
+([Multi-Turn Chat]({{ '/guide/conversations' | relative_url }}#multi-turn-chat)).
 
 ## Download models and keep them
 
@@ -44,6 +53,14 @@ When an iOS app backgrounds, its running generations stop and throw `GenerationI
 [Device conditions]({{ '/guide/memory' | relative_url }}#device-conditions) is the opt-in thermal guard, and
 [iOS]({{ '/guide/memory' | relative_url }}#ios) explains the app-memory-limit budget.
 
+## Sampling and tools
+
+`ModelManager.shared.load` and the `AuraLocal.text` / `.vision` / `.specialized` factories take `temperature:` and
+`topP:`, fixed for the instance's lifetime; temperature 0 is greedy on both backends
+([Sampling]({{ '/guide/backends' | relative_url }}#sampling-temperature-and-top-p)). Tool calling needs a GGUF
+model: with an MLX model, `load` and `AuraSession` throw `ModelConfigurationError.toolsUnsupported(.mlx)` before
+loading anything.
+
 ## Constrained and structured output
 
 [Constrained Generation]({{ '/guide/backends' | relative_url }}#constrained-generation-gguf-only) restricts a GGUF
@@ -53,7 +70,10 @@ reply to JSON or a GBNF grammar. `AuraSession` enforces a profile's `OutputSchem
 ## Ask a bigger model
 
 [Hybrid Inference]({{ '/guide/hybrid' | relative_url }}) escalates to your own llama-server/Ollama box or a
-bring-your-own-key Anthropic or OpenAI model; GitHub Models was retired.
+bring-your-own-key Anthropic or OpenAI model; GitHub Models was retired. `routeAndEscalate` builds the request
+once, redacted per `EscalationPolicy.piiRedaction` (cloud targets by default) and compressed; when it asks your
+`ConsentGate`, the gate sees that exact payload, and approval sends it unchanged
+([Consent sees the exact payload]({{ '/guide/hybrid' | relative_url }}#consent-sees-the-exact-payload)).
 [`aura ask`]({{ '/guide/cli' | relative_url }}#ask-a-bigger-model-aura-ask) uses a local server unless you name a
 cloud provider or pass a `--base-url` (a public host there counts as cloud).
 

@@ -82,7 +82,9 @@ struct HybridTab: View {
         } header: {
             Text("Ask a bigger model")
         } footer: {
-            Text("Local-first: prefers your own llama-server / Ollama, then cloud (if allowed and a key is set). Context is compressed to save tokens; cloud sends ask consent first.")
+            Text("Local-first: prefers your own llama-server / Ollama, then cloud (if allowed and a key is set). "
+                 + "Context is compressed to save tokens; cloud sends redact obvious secrets by default "
+                 + "and ask consent first, showing the exact payload.")
         }
     }
 
@@ -98,26 +100,27 @@ struct HybridTab: View {
             return
         }
 
+        // Built once: the consent sheet shows exactly what is sent.
+        let escalator = HybridEscalator()
+        let payload = escalator.preparePayload(
+            for: target, context: "", question: prompt, maxTokens: 512,
+            keepRatio: policy.keepRatio, redactPII: policy.redactsPII(for: target))
+
         // Cloud targets require explicit consent; LAN is trusted.
         if !target.isLocalNetwork {
-            let preview = ContextCompressor().compress(
-                context: prompt, question: prompt,
-                budgetTokens: max(256, target.contextLength ?? 8192))
             let cost = ledger.projectedCost(
-                target: target, inputTokens: max(1, prompt.count / 4), maxOutput: 512)
+                target: target, inputTokens: payload.estimatedInputTokens, maxOutput: payload.maxTokens)
             let offer = EscalationOffer(
                 reason: .userRequested, projectedCostUSD: cost,
                 sessionSpentUSD: ledger.sessionCostUSD, unpricedRecordCount: ledger.unpricedRecordCount,
-                costCapUSD: policy.costCapUSDPerSession)
+                costCapUSD: policy.costCapUSDPerSession, payload: payload)
             let approved = await HybridSettings.shared.consent.requestConsent(
-                target: target, preview: preview, offer: offer)
+                target: target, preview: payload.compression, offer: offer)
             guard approved else { errorText = "Escalation declined — keeping local."; return }
         }
 
         do {
-            let result = try await HybridEscalator().escalate(
-                to: target, systemPrompt: nil, context: "", question: prompt,
-                maxTokens: 512, redactPII: !target.isLocalNetwork) { response = $0 }
+            let result = try await escalator.escalate(payload, to: target) { response = $0 }
             var r = "via \(result.providerName) · \(target.modelID)"
             if let u = result.usage { r += " · \(u.inputTokens) in / \(u.outputTokens) out" }
             let c = result.compression

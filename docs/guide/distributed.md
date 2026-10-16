@@ -218,8 +218,9 @@ remote) [Inferred]; the quality of those quantizations was not measured.
   the Mac and key by model, not chip: A19 Pro has 5 GPU cores in iPhone Air, 6 in 17 Pro [Third-party].
 - **MLX** does not run in the iOS Simulator (mlx-swift docs). Open upstream on 2026-09-29 [Verified]:
   mlx-swift #491 (0.32.2 crashes at launch on iOS and macOS before 26.4; fix PRs #493 and #494 unmerged)
-  and #485 (an app linking 0.31.6 hangs before `main()` on iOS 27.0). Pin the 0.31.x release AuraLocal resolves (0.31.3) in a
-  separate app target and test it on iOS 27 first (#485 was reported against 0.31.6), and cap MLX's buffer cache below the headroom before loading a draft, or jetsam may kill it [Inferred].
+  and #485 (an app linking 0.31.6 hangs before `main()` on iOS 27.0). AuraLocal holds mlx-swift at
+  `0.31.3..<0.31.5` (0.31.3 in its lockfile, 0.31.4 in a resolve without it), which excludes 0.31.6; use the same
+  range in a separate app target and test it on iOS 27 first, and cap MLX's buffer cache below the headroom before loading a draft, or jetsam may kill it [Inferred].
 
 ## Model choices
 

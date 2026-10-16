@@ -33,7 +33,7 @@ struct DomainTestView: View {
                 Section("Model") {
                     LabeledContent(model.displayName, value: domain.displayName)
                     if !isDownloaded {
-                        Label("Not downloaded yet — download it from the Models list to run a test.",
+                        Label("Not downloaded yet — download it in Chat › Browse the catalog to run a test.",
                               systemImage: "exclamationmark.triangle")
                             .font(.caption)
                             .foregroundStyle(.orange)
@@ -177,19 +177,22 @@ struct DomainTestView: View {
             return
         }
 
+        // Built once: the consent sheet shows exactly what is sent.
+        let escalator = HybridEscalator()
+        let payload = escalator.preparePayload(
+            for: target, systemPrompt: domain.testSystemPrompt, context: "", question: prompt,
+            maxTokens: 512, keepRatio: policy.keepRatio, redactPII: policy.redactsPII(for: target))
+
         // Cloud targets require per-conversation consent (LAN is trusted).
         if !target.isLocalNetwork {
-            let preview = ContextCompressor().compress(
-                context: prompt, question: prompt,
-                budgetTokens: max(256, target.contextLength ?? 8192))
             let cost = CostLedger.shared.projectedCost(
-                target: target, inputTokens: max(1, prompt.count / 4), maxOutput: 512)
+                target: target, inputTokens: payload.estimatedInputTokens, maxOutput: payload.maxTokens)
             let offer = EscalationOffer(
                 reason: .userRequested, projectedCostUSD: cost,
                 sessionSpentUSD: CostLedger.shared.sessionCostUSD, unpricedRecordCount: CostLedger.shared.unpricedRecordCount,
-                costCapUSD: policy.costCapUSDPerSession)
+                costCapUSD: policy.costCapUSDPerSession, payload: payload)
             let approved = await HybridSettings.shared.consent.requestConsent(
-                target: target, preview: preview, offer: offer)
+                target: target, preview: payload.compression, offer: offer)
             guard approved else {
                 errorText = "Escalation declined — keeping local."
                 return
@@ -197,13 +200,7 @@ struct DomainTestView: View {
         }
         status = "Asking \(target.provider.displayName)…"
         do {
-            let result = try await HybridEscalator().escalate(
-                to: target,
-                systemPrompt: domain.testSystemPrompt,
-                context: "",
-                question: prompt,
-                maxTokens: 512,
-                redactPII: !target.isLocalNetwork) { response = $0 }
+            let result = try await escalator.escalate(payload, to: target) { response = $0 }
 
             var receipt = "via \(result.providerName) · \(target.modelID)"
             if let usage = result.usage {

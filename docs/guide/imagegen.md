@@ -12,7 +12,7 @@ description: "Text-to-image on iPhone and Mac with Core ML Stable Diffusion, App
 
 | Path | Platforms | Where it runs | Notes |
 |------|-----------|---------------|-------|
-| `CoreMLDiffusionEngine` | iOS, macOS | This device | Stable Diffusion 2.1 base, 512×512, ~1.07 GB one-time download |
+| `CoreMLDiffusionEngine` | iOS, macOS | This device | Stable Diffusion 2.1 base built in (512×512, ~1.07 GB one-time download), or a Core ML SD 1.x/2.x folder from Hugging Face that `CoreMLDiffusionInspector` accepts |
 | Apple Image Playground (`ImagePlaygroundPolicy`) | iOS 18.4+, macOS 15.4+, visionOS 2.4+ (the Example uses it on iOS only) | On device before OS 27; Apple's servers from OS 27 | Apple's sheet; AuraLocal only sets its styles and options |
 | `MFluxEngine` | macOS | This Mac | FLUX + `lora.safetensors` through the mflux CLI |
 
@@ -41,10 +41,18 @@ await engine.unload()                            // free the pipeline; the next 
 ```
 
 The Example app's **Image** tab runs this engine. On iOS its segments are **On device** and **Apple**
-(Image Playground); on macOS they are **FLUX (mflux)** and **Stable Diffusion (Core ML)**. It asks before
-downloading and shows the size and license, offers the compute units and memory mode under **Advanced**, and
-shares each image with **Share**. The share sheet's **Save Image** adds the image to Photos only when the app
-declares `NSPhotoLibraryAddUsageDescription`, which the Example does.
+(Image Playground); on macOS they are **FLUX (mflux)** and **Stable Diffusion (Core ML)**. A **Model** picker
+lists the built-in model and every model adopted from Hugging Face, with Ready or Not downloaded per row;
+**Find on Hugging Face…** opens a search with a verdict per repo and per folder (see
+[Other models from Hugging Face](#other-models-from-hugging-face)). Picking a model applies its steps, guidance
+and compute unit. The tab asks before downloading and shows the size and license, offers the compute units and
+memory mode under **Advanced** (steps 1–50, so few-step models fit: 4 for turbo-style names, 8 for LCM), and
+shares each image with **Share**. The share sheet's **Save Image** adds the image to Photos only when the app declares
+`NSPhotoLibraryAddUsageDescription`, which the Example does. **Delete** (or **Remove**, when a Hugging Face
+model is not fully downloaded) drops an adopted model with its files and selects the built-in one. On a
+device where the engine can run, **Use** (after an alert with the size and license) adds and selects the model and
+starts its download; in the Simulator it only adds and selects it, nothing is downloaded, and the fit verdicts
+there use the Mac's memory.
 
 ### The model
 
@@ -56,17 +64,101 @@ base (`apple/coreml-stable-diffusion-2-1-base-palettized`, `split_einsum_v2/comp
   `vocab.json` and `merges.txt`. The VAE encoder, which only image-to-image needs, is skipped. The repo is
   ungated and no Hugging Face token is sent.
 - **Storage.** `ModelDownloads.downloadFolder(repoID:revision:folder:include:auth:progress:)` writes to
-  `<Caches>/huggingface/hub/models--apple--coreml-stable-diffusion-2-1-base-palettized/snapshots/main/split_einsum_v2/compiled`
-  and resumes `.partial` files. iOS may purge Caches, so `generate` re-checks `isDownloaded` on every call.
+  `<root>/huggingface/hub/models--apple--coreml-stable-diffusion-2-1-base-palettized/snapshots/main/split_einsum_v2/compiled`
+  under `ModelStorage.rootDirectory` (Application Support, excluded from backup; see
+  [Where models are stored]({{ '/guide/models' | relative_url }}#where-models-are-stored)), resumes `.partial` files
+  and checks each LFS file's SHA-256. A folder an earlier version downloaded into Caches is used from there until
+  it is migrated (`resourcesDirectory`). The files can be deleted between runs, so `generate` re-checks
+  `isDownloaded` on every call.
   The folder records the revision its files come from, and `isDownloaded` requires the pinned one. Files from
   any other revision, finished or partial, are deleted before the next download.
-  AuraUI's Downloads list shows the folder as a paused MLX snapshot of that repo; Resume is off there, Delete works.
+  AuraUI's Downloads list shows every image model as a paused MLX snapshot of its repo. Resume is off there;
+  its Delete removes every folder of that repo and does not unload a running image engine.
+  `CoreMLDiffusionModel.delete()` removes only the model's own folder (`ModelDownloads.deleteFolder(repoID:folder:)`).
 - **Output.** 512×512 only: the Unet's input shape is fixed. No LoRA.
 - **No safety checker.** The repo ships no `SafetyChecker.mlmodelc`, so nothing filters the images. An app
   that ships this needs its own moderation decision.
 - **License.** CreativeML Open RAIL++-M, which restricts some uses and requires passing those restrictions on
   to your users. Read it from the [model card](https://huggingface.co/apple/coreml-stable-diffusion-2-1-base-palettized).
 - **Quality.** Clearly below FLUX, SDXL or Image Playground; hands and text in images come out poorly.
+
+### Other models from Hugging Face
+
+`CoreMLDiffusionInspector` finds Core ML Stable Diffusion repos on Hugging Face and judges each folder for a
+device without downloading weights. It reads the repo listing at its current commit, then each candidate
+folder's Unet `metadata.json` (about 4 KB), pinned to that commit. `CoreMLDiffusionModel(variant:)` turns a
+folder rated **Runs** or **Runs, with caveats** into a model pinned to the same commit.
+
+```swift
+import AuraCore
+import AuraImageGen
+
+let inspector = CoreMLDiffusionInspector()
+let hits = try await inspector.search("dreamshaper")       // sends the text to huggingface.co
+let report = try await inspector.inspect(hits[0].id)        // listing + up to 4 metadata.json probes
+guard let best = report.recommended, best.verdict.isRunnable else { return }
+let model = try CoreMLDiffusionModel(variant: best)        // throws unless the folder runs
+CoreMLDiffusionModelStore.standard.remember(model)         // listed again after a relaunch
+try await model.download { done, total in print(done, "of", total) }
+let engine = CoreMLDiffusionEngine(model: model, computeUnits: model.preferredComputeUnits)
+let output = try await engine.generate(DiffusionRequest(prompt: "a lighthouse at dusk",
+                                                        steps: model.recommendedSteps,
+                                                        guidanceScale: model.recommendedGuidance))
+```
+
+- **Search.** `search(_:limit:)` runs three queries: by the `coreml` tag, by the `core-ml` tag, and by name
+  with "coreml" added, so repos with either tag or none show up. A plain word alone would not work: its top
+  hits are all diffusers repos. A pasted repository URL searches its id. It keeps only repos whose file names
+  show a loadable folder, or a Core ML specific reason they are not supported. An empty query lists the most
+  downloaded ones. `inspect(_:on:)` takes any `owner/repo` or repository URL, listed by the search or not; the
+  Example's finder offers **Inspect** for a pasted one.
+- **Layout (file names only).** A folder needs `TextEncoder.mlmodelc`, `Unet.mlmodelc` or both
+  `UnetChunk1/2.mlmodelc`, `VAEDecoder.mlmodelc`, `vocab.json` and `merges.txt`, each model directory holding
+  `coremldata.bin`, `model.mil` and `weights/weight.bin`. When a folder has both the whole Unet and its chunks,
+  only the chunks are downloaded, because the pipeline uses them. `VAEEncoder`, `SafetyChecker` and ControlNet
+  models are never downloaded. `CoreMLDiffusionLayout` does this.
+- **Rules (from `metadata.json`).** `CoreMLDiffusionRules` blocks a Unet converted without classifier-free
+  guidance (batch 1), inpainting and instruct-pix2pix Unets, SDXL, stateful Unets, extra inputs such as
+  ControlNet residuals, a newer OS than the device runs, non-square output, an fp16 unchunked Unet of 1 GiB or
+  more on the iPhone's Neural Engine, v-prediction models, folders at the repo root and gated repos. ORIGINAL
+  attention is a caveat: it runs on the GPU. LCM names are a caveat (the runtime has no LCM scheduler);
+  turbo, lightning, Hyper-SD, DMD and TCD names set 4 steps and guidance 1.0, LCM 8 and 1.0 (estimates). A
+  missing or `other` license, or one marked non-commercial (`nc`) or `community`, is a caveat. When the probe
+  was skipped or failed the verdict is **Unknown**, never **Runs**; gated repos are not probed and are
+  **Won't run**. Each finding is a `CompatibilityFinding` whose `rule` is its id (`R1`…`R19`, `FIT`).
+- **Memory.** The verdict uses the engine's estimate, 2.2× the folder's exact listed bytes, but compares it
+  with the device budget (`HardwareAnalyzer.fitLevel(forWeightsBytes:kind: .diffusion, profile:)`): on
+  iPhone the app's whole memory limit, on a Mac the Metal working-set limit. The engine compares it with the
+  memory free when it loads (`HardwareProfile.availableMemoryBytes()`, which leaves out what the app already
+  holds), so a folder rated **Fits** or **Tight** can still be refused with `.insufficientMemory`. The 2.2
+  factor was measured on FLUX, not Core ML, so it is an estimate here. fp16 SD 2.x folders (about 2.5 GB)
+  come out **Tight** against the `DevicePreset.iPhone17Pro` budget (6.4 GB, a third-party figure); only a run
+  on the device shows the real peak.
+- **Persistence.** `CoreMLDiffusionModelStore` keeps adopted models in `UserDefaults`; `all` lists the built-in
+  model first, then the records by display name, and the built-in model is never stored. Call `remember(_:)` when
+  a download starts, so a partial download is listed after a relaunch; `forget(_:)` drops a record and leaves the
+  files (`delete()` removes them). The model id leaves the revision out, so adopting a newer commit of the
+  same folder replaces the record. Adopting the built-in model's own folder gives `stableDiffusion21Base` at
+  its pinned revision, since both would share one folder on disk. Files on disk stay the source of truth
+  (`isDownloaded`).
+- **Deleting.** `CoreMLDiffusionModel.delete()` removes the folder's downloaded and partial files, in the storage
+  root and in Caches. Core ML keeps
+  its compiled copy of a model in a system-managed cache that this does not touch. In one Mac test a GPU
+  model with a 0.89 GB download left about 1.9 GB there.
+- **What leaves the device.** The search text and repo ids, sent to huggingface.co, and then the download.
+  The inspector's requests carry no Hugging Face token, cookie or `Authorization` header, and the download sends
+  no token, so gated repos are reported, not opened. Prompts and images stay on the device.
+- **Not supported yet.** SDXL (a separate runner and a memory estimate measured on the phone are needed),
+  folders at the repo root, repos that ship only `.zip` archives or uncompiled `.mlpackage`s, and Core AI
+  `.aimodel`s. The repo's `SafetyChecker` is not downloaded, so images are not filtered. LCM and turbo quality
+  under the runtime's DPM-Solver++ is not guaranteed.
+- **Unverified on iPhone.** Only Apple's SD 1.5 6-bit folder was run end to end with this code, on a Mac. The
+  first Neural Engine compile, latency, peak memory and jetsam for each other model are unmeasured on iPhone.
+
+Errors are `CoreMLDiffusionModelError`: `.invalidRepoID`, `.searchFailed`, `.repositoryUnavailable` (a non-2xx
+listing, such as 401, 403 or 404, or a listing that is unreadable or has no full commit sha), `.network` and
+`.notRunnable`. Anonymous Hugging Face answers 401 for a repo that does not exist, so a mistyped id reads "not
+found, or private"; a gated repo lists fine and gets the R17 finding instead.
 
 ### Requests, memory and cancellation
 

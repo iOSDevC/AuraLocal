@@ -35,7 +35,7 @@ let conv = try await store.createConversation(
 // List all conversations
 let conversations = try await store.allConversations()
 
-// Full-text search
+// Full-text search: turns containing any of the words, best match first
 let results = try await store.search("VAT Mexico")
 
 // Delete
@@ -65,6 +65,15 @@ Before each call AuraLocal loads the newest turns that fit `maxContextTokens` (d
 The user turn is saved before the model runs. If the call throws, the conversation keeps one reply per prompt:
 a `GenerationInterrupted` that carries text (the app moved to the background, or the device guard stopped it)
 saves that text as the assistant turn; any other error removes the user turn again.
+
+Cancelling the task that runs a `stream(_:in:)` loop (a Stop button), or leaving the loop early, cancels the
+generation and settles the conversation the same way: the text generated so far is saved as the reply, or the user
+turn is removed when there was none. Leaving the loop cancels only once nothing else holds the stream; if you keep it
+in a variable or property, stop it by cancelling the task. Those writes finish after your loop has ended, so the next
+`chat(_:in:)` or `stream(_:in:)` on the same `AuraLocal` waits for them before saving its prompt.
+
+On a GGUF model loaded with tools, the reply is cut and saved at once, but llama.cpp keeps decoding until the end of
+generation or a full context window, and the next turn on that instance waits for it.
 
 {: .note }
 > MLX and GGUF models receive the turns with their roles. On GGUF every system turn, a `summarizeAndPrune` summary included, merges into one leading system turn, so the summary is added to your system prompt rather than replacing it. If the window still exceeds the model's context, the GGUF backends drop the oldest exchanges until it fits, keeping the system turn and your new message. See [Multi-turn conversations]({{ '/guide/backends' | relative_url }}#multi-turn-conversations-gguf). MLX trims nothing: past its KV window (`maxKVSize`) it overwrites the oldest tokens without an error, and `llm.lastContextOverflow` then says how many no longer fit. Qwen 3.5 text models, Gemma 3 and 4, and LFM2 ignore the window and leave it `nil` (see [Memory › MLX KV window]({{ '/guide/memory' | relative_url }}#mlx-kv-window)).

@@ -66,4 +66,23 @@ final class HybridCompressionTests: XCTestCase {
         XCTAssertEqual(cache.lookup(provider: "p", model: "m", prompt: "3"), "c")
         XCTAssertEqual(cache.count, 2)
     }
+
+    @MainActor
+    func testResponseCacheKeysOnSystemPromptAndMaxTokens() {
+        let target = RemoteTarget(provider: AnthropicProvider(apiKey: "unused"), modelID: "m", origin: .cloud)
+        let escalator = HybridEscalator()
+        func payload(_ system: String?, _ maxTokens: Int) -> EscalationPayload {
+            escalator.preparePayload(
+                for: target, systemPrompt: system, context: "", question: "hi", maxTokens: maxTokens)
+        }
+        let cache = ResponseCache(capacity: 8)
+        cache.insert("bonjour", provider: "p", model: "m", payload: payload("Answer in French.", 8))
+
+        XCTAssertEqual(cache.lookup(provider: "p", model: "m", payload: payload("Answer in French.", 8)), "bonjour")
+        XCTAssertNil(cache.lookup(provider: "p", model: "m", payload: payload("Answer in English.", 8)))
+        XCTAssertNil(cache.lookup(provider: "p", model: "m", payload: payload("Answer in French.", 512)))
+        XCTAssertNil(cache.lookup(provider: "p", model: "m", payload: payload(nil, 8)))
+        XCTAssertNil(cache.lookup(provider: "p", model: "m", payload: payload("", 8)))
+        XCTAssertNil(cache.lookup(provider: "p", model: "m", prompt: "hi"))
+    }
 }

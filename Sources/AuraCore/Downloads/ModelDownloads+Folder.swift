@@ -8,8 +8,9 @@ extension ModelDownloads {
 
     /// Downloads every file under `folder` of `repoID` at `revision` whose path relative to `folder` equals or
     /// starts with one of `include` (a trailing "/" means a directory), keeping the repo layout. Resumes `.partial`
-    /// files, checks free space, and writes `.complete` (holding `revision`) inside the folder after the last file.
-    /// Returns the local folder (``localFolder(repoID:folder:)``). `progress` receives (bytes on disk, total bytes).
+    /// files, checks free space, verifies each LFS file's SHA-256, and writes `.complete` (holding `revision`)
+    /// inside the folder after the last file. Returns the local folder (``localFolder(repoID:folder:)``), or the
+    /// finished copy an earlier version left in Caches. `progress` receives (bytes on disk, total bytes).
     ///
     /// The folder records the revision its files come from. Files from another revision, finished or partial, are
     /// deleted before fetching, so a file of the same size is never kept from the old revision.
@@ -21,7 +22,8 @@ extension ModelDownloads {
                                       auth: any DownloadAuthorizing = NoDownloadAuth(),
                                       progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
         try await downloadFolder(repoID: repoID, revision: revision, folder: folder, include: include,
-                                 transfer: HubFileTransfer(auth: auth), root: cachesRoot, progress: progress)
+                                 transfer: HubFileTransfer(auth: auth), root: storageRoot,
+                                 fallbackRoots: ModelStorage.fallbackRoots, progress: progress)
     }
 
     /// Files and sizes ``downloadFolder(repoID:revision:folder:include:auth:progress:)`` would fetch, without
@@ -29,17 +31,24 @@ extension ModelDownloads {
     public static func planFolder(repoID: String, revision: String, folder: String, include: [String],
                                   auth: any DownloadAuthorizing = NoDownloadAuth()) async throws -> DownloadPlan {
         try await planFolder(repoID: repoID, revision: revision, folder: folder, include: include,
-                             transfer: HubFileTransfer(auth: auth), root: cachesRoot)
+                             transfer: HubFileTransfer(auth: auth), root: storageRoot)
     }
 
-    /// Where `downloadFolder` puts `folder`: `<Caches>/huggingface/hub/models--org--repo/snapshots/main/<folder>`.
+    /// Where `downloadFolder` puts `folder`:
+    /// `<root>/huggingface/hub/models--org--repo/snapshots/main/<folder>` under ``ModelStorage/rootDirectory``.
     public static func localFolder(repoID: String, folder: String) -> URL {
-        localFolder(repoID: repoID, folder: folder, root: cachesRoot)
+        localFolder(repoID: repoID, folder: folder, root: storageRoot)
     }
 
-    /// Whether `downloadFolder` finished `folder` of `repoID` at `revision`.
+    /// The folder `downloadFolder` finished for `revision`: ``localFolder(repoID:folder:)``, else the copy an
+    /// earlier version downloaded into Caches. `nil` when neither is complete.
+    public static func completedFolder(repoID: String, folder: String, revision: String) -> URL? {
+        completedFolder(repoID: repoID, folder: folder, revision: revision, roots: ModelStorage.readRoots)
+    }
+
+    /// Whether `downloadFolder` finished `folder` of `repoID` at `revision`, in the storage root or in Caches.
     public static func isFolderComplete(repoID: String, folder: String, revision: String) -> Bool {
-        isFolderComplete(at: localFolder(repoID: repoID, folder: folder), revision: revision)
+        completedFolder(repoID: repoID, folder: folder, revision: revision) != nil
     }
 
     /// Whether `directory` holds the `.complete` marker `downloadFolder` writes after its last file, for
@@ -48,9 +57,22 @@ extension ModelDownloads {
         recordedRevision(in: directory, marker: completeMarker) == revision
     }
 
-    /// Removes `models--org--repo` (finished and partial files).
+    /// Removes `models--org--repo` (finished and partial files) from the storage root; in Caches only its
+    /// `snapshots/main`, since a Hugging Face cache there may hold the same repo.
     public static func deleteRepo(_ repoID: String) throws {
-        try deleteRepo(repoID, root: cachesRoot)
+        try deleteRepo(repoID, root: storageRoot)
+        for legacyRoot in ModelStorage.fallbackRoots {
+            try deleteLegacySnapshot(repoID: try validated(repoID: repoID), root: legacyRoot)
+        }
+    }
+
+    /// Removes `folder` of `repoID` with its partial files and markers, then the parents it leaves empty, so
+    /// `models--org--repo` goes with the last folder; in the storage root and in Caches. Other folders of the repo
+    /// stay. Does nothing when absent.
+    public static func deleteFolder(repoID: String, folder: String) throws {
+        for root in ModelStorage.readRoots {
+            try deleteFolder(repoID: repoID, folder: folder, root: root)
+        }
     }
 
     // MARK: Revision
@@ -74,6 +96,11 @@ extension ModelDownloads {
 
     static func localFolder(repoID: String, folder: String, root: URL) -> URL {
         snapshotDirectory(repoID: repoID, root: root).appending(path: folder, directoryHint: .isDirectory)
+    }
+
+    static func completedFolder(repoID: String, folder: String, revision: String, roots: [URL]) -> URL? {
+        roots.lazy.map { localFolder(repoID: repoID, folder: folder, root: $0) }
+            .first { isFolderComplete(at: $0, revision: revision) }
     }
 
     /// Relative, non-empty, and free of `.`/`..`/empty segments, backslashes and NULs.
@@ -164,19 +191,20 @@ extension ModelDownloads {
 
     // MARK: Download
 
+    /// `fallbackRoots` are only read: a complete, intact copy there is returned instead of downloaded again.
     static func downloadFolder(repoID: String, revision: String, folder: String, include: [String],
-                               transfer: HubFileTransfer, root: URL,
+                               transfer: HubFileTransfer, root: URL, fallbackRoots: [URL] = [],
                                progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
         _ = try validated(repoID: repoID)
         _ = try validated(include: include)
         let directory = localFolder(repoID: repoID, folder: try validated(folder: folder), root: root)
         let marker = directory.appendingPathComponent(completeMarker)
+        if isIntact(directory, revision: revision, include: include) { return directory }
+        let previous = fallbackRoots.lazy.map { localFolder(repoID: repoID, folder: folder, root: $0) }
+            .first { isIntact($0, revision: revision, include: include) }
+        if let previous { return previous }
         if isFolderComplete(at: directory, revision: revision) {
-            let intact = include.allSatisfy {
-                FileManager.default.fileExists(atPath: directory.appending(path: $0).path)
-            }
-            if intact { return directory }
-            // Something was removed after completion (iOS purges Caches): refetch what is missing.
+            // Something was removed after completion: refetch what is missing.
             try FileManager.default.removeItem(at: marker)
         }
 
@@ -203,16 +231,23 @@ extension ModelDownloads {
         return directory
     }
 
+    static func isIntact(_ directory: URL, revision: String, include: [String]) -> Bool {
+        isFolderComplete(at: directory, revision: revision) && include.allSatisfy {
+            FileManager.default.fileExists(atPath: directory.appending(path: $0).path)
+        }
+    }
+
     private static func fetchFolderFile(_ file: PlannedFile, to destination: URL, repoID: String, revision: String,
                                         transfer: HubFileTransfer, finished: Int64, total: Int64,
                                         progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
                                                 withIntermediateDirectories: true)
-        if HubFileTransfer.fileSize(at: destination) == file.sizeBytes { return }
+        if HubFileTransfer.fileSize(at: destination) == file.sizeBytes,
+           try FileIntegrity.reusable(destination, expectedSHA256: file.sha256) { return }
         guard let url = fileURL(repoID: repoID, revision: revision, path: file.path) else {
             throw ModelDownloadError.unsupported("Not a Hugging Face repository id: \(repoID)")
         }
-        try await transfer.fetch(url, to: destination, expectedSize: file.sizeBytes,
+        try await transfer.fetch(url, to: destination, expectedSize: file.sizeBytes, expectedSHA256: file.sha256,
                                  repoID: repoID, path: file.path) { bytes in
             progress(finished + bytes, total)
         }
@@ -222,5 +257,14 @@ extension ModelDownloads {
 
     static func deleteRepo(_ repoID: String, root: URL, fileManager: FileManager = .default) throws {
         try removeIfPresent(repoFolder(repoID: try validated(repoID: repoID), root: root), fileManager: fileManager)
+    }
+
+    static func deleteFolder(repoID: String, folder: String, root: URL, fileManager: FileManager = .default) throws {
+        let repo = try validated(repoID: repoID)
+        let directory = localFolder(repoID: repo, folder: try validated(folder: folder), root: root)
+        try removeIfPresent(directory, fileManager: fileManager)
+        removeEmptyFolders(from: directory.deletingLastPathComponent(),
+                           upTo: repoFolder(repoID: repo, root: root).deletingLastPathComponent(),
+                           fileManager: fileManager)
     }
 }

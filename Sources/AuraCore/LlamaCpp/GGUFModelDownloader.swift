@@ -9,7 +9,10 @@ import Foundation
 ///   resume-data mechanism (HTTP `Range` under the hood) — a pause suspends the awaiting `download(...)`
 ///   call, it does not fail it; only ``cancel()`` fails it.
 /// - Reports progress for UI display.
-/// - Stores files in the model's ``Model/cacheDirectory``.
+/// - Stores files in the model's ``Model/cacheDirectory`` (under ``ModelStorage/rootDirectory``), and uses a file an
+///   earlier version left in Caches instead of downloading it again.
+/// - Hashes a Hugging Face download against the SHA-256 published for it before moving it into place; a mismatch
+///   deletes it and fails with ``ModelIntegrityError/checksumMismatch(path:expected:actual:)``.
 @MainActor
 public final class GGUFModelDownloader: ObservableObject {
 
@@ -34,7 +37,18 @@ public final class GGUFModelDownloader: ObservableObject {
     /// pause/resume has since happened — so a late callback from an old pause can't clobber current state.
     private var pauseGeneration = 0
     /// Adds the Keychain Hugging Face token to requests for `huggingface.co` only.
-    private let auth: any DownloadAuthorizing = KeychainDownloadAuth()
+    private let auth: any DownloadAuthorizing
+    private let sessionConfiguration: URLSessionConfiguration
+    /// Fetches the published SHA-256 before each download.
+    private let checksums: HubFileTransfer
+
+    init(auth: any DownloadAuthorizing = KeychainDownloadAuth(),
+         sessionConfiguration: URLSessionConfiguration = .default,
+         checksumSession: URLSession = HubFileTransfer.sharedSession) {
+        self.auth = auth
+        self.sessionConfiguration = sessionConfiguration
+        self.checksums = HubFileTransfer(session: checksumSession, auth: auth)
+    }
 
     private struct DownloadContext {
         let url: URL
@@ -64,14 +78,14 @@ public final class GGUFModelDownloader: ObservableObject {
             throw AuraError.invalidResponse("Model \(model.displayName) has no GGUF filename")
         }
 
+        // Already downloaded, in the storage root or in Caches.
+        if let existing = model.resolvedFileURL, FileManager.default.fileExists(atPath: existing.path) {
+            onProgress("\(model.displayName) already downloaded")
+            return existing
+        }
+
         let cacheDir = model.cacheDirectory
         let destinationURL = cacheDir.appendingPathComponent(filename)
-
-        // Check if already downloaded
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            onProgress("\(model.displayName) already downloaded")
-            return destinationURL
-        }
 
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
 
@@ -85,6 +99,9 @@ public final class GGUFModelDownloader: ObservableObject {
         } else {
             throw AuraError.invalidResponse("Couldn't build a download URL for \(model.displayName)")
         }
+
+        // Looked up before the single-flight check: no suspension may separate that check from claiming the slot.
+        let expectedSHA256 = try await checksums.publishedSHA256(of: hfURL)
 
         // Single-flight: this downloader owns one continuation. A second download() while one is in flight
         // (running OR paused) must not orphan the first awaiter — reject it instead of overwriting the slot.
@@ -100,7 +117,7 @@ public final class GGUFModelDownloader: ObservableObject {
         do {
             let localURL = try await performDownload(
                 from: hfURL, to: destinationURL, modelName: model.displayName, repoID: model.repoID,
-                onProgress: onProgress)
+                expectedSHA256: expectedSHA256, onProgress: onProgress)
             isDownloading = false
             onProgress("\(model.displayName) download complete")
             return localURL
@@ -173,6 +190,7 @@ public final class GGUFModelDownloader: ObservableObject {
         to destination: URL,
         modelName: String,
         repoID: String,
+        expectedSHA256: String?,
         onProgress: @escaping @MainActor (String) -> Void
     ) async throws -> URL {
         context = DownloadContext(url: url, destination: destination, modelName: modelName, onProgress: onProgress)
@@ -181,7 +199,11 @@ public final class GGUFModelDownloader: ObservableObject {
             let delegate = DownloadDelegate(
                 destination: destination,
                 repoID: repoID,
+                expectedSHA256: expectedSHA256,
                 auth: auth,
+                onVerifying: {
+                    Task { @MainActor in onProgress("Verifying \(modelName)…") }
+                },
                 onProgress: { [weak self] _, totalWritten, totalExpected in
                     Task { @MainActor [weak self] in
                         guard let self else { return }
@@ -204,7 +226,7 @@ public final class GGUFModelDownloader: ObservableObject {
                     // continuation. Either way there is nothing to resolve here.
                 }
             )
-            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            let session = URLSession(configuration: sessionConfiguration, delegate: delegate, delegateQueue: nil)
             self.delegateSession = session
             let task = session.downloadTask(with: auth.request(for: url))
             self.downloadTask = task
@@ -244,7 +266,9 @@ public final class GGUFModelDownloader: ObservableObject {
 private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     let destination: URL
     let repoID: String
+    let expectedSHA256: String?
     let redirects: AuthRedirectDelegate
+    let onVerifying: @Sendable () -> Void
     let onProgress: @Sendable (Int64, Int64, Int64) -> Void
     let onFinished: @Sendable (URL) -> Void
     let onError: @Sendable (Error) -> Void
@@ -253,7 +277,9 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     init(
         destination: URL,
         repoID: String,
+        expectedSHA256: String?,
         auth: any DownloadAuthorizing,
+        onVerifying: @escaping @Sendable () -> Void,
         onProgress: @escaping @Sendable (Int64, Int64, Int64) -> Void,
         onFinished: @escaping @Sendable (URL) -> Void,
         onError: @escaping @Sendable (Error) -> Void,
@@ -261,7 +287,9 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     ) {
         self.destination = destination
         self.repoID = repoID
+        self.expectedSHA256 = expectedSHA256
         self.redirects = AuthRedirectDelegate(auth: auth)
+        self.onVerifying = onVerifying
         self.onProgress = onProgress
         self.onFinished = onFinished
         self.onError = onError
@@ -287,10 +315,19 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
             try GGUFModelDownloader.validateDownloadResponse(
                 downloadTask.response, request: downloadTask.originalRequest, repoID: repoID,
                 path: destination.lastPathComponent)
+            // URLSession deletes `location` when this returns, so the file is staged before hashing. As a finished
+            // `.partial` it is verified again by ModelDownloads if the app dies mid-hash.
+            let staged = HubFileTransfer.partialURL(for: destination)
+            try? FileManager.default.removeItem(at: staged)
+            try FileManager.default.moveItem(at: location, to: staged)
+            if let expectedSHA256 {
+                onVerifying()
+                try FileIntegrity.verify(staged, expectedSHA256: expectedSHA256, path: destination.lastPathComponent)
+            }
             if FileManager.default.fileExists(atPath: destination.path) {
                 try FileManager.default.removeItem(at: destination)
             }
-            try FileManager.default.moveItem(at: location, to: destination)
+            try FileManager.default.moveItem(at: staged, to: destination)
             onFinished(destination)
         } catch {
             try? FileManager.default.removeItem(at: location)

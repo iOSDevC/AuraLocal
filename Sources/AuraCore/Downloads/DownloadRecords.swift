@@ -77,7 +77,8 @@ public struct DownloadRecords: @unchecked Sendable {
     // MARK: Registry
 
     /// Registers each recorded model that is fully on disk, unless a registry entry already points at the same
-    /// file, and drops records with nothing on disk (Caches purged). A partial file keeps its record for Resume.
+    /// file, and drops records with nothing on disk (deleted, or purged from Caches before migration). A partial
+    /// file keeps its record for Resume.
     /// Returns the models now listed under their own id.
     @discardableResult
     public func registerDownloaded() -> [Model] {

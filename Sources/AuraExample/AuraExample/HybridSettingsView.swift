@@ -37,6 +37,11 @@ struct HybridSettingsView: View {
                         Text("Auto (LAN) + ask cloud").tag(EscalationPolicy.Mode.autoWithConsentMemory)
                     }
                     Toggle("Allow cloud providers", isOn: $settings.policy.allowCloud)
+                    Picker("Redact secrets & PII", selection: $settings.policy.piiRedaction) {
+                        Text("Cloud only").tag(EscalationPolicy.RedactionScope.cloudOnly)
+                        Text("All targets").tag(EscalationPolicy.RedactionScope.allTargets)
+                        Text("Never").tag(EscalationPolicy.RedactionScope.never)
+                    }
                     HStack {
                         Text("Cost cap")
                         Spacer()
@@ -131,8 +136,8 @@ struct HybridSettingsView: View {
 
 // MARK: - Consent sheet
 
-/// Shown before any cloud send: the exact compressed payload, projected cost,
-/// and the provider's retention note. The user chooses to send or keep local.
+/// Shown before any cloud send: the exact payload with its redaction count, the
+/// projected cost, and the provider's retention note. The user chooses to send or keep local.
 struct ConsentSheet: View {
     let request: UIConsentGate.Request
     let gate: UIConsentGate
@@ -165,8 +170,10 @@ struct ConsentSheet: View {
                             value: "\(request.preview.originalTokens)→\(request.preview.compressedTokens) (\(String(format: "%.1f", request.preview.factor))×)")
                     }
                 }
-                if !request.preview.keptText.isEmpty {
-                    Section("Payload being sent") {
+                if let payload = request.payload {
+                    payloadSection(payload)
+                } else if !request.preview.keptText.isEmpty {
+                    Section("Context being sent") {
                         Text(request.preview.keptText)
                             .font(.caption).textSelection(.enabled)
                     }
@@ -181,6 +188,42 @@ struct ConsentSheet: View {
             .onDisappear { gate.resolve(false) }   // safety: never leak the continuation
         }
         .frame(minWidth: 420, minHeight: 420)
+    }
+
+    private func payloadSection(_ payload: EscalationPayload) -> some View {
+        Section {
+            LabeledContent("Redaction", value: Self.redactionText(payload))
+            LabeledContent("Max output", value: "\(payload.maxTokens) tokens")
+            if let system = payload.systemPrompt {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("System").font(.caption.bold())
+                    Text(system).font(.caption.monospaced()).textSelection(.enabled)
+                }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("User").font(.caption.bold())
+                Text(payload.userMessage).font(.caption.monospaced()).textSelection(.enabled)
+            }
+        } header: {
+            Text("Exact payload")
+        } footer: {
+            Text("Sent exactly as shown: \(Self.byteCount(payload)) bytes of text. "
+                 + "If this exact request was answered earlier this session, "
+                 + "that answer is reused and nothing is sent.")
+        }
+    }
+
+    private static func redactionText(_ payload: EscalationPayload) -> String {
+        guard payload.redactionEnabled else { return "Off" }
+        switch payload.redactedPIICount {
+        case 0: return "On · nothing found"
+        case 1: return "On · 1 item replaced"
+        default: return "On · \(payload.redactedPIICount) items replaced"
+        }
+    }
+
+    private static func byteCount(_ payload: EscalationPayload) -> Int {
+        (payload.systemPrompt?.utf8.count ?? 0) + payload.userMessage.utf8.count
     }
 
     private var isOverCap: Bool {

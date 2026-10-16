@@ -110,7 +110,7 @@ struct ModelEvalView: View {
             .disabled(isRunning || !model.isDownloaded)
 
             if !model.isDownloaded {
-                Label("Download the model first from the Models list.", systemImage: "exclamationmark.triangle")
+                Label("Download the model first in Chat › Browse the catalog.", systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.orange)
             }
         } footer: {

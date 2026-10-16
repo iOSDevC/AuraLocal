@@ -32,9 +32,12 @@ SwiftPM dependency fetch.
 ## What's in the repo
 
 - `scripts/package-cli.sh [version]` — builds `aura` (release), checks that the staged
-  binary runs `aura tools` without the source tree, and packages `aura` +
-  `llama.framework` into `build/aura-v<version>-macos-<arch>.tar.gz`. Prints the
-  tarball's `sha256`. The version defaults to `0.1.0`.
+  binary runs `aura tools` without the source tree, and packages `aura`,
+  `llama.framework`, the SwiftPM resource bundles, `LICENSE`, `THIRD_PARTY_NOTICES.md` and
+  the dependencies' license files (`licenses/`) into
+  `build/aura-v<version>-macos-<arch>.tar.gz`. Prints the tarball's `sha256`. The version
+  defaults to `0.1.0`. It finds the build products with `swift build --show-bin-path`, which
+  also covers the `.build/out/Products/Release` layout of newer SwiftPM.
 - `Formula/aura.rb` — the formula (installs the tarball into `libexec` and links `aura`
   into `bin`; `test do` checks that `aura tools` lists `system.vision.ocr`).
 - The `LocalLLMClient` dependency is pinned by `revision:` in `Package.swift`, so
@@ -42,20 +45,23 @@ SwiftPM dependency fetch.
 
 ## Release a new version
 
+The whole release, from CI and the changelog to the tag and the docs, is in [RELEASING.md](RELEASING.md).
+
 1. **Build the tarball** and note the printed `sha256`:
    ```sh
    ./scripts/package-cli.sh <version>
    # -> build/aura-v<version>-macos-arm64.tar.gz  (prints size + sha256)
    ```
-2. **Tag and push**:
+2. **Tag and push** only the release tag:
    ```sh
-   git tag v<version>
+   git tag -a v<version> -m "AuraLocal <version>"
    git push origin v<version>
    ```
 3. **Create the GitHub release** for `v<version>` and upload
    `build/aura-v<version>-macos-arm64.tar.gz` as a release asset.
-4. **Update `Formula/aura.rb`**: `version`, `url` and `sha256`. If the tap exists, copy the
-   formula into it and push.
+4. **Update `Formula/aura.rb`**: `version`, `url`, `sha256`, `license "AGPL-3.0-or-later"` for
+   any tarball built after af056da, and the install lines in [RELEASING.md](RELEASING.md) step 10
+   (bundles, license texts, exec wrapper). If the tap exists, copy the formula into it and push.
 
 The tag only locates the tarball. Swift package consumers still pin AuraLocal by
 `revision:`, because a version requirement cannot resolve (see

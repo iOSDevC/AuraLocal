@@ -55,8 +55,9 @@ public final class HybridEscalator {
 
     // MARK: - Escalation
 
-    /// Escalate to `target`: compress `context` toward the remote's budget, send
-    /// system + context + question, stream the answer, and record cost.
+    /// Escalate to `target`: optionally redact, compress `context` to half the remote's
+    /// context window minus `maxTokens`, send system + context + question, stream the
+    /// answer, and record cost. Checks no policy, consent or cost cap.
     public func escalate(
         to target: RemoteTarget,
         systemPrompt: String? = nil,
@@ -66,44 +67,74 @@ public final class HybridEscalator {
         redactPII: Bool = false,
         onToken: @escaping @MainActor (String) -> Void = { _ in }
     ) async throws -> Result {
-        // Reserve room for the answer; keep well under the remote context window.
-        let contextWindow = target.contextLength ?? 8192
-        let budget = max(256, Int(Double(contextWindow) * 0.5) - maxTokens)
-        let compressed = compressor.compress(context: context, question: question, budgetTokens: budget)
+        let payload = preparePayload(
+            for: target, systemPrompt: systemPrompt, context: context, question: question,
+            maxTokens: maxTokens, keepRatio: 0.5, redactPII: redactPII)
+        return try await escalate(payload, to: target, onToken: onToken)
+    }
 
-        // Optional privacy backstop: strip obvious secrets/PII before sending.
-        var contextText = compressed.keptText
+    /// Build the exact request an escalation to `target` sends, without sending it:
+    /// with `redactPII`, the context and `question` are redacted, then the context is
+    /// compressed to `keepRatio` of the remote's context window minus `maxTokens` (at
+    /// least 256 tokens). Show it for consent, then pass it to ``escalate(_:to:onToken:)``.
+    public func preparePayload(
+        for target: RemoteTarget,
+        systemPrompt: String? = nil,
+        context: String,
+        question: String,
+        maxTokens: Int = 1024,
+        keepRatio: Double = 0.5,
+        redactPII: Bool = false
+    ) -> EscalationPayload {
+        var contextText = context
         var questionText = question
         var redactedCount = 0
         if redactPII {
+            // Before compression: its sentence split breaks emails and dotted tokens apart, hiding them from the patterns.
             let redactor = PIIRedactor()
-            let contextRedaction = redactor.redact(compressed.keptText)
+            let contextRedaction = redactor.redact(context)
             let questionRedaction = redactor.redact(question)
             contextText = contextRedaction.redacted
             questionText = questionRedaction.redacted
             redactedCount = contextRedaction.count + questionRedaction.count
         }
 
-        let userContent = contextText.isEmpty
-            ? questionText
-            : "Context:\n\(contextText)\n\nQuestion: \(questionText)"
+        let contextWindow = target.contextLength ?? 8192
+        let budget = max(256, Int(Double(contextWindow) * keepRatio) - maxTokens)
+        let compression = compressor.compress(context: contextText, question: questionText, budgetTokens: budget)
 
-        // Response cache: don't pay twice for an identical request.
+        let userMessage = compression.keptText.isEmpty
+            ? questionText
+            : "Context:\n\(compression.keptText)\n\nQuestion: \(questionText)"
+        return EscalationPayload(
+            systemPrompt: systemPrompt, userMessage: userMessage, maxTokens: maxTokens,
+            redactionEnabled: redactPII, redactedPIICount: redactedCount, compression: compression)
+    }
+
+    /// Send `payload` to `target` exactly as built (no recompression or redaction),
+    /// stream the answer, and record cost. An earlier request with the same provider,
+    /// model, messages and `maxTokens` is answered from ``ResponseCache`` without a remote call.
+    public func escalate(
+        _ payload: EscalationPayload,
+        to target: RemoteTarget,
+        onToken: @escaping @MainActor (String) -> Void = { _ in }
+    ) async throws -> Result {
+        let compressed = payload.compression
         if let cached = ResponseCache.shared.lookup(
-            provider: target.provider.id, model: target.modelID, prompt: userContent) {
+            provider: target.provider.id, model: target.modelID, payload: payload) {
             onToken(cached)
             return Result(
                 answer: cached, compression: compressed, usage: nil,
                 providerName: target.provider.displayName,
-                redactedPIICount: redactedCount, fromCache: true)
+                redactedPIICount: payload.redactedPIICount, fromCache: true)
         }
 
         let backend = RemoteBackend(target: target)
         let answer: String
         do {
             answer = try await backend.generate(
-                prompt: userContent, systemPrompt: systemPrompt,
-                maxTokens: maxTokens, onToken: onToken)
+                prompt: payload.userMessage, systemPrompt: payload.systemPrompt,
+                maxTokens: payload.maxTokens, onToken: onToken)
         } catch {
             // Output means tokens were billed; without usage the record's cost is unknown, never $0.
             if backend.didReceiveOutput || backend.lastUsage != nil {
@@ -113,7 +144,7 @@ public final class HybridEscalator {
         }
 
         ResponseCache.shared.insert(
-            answer, provider: target.provider.id, model: target.modelID, prompt: userContent)
+            answer, provider: target.provider.id, model: target.modelID, payload: payload)
         record(target, usage: backend.lastUsage, compression: compressed)
 
         return Result(
@@ -121,7 +152,7 @@ public final class HybridEscalator {
             compression: compressed,
             usage: backend.lastUsage,
             providerName: target.provider.displayName,
-            redactedPIICount: redactedCount,
+            redactedPIICount: payload.redactedPIICount,
             fromCache: false)
     }
 
@@ -196,6 +227,10 @@ public final class HybridEscalator {
     /// default ``ConsentGate/requestConsent(target:preview:offer:)`` does when it
     /// is over the cost cap.
     ///
+    /// The payload is built once, compressed with `policy.keepRatio` and redacted per
+    /// `policy.piiRedaction`; the gate is shown that payload and exactly it is sent. The projected
+    /// cost and the cost cap are checked for that payload; size overflow (R4) reads the raw prompt.
+    ///
     /// Pass `localAnswer` (the local model's draft) to enable the router's
     /// low-confidence trigger (R5/R6) — without it only size-overflow can escalate.
     /// `targets` lets callers reuse already-discovered candidates (e.g. tests).
@@ -220,41 +255,46 @@ public final class HybridEscalator {
         }
         guard let target = candidates.first else { return nil }   // R2: no target
 
-        let input = routingInput(
-            policy: policy, target: target,
-            promptTokens: ContextCompressor.estimateTokens((systemPrompt ?? "") + context + question),
+        let promptTokens = ContextCompressor.estimateTokens((systemPrompt ?? "") + context + question)
+        // Cost never keeps a request local, so this settles R1-R6 before paying for redaction and compression.
+        let trigger = routingInput(
+            policy: policy, target: target, promptTokens: promptTokens,
             maxTokens: maxTokens, localContextWindow: localContextWindow,
             localAnswer: localAnswer, domain: domain)
+        if EscalationRouter.decide(trigger) == .stayLocal { return nil }
 
-        switch EscalationRouter.decide(input) {
-        case .stayLocal:
-            return nil
-        case .escalate:
-            return try await escalate(to: target, systemPrompt: systemPrompt,
-                                      context: context, question: question,
-                                      maxTokens: maxTokens, onToken: onToken)
-        case .offer(let reason):
-            let budget = max(256, Int(Double(target.contextLength ?? 8192) * policy.keepRatio) - maxTokens)
-            let preview = compressor.compress(context: context, question: question, budgetTokens: budget)
+        let payload = preparePayload(
+            for: target, systemPrompt: systemPrompt, context: context, question: question,
+            maxTokens: maxTokens, keepRatio: policy.keepRatio, redactPII: policy.redactsPII(for: target))
+        // R7 prices what is sent; the size rule keeps reading the raw prompt.
+        let input = routingInput(
+            policy: policy, target: target, promptTokens: promptTokens,
+            pricedInputTokens: payload.estimatedInputTokens,
+            maxTokens: maxTokens, localContextWindow: localContextWindow,
+            localAnswer: localAnswer, domain: domain)
+        let decision = EscalationRouter.decide(input)
+        if decision == .stayLocal { return nil }
+
+        if case .offer(let reason) = decision {
             let offer = EscalationOffer(
                 reason: reason, projectedCostUSD: input.projectedCostUSD,
                 sessionSpentUSD: input.sessionSpentUSD, unpricedRecordCount: input.unpricedRecordCount,
-                costCapUSD: policy.costCapUSDPerSession)
-            guard await consent.requestConsent(target: target, preview: preview, offer: offer) else {
+                costCapUSD: policy.costCapUSDPerSession, payload: payload)
+            guard await consent.requestConsent(target: target, preview: payload.compression, offer: offer) else {
                 throw AuraError.escalationDeclined
             }
-            return try await escalate(to: target, systemPrompt: systemPrompt,
-                                      context: context, question: question,
-                                      maxTokens: maxTokens, onToken: onToken)
         }
+        return try await escalate(payload, to: target, onToken: onToken)
     }
 
     /// The router's view of one request, priced by this escalator's ledger and
-    /// counting what the ledger's session has already spent.
+    /// counting what the ledger's session has already spent. The cost is for
+    /// `pricedInputTokens` (default `promptTokens`) plus `maxTokens`.
     func routingInput(
         policy: EscalationPolicy,
         target: RemoteTarget,
         promptTokens: Int,
+        pricedInputTokens: Int? = nil,
         maxTokens: Int,
         localContextWindow: Int,
         localAnswer: String?,
@@ -269,7 +309,8 @@ public final class HybridEscalator {
             localContextWindow: localContextWindow,
             localAnswer: localAnswer,
             domain: domain,
-            projectedCostUSD: ledger.projectedCost(target: target, inputTokens: promptTokens, maxOutput: maxTokens),
+            projectedCostUSD: ledger.projectedCost(
+                target: target, inputTokens: pricedInputTokens ?? promptTokens, maxOutput: maxTokens),
             sessionSpentUSD: ledger.sessionCostUSD,
             unpricedRecordCount: ledger.unpricedRecordCount)
     }

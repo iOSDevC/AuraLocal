@@ -23,13 +23,13 @@ Research notes, not a shipped feature: [Distributed inference](docs/guide/distri
 - **OOM prevention that fails safe** — One source of truth (`HardwareProfile.availableMemoryBytes()`) asks the OS and returns `nil` rather than inventing a number. iOS reports "unknown" exactly when the process is at its jetsam limit, so unknown counts as *pressure*: layer-streaming shrinks its context to 512 tokens and stops a reply early (checked every 32 tokens), and the model cache keeps one model. Paired with `DispatchSource` listeners and per-generation checks.
 - **Hybrid RAG pipeline** — FTS5 keyword pre-filter + Accelerate cosine re-ranking, stored in SQLite. Zero external dependencies.
 - **Local provider detection** — `AuraLocal.detectLocalProviders()` discovers a running Ollama (`:11434`) or llama.cpp `llama-server` (`:8080/v1`) and the models each exposes, via a dependency-free URLSession probe (never throws — a down server is a normal result).
-- **Token-optimized hybrid inference** — Stay local by default: `AuraLocal.stream()` runs on-device models, and `HybridEscalator` sends a request to your own llama-server/Ollama box or a cloud model only when needed, streaming its answer through an `onToken` callback. It **cuts the tokens sent to the remote** via selective-context compression (input-dependent), an in-memory response cache (repeat calls in a session cost **$0**), and opt-in PII redaction. Every escalation returns its token counts, and `CostLedger` records its cost, for a receipt. The policy path is off by default and consent-gated. See [Hybrid Inference](#hybrid-inference-local--remote).
+- **Token-optimized hybrid inference** — Stay local by default: `AuraLocal.stream()` runs on-device models, and `HybridEscalator` sends a request to your own llama-server/Ollama box or a cloud model only when needed, streaming its answer through an `onToken` callback. It **cuts the tokens sent to the remote** via selective-context compression (input-dependent), an in-memory response cache (repeat calls in a session cost **$0**), and PII redaction (on by default for cloud targets on the policy path). Every escalation returns its token counts, and `CostLedger` records its cost, for a receipt. The policy path is off by default and consent-gated. See [Hybrid Inference](#hybrid-inference-local--remote).
 - **Agent orchestration (Architect-step escalation)** — `AgentCrew` (Extractor → Reviewer → Architect → Reporter) escalates the Architect's local draft to a bigger model when it looks weak, reusing the same compression + consent + cost machinery.
 - **On-device ML tools, not just LLMs** — Typed, availability-checked wrappers over Apple's ML frameworks, using models that ship with the OS and no extra dependencies: Vision (OCR lines, image classification, barcodes & QR, face detection), NaturalLanguage (language ID, named entities, sentiment, embeddings), SoundAnalysis (303 everyday sounds), a runner for **your own Core ML models**, and **on-device Create ML training** of text classifiers. `SystemToolRegistry` reports which built-in tools run on each device. See [On-device ML tools](#on-device-ml-tools).
 - **`aura` CLI & binaries** — A headless integration harness (`aura providers | tools | ask | ocr | ml | models | imagegen`) plus build scripts for a release CLI and a drag-to-Applications `.dmg`. See [CLI & Binaries](#cli--binaries).
 - **Will this Hugging Face model run here?** — `ModelCompatibilityChecker` reads a repo's config and GGUF/safetensors headers and reports, for a device preset, whether AuraLocal's pinned runtimes (mlx-swift-lm 3.31.3, llama.cpp b8851) can load it, why not, and its `models.json` entry. Also `aura models search|check|devices` and the Model Finder example app.
 - **Multilingual dense RAG (opt-in)** — `AutoEmbeddingProvider(embeddingModelAt:)` swaps TF-IDF for multilingual-e5-small via Core ML; the index re-embeds itself when the provider changes.
-- **On-device image generation** — `CoreMLDiffusionEngine` (AuraImageGen) runs Core ML Stable Diffusion 2.1 base on iPhone and Mac after a one-time ~1.07 GB download; FLUX + LoRA via mflux on macOS. See [Image Generation](#image-generation).
+- **On-device image generation** — `CoreMLDiffusionEngine` (AuraImageGen) runs Core ML Stable Diffusion 2.1 base on iPhone and Mac after a one-time ~1.07 GB download, or a Core ML SD 1.x/2.x folder from Hugging Face that `CoreMLDiffusionInspector` judges runnable; FLUX + LoRA via mflux on macOS. See [Image Generation](#image-generation).
 - **Stops when an iOS app backgrounds** — running MLX, llama.cpp and Core ML generations are cancelled and throw `GenerationInterrupted` with the text so far; an opt-in `DeviceConditions` guard stops on critical heat. See [Background Lifecycle](#background-lifecycle-ios).
 - **Constrained and structured output** — a GGUF loaded in full takes `constraint: .json` or a GBNF grammar; `AuraSession` checks replies against a profile's `OutputSchema` and re-prompts with the violations (validation and repair, not constrained decoding). See [Structured output](docs/api/core.md#structured-output).
 - **Model downloads** — `ModelDownloads` fetches GGUF and MLX models without loading them, resumes `.partial` files across relaunches (restarting when the file's ETag changes), sends the Keychain Hugging Face token and checks free space; `DownloadRecords` keeps them across launches. See [Downloading without loading](docs/guide/models.md#downloading-without-loading).
@@ -81,10 +81,13 @@ If your package imports `AuraCore`, add the C++ interop setting:
 | Dependency | Purpose |
 |-----------|---------|
 | [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) | MLX GPU inference for `.mlx` models |
+| [mlx-swift](https://github.com/ml-explore/mlx-swift) | MLX arrays and Metal kernels under mlx-swift-lm (`0.31.3..<0.31.5`: 0.31.5 does not build for iOS, 0.31.6 is in an open pre-`main()` hang report on iOS 27) |
 | [LocalLLMClient](https://github.com/tattn/LocalLLMClient) | Swift wrapper for llama.cpp — GGUF inference + Metal kernels |
 | [swift-transformers](https://github.com/huggingface/swift-transformers) | `Tokenizers` — tokenization for MLX models |
 | [swift-jinja](https://github.com/huggingface/swift-jinja) | `Jinja` — renders each GGUF's chat template so turns carry real roles (from 2.3.5; LocalLLMClient already resolves it) |
 | [ml-stable-diffusion](https://github.com/apple/ml-stable-diffusion) | `StableDiffusion` — Core ML text-to-image for `AuraImageGen` (pinned `exact: "1.1.1"`: upstream `main` requires swift-transformers 0.1.8; not linked on visionOS) |
+
+`AuraCore` and `AuraImageGen` ship `PrivacyInfo.xcprivacy` manifests (no tracking, no collected data, and the required-reason APIs they use); see [Privacy manifests](docs/guide/installation.md#privacy-manifests) for what your app still declares.
 
 ### Modules
 
@@ -96,7 +99,7 @@ If your package imports `AuraCore`, add the C++ interop setting:
 | `AuraDocs` | RAG document library — PDF, DOCX, text, images · TF-IDF or multilingual-e5-small embeddings |
 | `AuraAppleIntelligence` | Apple FoundationModels agents, tools & structured output (iOS 26 / macOS 26) |
 | `AuraAgents` | Reusable multi-agent orchestration (`AgentCrew`) with hybrid escalation of its Architect step |
-| `AuraImageGen` | Text-to-image: Core ML Stable Diffusion on device (iOS + macOS), FLUX + LoRA via mflux (macOS) |
+| `AuraImageGen` | Text-to-image: Core ML Stable Diffusion on device (iOS + macOS), built in or inspected and adopted from Hugging Face; FLUX + LoRA via mflux (macOS) |
 
 ---
 
@@ -115,6 +118,15 @@ model.format == .gguf + streamingRequired →  LayerStreamingBackend  (mmap; in 
 | MLX | iOS + macOS | 258M–35B in the catalog (≤4B on most iPhones) | ~1 – 20 GB | 20–45 (≤4B) |
 | llama.cpp (standard) | iOS + macOS, when the model fits | 1.2B–70B | ~1 – 40 GB | 8–20 (Mac) |
 | Layer-streaming | iOS, when it does not fit | 7B–14B (32B at the iPhone 17 Pro budget) | ~1 GB for a 7B–8B | 2–6 |
+
+The backends differ in what they honour:
+
+| | MLX | GGUF (llama.cpp) |
+|---|---|---|
+| Tools (`ModelManager.load(_:tools:)`, `AuraProfile.tools`) | Throws `ModelConfigurationError.toolsUnsupported(.mlx)` before loading | Runs the tool-calling loop |
+| `temperature` / `topP` | Fixed per instance | Fixed per instance (the sampler is built with the context); each setting is its own cached instance |
+| `constraint:` (JSON / GBNF) | Throws `GenerationConstraintError.unsupportedBackend` | Enforced when loaded in full; layer-streaming throws |
+| Images | Vision models | Ignored (text only) |
 
 You can inspect which backend a model will use:
 
@@ -150,7 +162,7 @@ Spending as few remote tokens as possible is the whole point. Four mechanisms **
 | **Local-first routing** | Answer on-device whenever the local model suffices | Remote tokens: **0** |
 | **Selective-context compression** | Keep only the sentences relevant to the question, within a budget derived from the remote's context window | **Fewer** input tokens when the context exceeds the budget (input-dependent; a context that fits is sent unchanged) |
 | **Response cache** | Identical escalations in the same app session replay the prior answer (in-memory, cleared on relaunch) | Repeat calls: **$0** |
-| **PII redaction** | Strip secrets before sending (opt-in: `escalate(…, redactPII: true)`) | Smaller + safer payload |
+| **PII redaction** | Strip secrets before sending: `routeAndEscalate` per `EscalationPolicy.piiRedaction` (cloud targets by default), `escalate(…)` with `redactPII: true` | Safer payload |
 
 `HybridEscalator.Result` carries `compression` (`originalTokens`, `compressedTokens`, `factor`) and
 `usage`, and `CostLedger.shared.records` keeps each call's `costUSD` (`nil` when its price is
@@ -162,7 +174,7 @@ call's cost in its escalation history, marking unknown costs "unpriced".
 
 1. **Local GGUF** answers by default — **0 remote tokens**.
 2. The **router** decides local-vs-remote per request (size overflow, local uncertainty, sensitive domain, policy, cost cap).
-3. On escalation: **compress → consent** (every cloud request; your LAN box too under `.askEachTime`), then call the chosen remote — *your own* `llama-server`/Ollama first, cloud (BYOK) second. `PIIRedactor` runs only when you call `escalate(to:…, redactPII: true)` yourself; `routeAndEscalate` does not redact.
+3. On escalation: **redact → compress → consent** (every cloud request; your LAN box too under `.askEachTime`), then call the chosen remote — *your own* `llama-server`/Ollama first, cloud (BYOK) second. `routeAndEscalate` redacts per `EscalationPolicy.piiRedaction` (cloud targets by default), shows the gate the exact payload, and sends it unchanged.
 4. The remote streams back through `HybridEscalator`'s `onToken` callback (cumulative text). If `routeAndEscalate` returns `nil` or throws, keep the local answer: the `nil` check and the `catch` are your code's.
 
 ### Detect local providers
@@ -218,7 +230,7 @@ let result = try await escalator.routeAndEscalate(
     context: history, question: prompt,
     domain: .security,                 // with localAnswer, short answers in security/medicine escalate more readily
     localAnswer: localDraft,           // the local model's draft; enables R5/R6
-    consent: myConsentGate)            // your ConsentGate; it receives a compressed preview to approve
+    consent: myConsentGate)            // your ConsentGate; offer.payload is the exact request to approve
 // result == nil → the router kept the request local; keep localDraft
 ```
 
@@ -249,12 +261,15 @@ model, reusing the same compression, consent, and cost machinery. Fail-closed: a
 
 **Privacy & cost:** cloud API keys live only in the Keychain (never in source, files,
 or logs). `ConsentGate` receives the target, the projected cost (`nil` when the model is unpriced)
-and a compressed preview of the context, and your app presents it: the Example app ships a sheet,
+and the exact payload (`EscalationOffer.payload`: system prompt, user message, `maxTokens` and
+redaction count), which is what approval sends; your app presents it: the Example app ships a sheet,
 and the library's only built-in gate, `DenyingConsentGate`, declines everything. `routeAndEscalate`
 calls `requestConsent(target:preview:offer:)`, whose `EscalationOffer` adds the router's reason, the
 session's spend and the cap; its default implementation declines an offer over the cap and passes any
 other to `requestConsent(target:preview:projectedCostUSD:)`. `PIIRedactor`
-strips obvious secrets when you pass `redactPII: true`; `CostLedger` records per-escalation token
+strips obvious secrets from the context and the question: on `routeAndEscalate` per
+`EscalationPolicy.piiRedaction` (cloud targets by default), on `escalate(to:)` when you pass
+`redactPII: true`; `CostLedger` records per-escalation token
 usage and cost; `ResponseCache` avoids paying twice for identical requests within one app session.
 
 Prices live on the ledger your `HybridEscalator` uses (`CostLedger.shared` by default). Add the
@@ -271,10 +286,8 @@ ledger.startNewSession()   // the cap and sessionCostUSD restart; records keeps 
 ```
 
 > **Limitations.**
-> - The consent preview is not byte-identical to the payload. It is compressed with
->   `EscalationPolicy.keepRatio`, while the send is compressed to half the remote's context window
->   (minus `maxTokens`) and adds the question and system prompt. They match only while `keepRatio`
->   is 0.5, the default.
+> - Redaction is pattern-based (emails and common key and token formats) and skips the system
+>   prompt, which is always sent verbatim.
 > - Built-in prices cover only the two default cloud models: `claude-sonnet-4-5` on `cloud.anthropic`
 >   ($3 in / $15 out per 1M tokens) and `gpt-4o` on `cloud.openai` ($2.50 / $10), approximate list
 >   prices. Any other cloud model, including a custom `OpenAICompatibleProvider`, is unpriced until
@@ -321,6 +334,10 @@ let output = try await engine.generate(DiffusionRequest(prompt: "a lighthouse at
 output.images.first?.fileURL                            // PNG on disk
 output.seed                                             // reuse it to reproduce the image
 ```
+
+Other Core ML Stable Diffusion 1.x/2.x folders on Hugging Face can be searched, judged for the device from their
+Unet's `metadata.json` and adopted with `CoreMLDiffusionInspector` and `CoreMLDiffusionModel(variant:)`; SDXL is
+not supported yet. See [Other models from Hugging Face](docs/guide/imagegen.md#other-models-from-hugging-face).
 
 The preset has no safety checker and carries the CreativeML Open RAIL++-M license's use restrictions. Apple's
 Image Playground sheet is the other option on iPhone; from iOS 27 Apple runs it on its servers, so
@@ -472,11 +489,13 @@ development-signed (runs on this Mac); to distribute it, re-sign with a Develope
 identity and notarize (`xcrun notarytool submit … && xcrun stapler staple …`).
 Requires macOS 26 (AgentCrew).
 
-AuraExample also runs on iPhone (iOS 18.6+; the Agents tab needs iOS 26). It searches Hugging Face for models
-that run on the phone, downloads one and chats with it: **Find on Hugging Face…** in the Text tab's model menu,
-or **Models → Search Hugging Face**. See [The example apps](docs/guide/models.md#the-example-apps).
-**More → Image** generates images on the phone with Core ML Stable Diffusion after a one-time ~1.07 GB download,
-and offers Apple's Image Playground, asking before each use from iOS 27, when it runs on Apple's servers.
+AuraExample also runs on iPhone (iOS 18.6+; the Agents tab needs iOS 26). Each section gets its own models:
+**Chat** (text, images and documents in one conversation, with Text, Vision, OCR and Tools badges per model)
+downloads from the catalog or searches Hugging Face for chat models that run on the phone, **Voice** uses the
+downloaded text models, and **Models** (under More) lists what is on disk with its size and Delete. See
+[The example apps](docs/guide/models.md#the-example-apps). **Image** generates images on the phone with Core ML
+Stable Diffusion after a one-time ~1.07 GB download, and offers Apple's Image Playground, asking before each use
+from iOS 27, when it runs on Apple's servers.
 
 ### Model Finder (`Examples/ModelFinder`)
 
@@ -523,7 +542,13 @@ let answer = try await llm.chat(
     "What is the VAT rate in Mexico?",
     systemPrompt: "You are a personal finance assistant."
 )
+
+// Repeatable output: temperature 0 is greedy on MLX and GGUF alike
+let extractor = try await AuraLocal.text(.qwen3_1_7b, temperature: 0)
 ```
+
+`temperature` and `topP` (also on `ModelManager.shared.load`) hold for the instance's lifetime; `nil` keeps the
+backend default. See [Sampling](docs/guide/backends.md#sampling-temperature-and-top-p).
 
 After a call returns, `llm.lastGenerationStats` holds its token counts and timings (`source` says whether they
 are runtime counters, measured, or estimated). On MLX, `llm.lastContextOverflow` reports how many tokens outgrew
@@ -781,7 +806,7 @@ let llm = try await AuraLocal.text(.qwen3_1_7b)
 let reply  = try await llm.chat("What is 2+2?", in: conv.id)
 let reply2 = try await llm.chat("Why?", in: conv.id) // includes previous exchange
 
-// Streaming with history
+// Streaming with history (leaving the loop early cancels the generation; its text so far is saved as the reply)
 for try await token in llm.stream("Tell me more", in: conv.id) {
     print(token, terminator: "")
 }
@@ -1116,6 +1141,20 @@ ModelManager.shared.evict(.llama3_1_8b_gguf)
 ModelManager.shared.evictAll()
 ```
 
+### Model Storage
+
+Downloads go to `ModelStorage.rootDirectory` — `<Application Support>/AuraLocal/Models`, excluded from iCloud and
+device backups — rather than Caches, which iOS empties when storage runs low. On iOS and in a sandboxed Mac app the
+folder is inside the app container; a non-sandboxed macOS process (the `aura` CLI, the AuraExample Mac app) uses
+`~/Library/Application Support/AuraLocal/Models`, shared between them. Models an earlier version downloaded into
+Caches still load from there; a sandboxed app moves them over on first use (rename only, never a copy or an
+overwrite), and a non-sandboxed Mac app can call `ModelStorage.migrateLegacyDownloads()`.
+
+Each downloaded LFS file is hashed and compared with the SHA-256 Hugging Face publishes for it before it is moved
+into place; a mismatch deletes it and throws `ModelIntegrityError.checksumMismatch`. See
+[Where models are stored](docs/guide/models.md#where-models-are-stored) and
+[SHA-256 verification](docs/guide/models.md#sha-256-verification).
+
 ### Memory Budget
 
 The LRU cache budget is computed once, when `ModelManager.shared` is created: (available memory − 2 GB)
@@ -1233,7 +1272,8 @@ AuraDocs (optional)
 └── DocsTab                  →  SwiftUI tab · file picker · progress bar · chat sheet
 
 AuraImageGen (optional)
-├── CoreMLDiffusionEngine    →  Core ML Stable Diffusion 2.1 base on device (iOS + macOS)
+├── CoreMLDiffusionEngine    →  Core ML Stable Diffusion on device (iOS + macOS): SD 2.1 base or an adopted model
+├── CoreMLDiffusionInspector →  search Hugging Face, judge Core ML SD folders per device, pinned to a commit
 ├── ImagePlaygroundPolicy    →  egress-safe styles and options for Apple's Image Playground sheet
 └── MFluxEngine              →  FLUX + LoRA via the mflux subprocess (macOS)
 
@@ -1253,15 +1293,42 @@ Sources/
 Examples/
 └── ModelFinder/
 
-MLX models download automatically and are cached at:
-  ~/Library/Caches/huggingface/hub/models--<org>--<repo>/snapshots/main/
-
-GGUF models are downloaded to:
-  ~/Library/Caches/models/<org>/<repo>/<file>.gguf
+Downloaded models live under ModelStorage.rootDirectory (<Application Support>/AuraLocal/Models;
+~/Library/Application Support/AuraLocal/Models for a non-sandboxed Mac process):
+  MLX:  <root>/huggingface/hub/models--<org>--<repo>/snapshots/main/
+  GGUF: <root>/models/<org>/<repo>/<file>.gguf
 ```
 
 ---
 
 ## License
 
-MIT
+AuraLocal is dual-licensed: under the GNU Affero General Public License, or under a commercial license from the
+copyright holder.
+
+**AGPL-3.0-or-later.** AuraLocal is free software: you can redistribute it and/or modify it under the terms of the
+[GNU Affero General Public License](LICENSE) as published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+Copyright (C) 2026 iOSDevC
+
+AuraLocal is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
+details.
+
+**Commercial license.** To use AuraLocal where the AGPL's terms don't fit, such as a closed-source app, an App
+Store release, or a network service whose source you don't publish, get a commercial license from the copyright
+holder: contact [iOSDevC](https://github.com/iOSDevC).
+
+- **What the AGPL means for your app:** an app or package that links AuraLocal and is distributed must be released
+  under AGPL-3.0-compatible terms, with its source available. If you modify AuraLocal and let people use it over a
+  network, you must offer them the source of your version too. The AGPL's conditions conflict with the App
+  Store's terms.
+- **Earlier versions:** commits published before the license change (up to `1647874`, including the `v0.1.0` tag)
+  remain available under the MIT License they shipped with.
+- **Contributions** are accepted under the terms in [CONTRIBUTING.md](CONTRIBUTING.md), which keep the commercial
+  license possible.
+- **Dependencies** keep their own licenses (MIT, Apache-2.0, BSD); all are compatible with AGPL-3.0 and with the
+  commercial license. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **Models** downloaded at run time are not part of AuraLocal and carry their own licenses; check each model
+  card before you use or redistribute one.

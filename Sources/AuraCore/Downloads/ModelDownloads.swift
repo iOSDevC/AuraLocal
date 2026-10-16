@@ -7,10 +7,22 @@ public struct PlannedFile: Sendable, Equatable {
     /// Repo-relative path.
     public let path: String
     public let sizeBytes: Int64
+    /// The SHA-256 Hugging Face publishes for an LFS file; `nil` for a file kept in git.
+    let sha256: String?
 
     public init(path: String, sizeBytes: Int64) {
+        self.init(path: path, sizeBytes: sizeBytes, sha256: nil)
+    }
+
+    init(path: String, sizeBytes: Int64, sha256: String?) {
         self.path = path
         self.sizeBytes = sizeBytes
+        self.sha256 = sha256
+    }
+
+    /// Path and size, as before the checksum existed: it is download bookkeeping, not part of what a plan shows.
+    public static func == (lhs: PlannedFile, rhs: PlannedFile) -> Bool {
+        lhs.path == rhs.path && lhs.sizeBytes == rhs.sizeBytes
     }
 }
 
@@ -34,13 +46,17 @@ public struct DownloadPlan: Sendable, Equatable {
 
 // MARK: - ModelDownloads
 
-/// Download-only API: fetches a model to the exact path its backend loads from, without loading it.
+/// Download-only API: fetches a model to the exact path its backend loads from, without loading it. Paths are under
+/// ``ModelStorage/rootDirectory`` (`<root>` below):
 ///
-/// - GGUF: `<Caches>/models/<org>/<repo>/<ggufFilename>` (``Model/resolvedFileURL``).
-/// - MLX: `<Caches>/huggingface/hub/models--<org>--<repo>/snapshots/main/` plus a `.complete` marker
+/// - GGUF: `<root>/models/<org>/<repo>/<ggufFilename>` (``Model/resolvedFileURL``).
+/// - MLX: `<root>/huggingface/hub/models--<org>--<repo>/snapshots/main/` plus a `.complete` marker
 ///   (``Model/isDownloaded``), with only the files mlx-swift-lm reads.
 ///
-/// Transfers resume from `<file>.partial` after a cancel, a network cut or a relaunch. Only single-file GGUF
+/// A model an earlier version downloaded into Caches is used from there until it is migrated, and is not fetched
+/// again. Transfers resume from `<file>.partial` after a cancel, a network cut or a relaunch. Each finished LFS file
+/// is hashed and compared with the SHA-256 Hugging Face publishes for it before it is moved into place; a mismatch
+/// deletes it and throws ``ModelIntegrityError/checksumMismatch(path:expected:actual:)``. Only single-file GGUF
 /// quants at the top level of a repo are supported. The Hugging Face token comes from ``KeychainDownloadAuth``.
 /// ``downloadFolder(repoID:revision:folder:include:auth:progress:)`` fetches one folder of a repo instead, such as
 /// a Core ML model, and sends no token by default.
@@ -52,42 +68,53 @@ public enum ModelDownloads {
     /// The MLX snapshot folder is always `main`, whatever revision was fetched; ``Model/isDownloaded`` reads it.
     static let snapshotFolder = "main"
 
-    static var cachesRoot: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-    }
+    static var storageRoot: URL { ModelStorage.rootDirectory }
 
     // MARK: Public
 
     /// Files and sizes for `model` without downloading. GGUF: one file (HEAD). MLX: the filtered top-level tree.
     public static func plan(for model: Model,
                             auth: any DownloadAuthorizing = KeychainDownloadAuth()) async throws -> DownloadPlan {
-        try await plan(for: model, transfer: HubFileTransfer(auth: auth), root: cachesRoot)
+        try await plan(for: model, transfer: HubFileTransfer(auth: auth), root: storageRoot)
     }
 
-    /// Downloads to the exact path the backends load from, resuming any `.partial`. Returns the GGUF file or the
-    /// MLX snapshot folder. `progress` receives (bytes on disk, total bytes). Cancel the calling task to stop;
-    /// the partial file is kept for the next call.
+    /// Downloads to the exact path the backends load from, resuming any `.partial` (a GGUF one left in Caches is
+    /// moved into the storage root first), and verifies each LFS file's SHA-256. Returns the GGUF file or the MLX
+    /// snapshot folder; one still in Caches from an earlier version is returned as is. `progress` receives (bytes
+    /// on disk, total bytes). Cancel the calling task to stop; the partial file is kept for the next call.
     public static func download(_ model: Model,
                                 auth: any DownloadAuthorizing = KeychainDownloadAuth(),
                                 progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
-        try await download(model, transfer: HubFileTransfer(auth: auth), root: cachesRoot, progress: progress)
+        try await download(model, transfer: HubFileTransfer(auth: auth), root: storageRoot,
+                           fallbackRoots: ModelStorage.fallbackRoots, progress: progress)
     }
 
-    /// Removes the model's files, finished and partial. GGUF: the file, then its empty `<org>/<repo>` folders;
-    /// MLX: the whole `models--<org>--<repo>` folder. Unload the model first (``ModelManager/evict(_:)``).
+    /// Removes the model's files, finished and partial, from the storage root and from Caches. GGUF: the file, then
+    /// its empty `<org>/<repo>` folders; MLX: the whole `models--<org>--<repo>` folder (in Caches only its
+    /// `snapshots/main`, since a Hugging Face cache there may hold the same repo). Unload the model first
+    /// (``ModelManager/evict(_:)``).
     public static func delete(_ model: Model) throws {
-        try delete(model, root: cachesRoot)
+        try delete(model, root: storageRoot)
+        for legacyRoot in ModelStorage.fallbackRoots {
+            try deleteLegacy(model, root: legacyRoot)
+        }
     }
 
-    /// Bytes on disk for `model`, finished plus partial; 0 when nothing is there.
+    /// Bytes on disk for `model`, finished plus partial, in the storage root and in Caches; 0 when nothing is there.
     public static func bytesOnDisk(for model: Model) -> Int64 {
-        bytesOnDisk(for: model, root: cachesRoot)
+        ModelStorage.readRoots.map { bytesOnDisk(for: model, root: $0) }.saturatingSum()
     }
 
-    /// Free space for important data on the Caches volume, where every download lands; `nil` when unknown.
-    /// ``download(_:auth:progress:)`` requires the remaining bytes plus a 20 % margin.
+    /// Free space for important data on the volume of ``ModelStorage/rootDirectory``, where every download lands;
+    /// `nil` when unknown. ``download(_:auth:progress:)`` requires the remaining bytes plus a 20 % margin.
     public static func availableDiskBytes() -> Int64? {
-        HubFileTransfer.volumeFreeSpace(cachesRoot)
+        HubFileTransfer.volumeFreeSpace(storageRoot)
+    }
+
+    /// The SHA-256 a download verified `file` against, or `nil` when it was not verified: downloaded before
+    /// verification existed, from a source that publishes no SHA-256, or changed in size since.
+    public static func verifiedSHA256(of file: URL) -> String? {
+        FileIntegrity.verifiedSHA256(of: file)
     }
 
     // MARK: Paths
@@ -168,12 +195,14 @@ public enum ModelDownloads {
 
     static func sized(_ file: RemoteFile, repoID: String, revision: String,
                       transfer: HubFileTransfer) async throws -> PlannedFile {
-        if let size = file.size, size > 0 { return PlannedFile(path: file.path, sizeBytes: size) }
+        if let size = file.size, size > 0 {
+            return PlannedFile(path: file.path, sizeBytes: size, sha256: file.sha256)
+        }
         guard let url = fileURL(repoID: repoID, revision: revision, path: file.path) else {
             throw ModelDownloadError.unsupported("Not a Hugging Face repository id: \(repoID)")
         }
         let size = try await transfer.size(of: url, repoID: repoID, path: file.path)
-        return PlannedFile(path: file.path, sizeBytes: size)
+        return PlannedFile(path: file.path, sizeBytes: size, sha256: file.sha256)
     }
 
     static func hasWeightsAndConfig(_ paths: [String]) -> Bool {
@@ -194,36 +223,63 @@ public enum ModelDownloads {
 
     // MARK: Download
 
-    static func download(_ model: Model, transfer: HubFileTransfer, root: URL,
+    /// `fallbackRoots` are only read: a finished model found there is returned instead of downloaded again.
+    static func download(_ model: Model, transfer: HubFileTransfer, root: URL, fallbackRoots: [URL] = [],
                          progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
         switch model.format {
         case .gguf:
-            return try await downloadGGUF(model, transfer: transfer, root: root, progress: progress)
+            return try await downloadGGUF(model, transfer: transfer, root: root, fallbackRoots: fallbackRoots,
+                                          progress: progress)
         case .mlx:
+            let finished = ([root] + fallbackRoots).lazy
+                .map { snapshotDirectory(repoID: model.repoID, root: $0) }
+                .first { FileManager.default.fileExists(atPath: $0.appendingPathComponent(completeMarker).path) }
+            if let finished { return finished }
             return try await downloadSnapshot(repoID: model.repoID, patterns: mlxFilePatterns,
                                               revision: snapshotFolder, transfer: transfer, root: root,
                                               progress: progress)
         }
     }
 
-    private static func downloadGGUF(_ model: Model, transfer: HubFileTransfer, root: URL,
+    private static func downloadGGUF(_ model: Model, transfer: HubFileTransfer, root: URL, fallbackRoots: [URL],
                                      progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
         let target = try ggufTarget(for: model, root: root)
-        if let size = HubFileTransfer.fileSize(at: target.file) {
-            progress(size, size)
-            return target.file
+        for candidate in [root] + fallbackRoots {
+            let file = try ggufTarget(for: model, root: candidate).file
+            if let size = HubFileTransfer.fileSize(at: file) {
+                progress(size, size)
+                return file
+            }
         }
+        adoptFallbackPartial(of: model, to: target.file, from: fallbackRoots)
         let path = target.file.lastPathComponent
         let total = try await transfer.size(of: target.source, repoID: model.repoID, path: path)
         let directory = target.file.deletingLastPathComponent()
         let present = onDiskBytes(target.file)
         try transfer.ensureSpace(remaining: max(0, total - present), at: directory)
+        let sha256 = try await transfer.publishedSHA256(of: target.source)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try await transfer.fetch(target.source, to: target.file, expectedSize: total,
+        try await transfer.fetch(target.source, to: target.file, expectedSize: total, expectedSHA256: sha256,
                                  repoID: model.repoID, path: path) { bytes in
             progress(bytes, total)
         }
         return target.file
+    }
+
+    /// Moves a `.partial` an earlier version left in a fallback root next to `file`, so the transfer resumes from
+    /// it instead of starting over and leaving it behind. Nothing moves when `file` already has a partial.
+    static func adoptFallbackPartial(of model: Model, to file: URL, from fallbackRoots: [URL]) {
+        let partial = HubFileTransfer.partialURL(for: file)
+        guard HubFileTransfer.fileSize(at: partial) == nil else { return }
+        for fallback in fallbackRoots {
+            guard let old = try? HubFileTransfer.partialURL(for: ggufTarget(for: model, root: fallback).file) else {
+                continue
+            }
+            if ModelStorage.moveExclusively(old, to: partial, fileManager: .default) == .moved {
+                ModelStorage.removeEmptyFolders(from: old.deletingLastPathComponent(), upTo: fallback)
+                return
+            }
+        }
     }
 
     /// Fetches the matching top-level files into the `snapshots/main` folder and writes `.complete` only after
@@ -259,11 +315,12 @@ public enum ModelDownloads {
                                           transfer: HubFileTransfer, finished: Int64, total: Int64,
                                           progress: @escaping @Sendable (Int64, Int64) -> Void) async throws {
         let destination = directory.appendingPathComponent(file.path)
-        if HubFileTransfer.fileSize(at: destination) == file.sizeBytes { return }
+        if HubFileTransfer.fileSize(at: destination) == file.sizeBytes,
+           try FileIntegrity.reusable(destination, expectedSHA256: file.sha256) { return }
         guard let url = fileURL(repoID: repoID, revision: revision, path: file.path) else {
             throw ModelDownloadError.unsupported("Not a Hugging Face repository id: \(repoID)")
         }
-        try await transfer.fetch(url, to: destination, expectedSize: file.sizeBytes,
+        try await transfer.fetch(url, to: destination, expectedSize: file.sizeBytes, expectedSHA256: file.sha256,
                                  repoID: repoID, path: file.path) { bytes in
             progress(finished + bytes, total)
         }
@@ -300,13 +357,31 @@ public enum ModelDownloads {
         }
     }
 
+    /// ``delete(_:root:fileManager:)`` for a root AuraLocal shares with other tools: an MLX model loses only its
+    /// `snapshots/main` and the folders that leaves empty.
+    static func deleteLegacy(_ model: Model, root: URL, fileManager: FileManager = .default) throws {
+        switch model.format {
+        case .gguf:
+            try delete(model, root: root, fileManager: fileManager)
+        case .mlx:
+            try deleteLegacySnapshot(repoID: model.repoID, root: root, fileManager: fileManager)
+        }
+    }
+
+    static func deleteLegacySnapshot(repoID: String, root: URL, fileManager: FileManager = .default) throws {
+        let snapshot = snapshotDirectory(repoID: repoID, root: root)
+        try removeIfPresent(snapshot, fileManager: fileManager)
+        removeEmptyFolders(from: snapshot.deletingLastPathComponent(), upTo: DownloadedModels.hubDirectory(root: root),
+                           fileManager: fileManager)
+    }
+
     static func removeIfPresent(_ url: URL, fileManager: FileManager) throws {
         guard fileManager.fileExists(atPath: url.path) else { return }
         try fileManager.removeItem(at: url)
     }
 
     /// Walks up from `folder`, removing each empty folder, and stops at `root` or the first non-empty one.
-    private static func removeEmptyFolders(from folder: URL, upTo root: URL, fileManager: FileManager) {
+    static func removeEmptyFolders(from folder: URL, upTo root: URL, fileManager: FileManager) {
         let rootPath = root.standardizedFileURL.path
         var current = folder.standardizedFileURL
         while current.path.hasPrefix(rootPath + "/"),

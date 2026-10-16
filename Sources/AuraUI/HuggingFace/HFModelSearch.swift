@@ -52,6 +52,8 @@ public final class HFModelSearch {
     private(set) var reports: [String: CompatibilityReport] = [:]
 
     let devices: [DevicePreset]
+    /// Hides results whose declared pipeline it does not admit; `nil` shows every pipeline.
+    let pipelineFilter: HFPipelineFilter?
     private var snapshots: [String: RepoSnapshot] = [:]
     private var fetches: [String: SnapshotFetch] = [:]
     private var searchTask: Task<Void, Never>?
@@ -62,12 +64,15 @@ public final class HFModelSearch {
     ///   - devices: the devices to judge against; with one, the list shows no device picker. Starts on this
     ///     device when it is in the list.
     ///   - compatibleOnly: hide repos already rated Won't run.
+    ///   - pipelineFilter: keep only repos whose pipeline tag it admits, such as ``HFPipelineFilter/chat`` for a
+    ///     chat's model finder; `nil` keeps every pipeline.
     public init(query: String = "qwen 4bit", devices: [DevicePreset] = DevicePreset.all(),
-                compatibleOnly: Bool = false) {
+                compatibleOnly: Bool = false, pipelineFilter: HFPipelineFilter? = nil) {
         let targets = devices.isEmpty ? [DevicePreset.thisDevice()] : devices
         self.query = query
         self.devices = targets
         self.compatibleOnly = compatibleOnly
+        self.pipelineFilter = pipelineFilter
         self.deviceID = targets.contains { $0.id == DevicePreset.thisDeviceID } ? DevicePreset.thisDeviceID
             : targets[0].id
     }
@@ -78,10 +83,11 @@ public final class HFModelSearch {
         devices.first { $0.id == deviceID } ?? devices[0]
     }
 
-    /// Search results, minus the ones already known not to run when the filter is on.
+    /// Results the pipeline filter admits, minus the ones already known not to run when Compatible only is on.
     var visibleMatches: [HFModelHit] {
-        guard compatibleOnly else { return matches }
-        return matches.filter { reports[$0.id].map { $0.status != .notRunnable } ?? true }
+        let admitted = pipelineFilter.map { filter in matches.filter(filter.admits) } ?? matches
+        guard compatibleOnly else { return admitted }
+        return admitted.filter { reports[$0.id].map { $0.status != .notRunnable } ?? true }
     }
 
     /// Starts a search and cancels the one in flight, so an older query can never overwrite a newer one.

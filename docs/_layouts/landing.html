@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ page.title | default: site.title }}</title>
-  {% seo %}
+  {% seo title=false %}
   {% include head_custom.html %}
   <style>
     /* ============================================================
@@ -873,6 +873,7 @@
       .code-layout { grid-template-columns: 1fr; gap: 24px; }
       .code-nav { flex-direction: row; flex-wrap: wrap; position: static; }
       .modules-grid { grid-template-columns: 1fr; }
+      .platform-strip-inner { flex-wrap: wrap; }
       .platform-item { padding: 12px 14px; font-size: 12px; }
       section { padding: 64px 16px; }
       .hero { padding: 72px 16px 64px; }
@@ -925,7 +926,7 @@
 
       <div class="hero-badge" role="status">
         <span class="badge-pulse" aria-hidden="true"></span>
-        Swift Package Manager &nbsp;&middot;&nbsp; iOS 18+ &nbsp;&middot;&nbsp; macOS 15+ &nbsp;&middot;&nbsp; MIT
+        Swift Package Manager &nbsp;&middot;&nbsp; iOS 18+ &nbsp;&middot;&nbsp; macOS 15+ &nbsp;&middot;&nbsp; AGPL-3.0 or commercial
       </div>
 
       <h1 id="hero-heading">
@@ -969,7 +970,7 @@
       <div class="platform-item"><strong>visionOS</strong> 2+</div>
       <div class="platform-item"><strong>Swift</strong> 6.1+</div>
       <div class="platform-item"><strong>MLX</strong> + llama.cpp</div>
-      <div class="platform-item"><strong>MIT</strong> License</div>
+      <div class="platform-item"><strong>AGPL-3.0</strong> or commercial</div>
     </div>
   </div>
 
@@ -1005,7 +1006,7 @@
                 <span>Apple Silicon GPU</span>
                 <span>Up to 35B on a Mac</span>
                 <span>iOS + macOS</span>
-                <span>20 &ndash; 45 tok/s</span>
+                <span>19 (14B) &ndash; 218 (0.6B) tok/s, mlx-lm on an M1 Pro</span>
               </div>
             </div>
           </div>
@@ -1019,7 +1020,7 @@
                 <span>Full Metal offload</span>
                 <span>1B &ndash; 70B models</span>
                 <span>iOS + macOS, when it fits</span>
-                <span>8 &ndash; 20 tok/s</span>
+                <span>~12 &ndash; 14 tok/s at 12B&ndash;14B, llama-bench on an M1 Pro</span>
               </div>
             </div>
           </div>
@@ -1032,8 +1033,8 @@
               <div class="arch-card-meta">
                 <span>mmap demand-paging</span>
                 <span>7B &ndash; 14B on iOS</span>
-                <span>~1 GB for a 7B&ndash;8B</span>
-                <span>2 &ndash; 6 tok/s</span>
+                <span>~1 GB budget for a 7B&ndash;8B</span>
+                <span>2 &ndash; 6 tok/s on iOS (illustrative)</span>
               </div>
             </div>
           </div>
@@ -1085,7 +1086,7 @@
             </svg>
           </div>
           <h3>Layer Streaming</h3>
-          <p>Stream 7B&ndash;14B GGUFs on an entitled 6 GB iPhone (both memory entitlements). The OS pages weights from disk on demand, so the app's footprint stays around 1 GB for a 7B&ndash;8B.</p>
+          <p>HardwareAnalyzer rates 7B&ndash;14B GGUFs streamable on a 6 GB iPhone with both memory entitlements. The OS pages weights from disk on demand; for a 7B&ndash;8B at the 2048-token iOS context, the memory budget is about 1 GB, a 250 MB safety margin included (an estimate, not a device measurement).</p>
         </div>
 
         <div class="feature-card">
@@ -1097,7 +1098,7 @@
             </svg>
           </div>
           <h3>Swift 6 API</h3>
-          <p>@MainActor-isolated, fully async/await with AsyncThrowingStream for token streaming. Zero data races by design.</p>
+          <p>@MainActor-isolated and async/await throughout, with AsyncThrowingStream for token streaming; built in Swift 6 language mode. Loaders take <code>temperature</code> and <code>topP</code>. Tools on an MLX model, and a JSON/GBNF constraint on any backend but <code>LlamaCppBackend</code>, throw instead of being ignored.</p>
         </div>
 
         <div class="feature-card">
@@ -1123,7 +1124,7 @@
             </svg>
           </div>
           <h3>Document RAG</h3>
-          <p>Index PDF, DOCX, and images locally. FTS5 keyword pre-filter plus cosine re-ranking. No external database.</p>
+          <p>Index PDF, DOCX, plain text and Markdown locally, and images through a vision model you pass in. FTS5 keyword pre-filter plus cosine re-ranking. No external database.</p>
         </div>
 
         <div class="feature-card">
@@ -1134,7 +1135,7 @@
             </svg>
           </div>
           <h3>Hybrid Escalation</h3>
-          <p>Local-first and opt-in. Escalate a hard turn to your own llama-server / Ollama box or a bring-your-own-key Anthropic or OpenAI endpoint — with token-saving compression, consent, and cost accounting. Off by default.</p>
+          <p>Local-first and opt-in. Escalate a hard turn to your own llama-server / Ollama box or a bring-your-own-key Anthropic or OpenAI endpoint — with token-saving compression, best-effort PII redaction for cloud targets, cost accounting, and a consent gate shown the exact payload that is sent. Off by default.</p>
         </div>
 
         <div class="feature-card">
@@ -1167,7 +1168,7 @@
             </svg>
           </div>
           <h3>Image Generation</h3>
-          <p>Core ML Stable Diffusion 2.1 on iPhone and Mac after a one-time ~1.07 GB download; prompts and images stay on the device. FLUX + LoRA via mflux on macOS.</p>
+          <p>Core ML Stable Diffusion on iPhone and Mac: SD 2.1 built in after a one-time ~1.07 GB download, or an SD 1.x/2.x folder from Hugging Face that CoreMLDiffusionInspector rates runnable, pinned to the commit it inspected (adopted models are unmeasured on iPhone). Prompts and images stay on the device. FLUX + LoRA via mflux on macOS.</p>
         </div>
 
         <div class="feature-card">
@@ -1224,7 +1225,7 @@
           <!-- TEXT -->
           <div class="code-panel active" id="panel-text" role="tabpanel">
             <p class="code-panel-title">Text generation</p>
-            <p class="code-panel-desc">MLX backend. GPU-accelerated on Apple Silicon, 20&ndash;45 tok/s.</p>
+            <p class="code-panel-desc">MLX backend, GPU-accelerated on Apple Silicon. Qwen3 1.7B runs at around 22&ndash;60 tok/s from iPhone 15 to an M3 Pro Mac (illustrative; see Benchmarks).</p>
             <div class="code-block">
               <div class="code-chrome">
                 <div class="chrome-dots"><span class="chrome-dot r"></span><span class="chrome-dot y"></span><span class="chrome-dot g"></span></div>
@@ -1300,10 +1301,10 @@
 <span class="k">let</span> vlm = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">vision</span>(.<span class="n">qwen35_0_8b</span>)
 <span class="k">let</span> desc = <span class="k">try</span> <span class="k">await</span> vlm.<span class="f">analyze</span>(<span class="s">"What's in this photo?"</span>, image: photo)
 
-<span class="c">// Receipt extraction — structured JSON output</span>
+<span class="c">// Receipt extraction — the default prompt asks for JSON (not validated)</span>
 <span class="k">let</span> ocr = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">specialized</span>(.<span class="n">fastVLM_0_5b_fp16</span>)
 <span class="k">let</span> json = <span class="k">try</span> <span class="k">await</span> ocr.<span class="f">extractDocument</span>(receiptImage)
-<span class="c">// → {"store":"OXXO","total":125.50,"items":[...]}</span>
+<span class="c">// → e.g. {"store":"OXXO","total":125.50,"items":[...]}</span>
 
 <span class="c">// One-liner</span>
 <span class="k">let</span> receipt = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">extractDocument</span>(receiptImage)</code></pre>
@@ -1324,8 +1325,9 @@
 <span class="c">// Drop-in button — manages its own session</span>
 <span class="t">VoiceButton</span>(llm: llm)
 
-<span class="c">// Full control with an external session</span>
-<span class="k">@StateObject</span> <span class="k">var</span> session = <span class="t">VoiceSession</span>(llm: llm)
+<span class="c">// Full control with an external session, created in your view's init:</span>
+<span class="c">// _session = StateObject(wrappedValue: VoiceSession(llm: llm))</span>
+<span class="k">@StateObject</span> <span class="k">var</span> session: <span class="t">VoiceSession</span>
 
 <span class="t">VStack</span> {
     <span class="t">Text</span>(session.transcript)   <span class="c">// live STT transcript</span>
@@ -1385,7 +1387,7 @@ print(answer.text)
       <div class="section-header">
         <span class="section-label">Models</span>
         <h2 id="models-heading">Curated model catalog</h2>
-        <p>Models download automatically on first use and are cached locally across app launches.</p>
+        <p>MLX models download on first load; GGUF files download through ModelManager.shared.load. Downloads live in Application Support, excluded from backups, and each large file is checked against the SHA-256 Hugging Face publishes.</p>
       </div>
 
       <div class="table-wrap" role="region" aria-label="Model catalog">
@@ -1443,9 +1445,9 @@ print(answer.text)
             </tr>
             <tr>
               <td>.llama3_1_70b_gguf</td>
-              <td><span class="tag tag-gguf">GGUF</span></td>
+              <td><span class="tag tag-gguf">GGUF</span>&nbsp;<span class="tag tag-stream">Stream</span></td>
               <td>39 GB</td>
-              <td>Mac Pro / Mac Studio</td>
+              <td>Macs with 64 GB (streams on 32 GB)</td>
             </tr>
           </tbody>
         </table>
@@ -1552,7 +1554,7 @@ print(answer.text)
               <p class="module-name">import AuraDocs</p>
             </div>
           </div>
-          <p>Local RAG pipeline. Index PDF, DOCX, and images. FTS5 + cosine re-ranking stored in SQLite. No external dependencies.</p>
+          <p>Local RAG pipeline. Index PDF, DOCX, text and, with a vision model, images. FTS5 + cosine re-ranking stored in SQLite. No external dependencies.</p>
           <span class="module-link">
             API Reference
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -1573,14 +1575,14 @@ print(answer.text)
               <p class="module-name">import AuraImageGen</p>
             </div>
           </div>
-          <p>Text-to-image. Core ML Stable Diffusion 2.1 on iPhone and Mac after a one-time ~1.07 GB download, FLUX + LoRA via mflux on macOS, and egress-safe settings for Apple's Image Playground sheet.</p>
+          <p>Text-to-image. Core ML Stable Diffusion on iPhone and Mac (SD 2.1 built in, ~1.07 GB once, or an SD 1.x/2.x model adopted from Hugging Face), FLUX + LoRA via mflux on macOS, and egress-safe settings for Apple's Image Playground sheet.</p>
           <span class="module-link">
             Guide
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
           </span>
         </a>
 
-        <a href="{{ '/guide/hybrid' | relative_url }}" class="module-card">
+        <a href="{{ '/guide/hybrid' | relative_url }}#per-step-escalation-agent-orchestration" class="module-card">
           <div class="module-top">
             <div class="module-icon" style="background:rgba(192,132,252,0.1);border:1px solid rgba(192,132,252,0.2);color:var(--purple);">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1593,7 +1595,7 @@ print(answer.text)
               <p class="module-name">import AuraAgents</p>
             </div>
           </div>
-          <p>Reusable multi-agent orchestration. The AgentCrew pipeline on FoundationModels; its Architect step escalates to a bigger model when its local draft looks weak. iOS 26 / macOS 26.</p>
+          <p>Reusable multi-agent orchestration. The AgentCrew pipeline on FoundationModels; when your EscalationPolicy allows (off by default), its Architect step escalates to a bigger model if its local draft looks weak. iOS 26 / macOS 26.</p>
           <span class="module-link">
             Guide
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -1625,6 +1627,109 @@ print(answer.text)
   </section>
 
   <!-- ============================================================
+       LICENSE
+  ============================================================ -->
+  <section aria-labelledby="license-heading" style="border-top:1px solid var(--border);">
+    <div class="section-inner">
+
+      <div class="section-header">
+        <span class="section-label">License</span>
+        <h2 id="license-heading">AGPL-3.0 or commercial</h2>
+        <p>AuraLocal is dual-licensed: under the GNU Affero General Public License, or under a commercial license from the copyright holder.</p>
+      </div>
+
+      <div class="modules-grid">
+
+        <a href="https://github.com/iOSDevC/AuraLocal/blob/main/LICENSE" class="module-card" target="_blank" rel="noopener">
+          <div class="module-top">
+            <div class="module-icon" style="background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.18);color:var(--green);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/>
+                <path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/>
+              </svg>
+            </div>
+            <div>
+              <h3>Open source</h3>
+              <p class="module-name">AGPL-3.0-or-later</p>
+            </div>
+          </div>
+          <p>An app or package that links AuraLocal and is distributed must be released under AGPL-3.0-compatible terms, with its source available. If you modify AuraLocal and let people use it over a network, you must offer them the source of your version too.</p>
+          <span class="module-link">
+            LICENSE
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </span>
+        </a>
+
+        <a href="https://github.com/iOSDevC" class="module-card" target="_blank" rel="noopener">
+          <div class="module-top">
+            <div class="module-icon" style="background:rgba(129,140,248,0.1);border:1px solid rgba(129,140,248,0.2);color:var(--accent);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+              </svg>
+            </div>
+            <div>
+              <h3>Commercial license</h3>
+              <p class="module-name">from iOSDevC</p>
+            </div>
+          </div>
+          <p>For uses where the AGPL's terms don't fit, such as a closed-source app, an App Store release, or a network service whose source you don't publish. The AGPL's conditions conflict with the App Store's terms.</p>
+          <span class="module-link">
+            Contact iOSDevC
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </span>
+        </a>
+
+        <a href="https://github.com/iOSDevC/AuraLocal/releases/tag/v0.1.0" class="module-card" target="_blank" rel="noopener">
+          <div class="module-top">
+            <div class="module-icon" style="background:rgba(251,146,60,0.08);border:1px solid rgba(251,146,60,0.18);color:var(--orange);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>
+              </svg>
+            </div>
+            <div>
+              <h3>Earlier versions</h3>
+              <p class="module-name">MIT</p>
+            </div>
+          </div>
+          <p>Commits published before the license change (up to <code>1647874</code>, including the <code>v0.1.0</code> tag) remain available under the MIT License they shipped with.</p>
+          <span class="module-link">
+            v0.1.0 release
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </span>
+        </a>
+
+        <a href="https://github.com/iOSDevC/AuraLocal/blob/main/THIRD_PARTY_NOTICES.md" class="module-card" target="_blank" rel="noopener">
+          <div class="module-top">
+            <div class="module-icon" style="background:rgba(192,132,252,0.1);border:1px solid rgba(192,132,252,0.2);color:var(--purple);">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
+                <path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>
+              </svg>
+            </div>
+            <div>
+              <h3>Dependencies and models</h3>
+              <p class="module-name">their own licenses</p>
+            </div>
+          </div>
+          <p>Dependencies keep their own licenses (MIT, Apache-2.0, BSD); all are compatible with AGPL-3.0 and with the commercial license. Models downloaded at run time are not part of AuraLocal and carry their own licenses; check each model card before you use or redistribute one.</p>
+          <span class="module-link">
+            Third-party notices
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </span>
+        </a>
+
+      </div>
+
+      <div class="hero-actions" style="margin:32px 0 0;">
+        <a href="{{ '/license' | relative_url }}" class="btn-secondary">License details</a>
+        <a href="https://github.com/iOSDevC/AuraLocal#license" class="btn-secondary" target="_blank" rel="noopener">README: License</a>
+        <a href="https://github.com/iOSDevC/AuraLocal/blob/main/CONTRIBUTING.md" class="btn-secondary" target="_blank" rel="noopener">Contributing</a>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============================================================
        FOOTER
   ============================================================ -->
   <footer role="contentinfo">
@@ -1640,9 +1745,10 @@ print(answer.text)
         <a href="{{ '/guide/installation' | relative_url }}">Installation</a>
         <a href="{{ '/guide/models' | relative_url }}">Models</a>
         <a href="{{ '/guide/benchmarks' | relative_url }}">Benchmarks</a>
+        <a href="{{ '/license' | relative_url }}">License</a>
         <a href="https://github.com/iOSDevC/AuraLocal" target="_blank" rel="noopener">GitHub</a>
       </nav>
-      <p class="footer-copy">MIT License &copy; 2026 iOSDevC &nbsp;&middot;&nbsp; Built with Swift 6.1 on Apple Silicon.</p>
+      <p class="footer-copy">AGPL-3.0-or-later or commercial license &nbsp;&middot;&nbsp; &copy; 2026 iOSDevC &nbsp;&middot;&nbsp; Built with Swift 6.1 on Apple Silicon.</p>
     </div>
   </footer>
 

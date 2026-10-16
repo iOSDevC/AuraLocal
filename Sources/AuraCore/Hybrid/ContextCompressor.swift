@@ -1,7 +1,7 @@
 import Foundation
 
-/// The receipt of a compression pass — also the exact payload shown for consent.
-public struct CompressionResult: Sendable {
+/// The receipt of a compression pass. ``EscalationPayload/compression`` carries the one an escalation sends.
+public struct CompressionResult: Sendable, Equatable {
     public let originalTokens: Int
     public let compressedTokens: Int
     public let keptText: String

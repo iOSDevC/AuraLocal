@@ -27,21 +27,30 @@ The main entry point. All methods are `@MainActor`.
 // Load a text-generation model
 static func text(
     _ model: Model = .qwen3_1_7b,
+    temperature: Float? = nil,            // nil: backend default; 0 is greedy
+    topP: Float? = nil,                   // nil: backend default; 0 < topP <= 1
     onProgress: @escaping @MainActor (String) -> Void = { _ in }
 ) async throws -> AuraLocal
 
 // Load a vision model
 static func vision(
     _ model: Model = .qwen35_0_8b,
+    temperature: Float? = nil,
+    topP: Float? = nil,
     onProgress: @escaping @MainActor (String) -> Void = { _ in }
 ) async throws -> AuraLocal
 
 // Load an OCR/document-specialized model
 static func specialized(
     _ model: Model = .fastVLM_0_5b_fp16,
+    temperature: Float? = nil,
+    topP: Float? = nil,
     onProgress: @escaping @MainActor (String) -> Void = { _ in }
 ) async throws -> AuraLocal
 ```
+
+`temperature` and `topP` hold for the instance's lifetime and behave as in
+[`ModelManager.load`](#loading); an out-of-range value throws `ModelConfigurationError` before loading.
 
 The factories download MLX weights on first use but not GGUF files: an uncached GGUF throws *GGUF file not
 found*. They also skip `ModelManager`'s cache and memory guard. Use `ModelManager.shared.load(_:)`, which
@@ -99,9 +108,20 @@ func chat(_ prompt: String, in conversationID: UUID, systemPrompt: String? = nil
           maxContextTokens: Int = 3072, store: ConversationStore = .shared) async throws -> String
 func stream(_ prompt: String, in conversationID: UUID, systemPrompt: String? = nil, maxTokens: Int = 1024,
             maxContextTokens: Int = 3072, store: ConversationStore = .shared) -> AsyncThrowingStream<String, Error>
-// Stopping iteration does not cancel this stream's generation: it runs to the end and the reply is stored.
-// stream(_:systemPrompt:maxTokens:constraint:) cancels its decode when the consumer stops.
+// Stopping iteration cancels the generation; what it produced is stored as the reply (see below).
 ```
+
+When the consumer of `stream(_:in:)` stops early, the generation is cancelled and the conversation is settled as
+for a `GenerationInterrupted`: the text generated until then becomes the assistant turn, and the user turn is removed
+when there was none. Stopping means cancelling the task that iterates, or leaving the loop once nothing else holds
+the stream: a stream kept in a variable or property is cancelled only when it is released, so stop one by cancelling
+its task. These writes land after the loop has ended, so `chat(_:in:)` and `stream(_:in:)` on the same instance wait
+for the previous `stream(_:in:)` to finish, a stopped one included, before they store their prompt. Streams consumed
+outside history (`stream`, `streamVision`) store nothing and cancel their decode the same way.
+
+On a GGUF instance with tools (`ModelManager.load(_:tools:)`, an `AuraProfile` with tools), stopping cuts the reply
+and, in history, stores it at once, but llama.cpp keeps decoding until the end of generation or a full context window,
+and the next turn on that instance waits for it.
 
 ### Constrained Generation
 
@@ -157,7 +177,8 @@ var model: Model { get }                           // the loaded model
 var lastGenerationStats: GenerationStats? { get }  // the last generation that returned; nil after one that threw
 
 // Opt-in guard checked before and during every generation; nil (default) is off.
-// Instances from ModelManager are shared, so this applies to every caller of the cached one.
+// Instances from ModelManager without tools are shared per model and sampling setting, so this applies to every
+// caller of that cached instance; a tool-enabled instance is never shared.
 var deviceGuard: DeviceConditions?
 
 // Set when the last generation outgrew the MLX KV window (which drops old tokens silently);
@@ -236,24 +257,39 @@ public final class ModelManager: ObservableObject
 ### Loading
 
 ```swift
-// Load a model — returns cached instance if already loaded
+// Load a model — returns cached instance if already loaded with the same sampling
 // For GGUF models, downloads the file from HuggingFace first
 func load(
     _ model: Model,
-    tools: [any LLMTool] = [],            // sessions with tools are built fresh, never cached
+    tools: [any LLMTool] = [],            // GGUF only; sessions with tools are built fresh, never cached
+    temperature: Float? = nil,            // nil: backend default; 0 is greedy
+    topP: Float? = nil,                   // nil: backend default; 0 < topP <= 1
     onProgress: (@MainActor (String) -> Void)? = nil
 ) async throws -> AuraLocal
+
+public enum ModelConfigurationError: LocalizedError, Equatable, Sendable {
+    case toolsUnsupported(BackendKind)    // tools with an MLX model
+    case invalidTemperature(Float)        // negative, infinite or NaN
+    case invalidTopP(Float)               // outside 0 < topP <= 1, or NaN
+}
 ```
 
+`load` checks `tools` and the sampling values first and throws `ModelConfigurationError` before
+downloading anything. `temperature` and `topP` hold for the instance's lifetime: a GGUF builds its sampler when
+the context is created. `nil` keeps the backend default (GGUF 0.7 / 0.95; MLX 0.7 for text, 0.1 for vision,
+0 for OCR, top-p off). Each model and setting is its own cached instance, a separate load of the model; see
+[Sampling]({{ '/guide/backends' | relative_url }}#sampling-temperature-and-top-p).
+
 Before downloading, `load` throws `AuraError.modelTooLarge` when `HardwareAnalyzer` rates the model
-`.tooLarge` on its own. It keeps at most `memoryBudget` models loaded and evicts the least recently used
-to make room. On iOS, where `HardwareProfile.current()` reports the app's memory limit, it also evicts
-least-recently-used models until the new one is no longer `.tooLarge` beside the ones that stay
+`.tooLarge` on its own. It keeps at most `memoryBudget` instances loaded (a model at two settings counts twice)
+and evicts the least recently used to make room. On iOS, where `HardwareProfile.current()` reports the app's
+memory limit, it also evicts least-recently-used models until the new one is no longer `.tooLarge` beside the
+ones that stay
 ([Memory Management]({{ '/guide/memory' | relative_url }})).
 
 {: .warning }
-> `tools` reach only the llama.cpp backends (GGUF models). For an MLX model they are dropped without
-> an error, and the model answers without calling them.
+> `tools` run only on the llama.cpp backends (GGUF models). With an MLX model `load` throws
+> `ModelConfigurationError.toolsUnsupported(.mlx)`; MLX has no tool-calling loop yet.
 
 ### State Observation
 
@@ -276,6 +312,10 @@ public enum ModelLoadState: Equatable {
 `ModelLoadingOverlay(model:)` is a SwiftUI view that shows a spinner and the progress text while that
 model's state `isActive`, and nothing otherwise.
 
+The state is per model, not per sampling setting. While another temperature or top-p of a loaded model loads,
+the state reports that load, and it returns to `.ready` when that load fails or is cancelled (`cancelLoad`
+included) as long as another setting of the model is still cached.
+
 ### Backend Query
 
 ```swift
@@ -295,11 +335,12 @@ public enum BackendKind: String, Sendable {
 ### Eviction
 
 ```swift
-func evict(_ model: Model)
+func evict(_ model: Model)               // every sampling setting the model is loaded with
 func evictAll()
 func evictAllButMostRecent()             // also runs on memory pressure or a memory warning
 func release(_ instance: AuraLocal)      // unloads one instance; drops the cache entry only if it is the shared one
-private(set) var memoryBudget: Int       // max models kept loaded (1–4), sized once from available memory
+private(set) var memoryBudget: Int       // max instances kept loaded (1–4; one per model and sampling setting),
+                                         // sized once from available memory
 ```
 
 ### GGUF Download Progress
@@ -349,7 +390,9 @@ func deleteConversation(id: UUID) async throws
 
 ```swift
 init(directory: URL? = nil)                   // nil = Application Support/AuraLocal/conversations.sqlite
-func open() async throws                      // also runs on first use
+// open() also runs on first use. On a store from an earlier version it replaces the full-text triggers and
+// rebuilds the search index once.
+func open() async throws
 func close() async
 @discardableResult func appendTurn(_ turn: Turn) async throws -> Turn
 func deleteTurn(id: UUID) async throws
@@ -361,10 +404,12 @@ func search(_ query: String, limit: Int = 20) async throws -> [Turn]
 func searchAgentMemory(_ query: String, limit: Int = 8) async throws -> [Turn]   // "AgentCrew:" conversations only
 ```
 
-{: .warning }
-> `search` and `searchAgentMemory` can return the wrong turn, or throw, after turns were deleted
-> (`deleteTurn`, `deleteConversation`, `pruneAndSummarize`, or a failed `chat(_:in:)` / `stream(_:in:)`
-> that removes its prompt turn): the full-text index does not follow deletes.
+`search` and `searchAgentMemory` return turns containing any of the query's words, best match first (FTS5); each
+word is quoted, so FTS5 operators in the query are plain text. `deleteTurn`, `deleteConversation` and
+`pruneAndSummarize` remove the turns from the index too. Earlier versions left deleted turns in it, so a search
+could return a later turn in their place or end early; opening such a store repairs the index. A read that returns
+rows (`search`, `searchAgentMemory`, `turns(for:)`, `contextWindow`, `allConversations`, `conversation(id:)`) and
+fails part-way throws `StoreError.sqliteError` instead of returning the rows read so far.
 
 ### Types
 
@@ -419,8 +464,11 @@ func cancel()
 ```
 
 `stream` sends `profile.instructions` as the system prompt and defaults `maxTokens` to
-`profile.sampling.maxTokens`. One generation runs at a time: a new `stream` or a `switchProfile`
-cancels the previous one and waits for it to stop, also after `cancel()`, which returns without
+`profile.sampling.maxTokens`. The default `makeEngine`, `AuraSession.liveEngine`, loads the model through
+`ModelManager` with the profile's tools and `sampling.temperature` and `sampling.topP`. `init` and
+`switchProfile` throw `ModelConfigurationError` for tools on an MLX model or an out-of-range temperature or top-p
+before building or tearing down an engine, whatever `makeEngine` is. One generation runs at a time: a new
+`stream` or a `switchProfile` cancels the previous one and waits for it to stop, also after `cancel()`, which returns without
 waiting. A `stream` or `switchProfile` called while a switch is rebuilding the engine waits for it,
 so that stream runs on the new profile. After a switch fails to build its engine, `stream` throws
 `AuraError.modelNotLoaded` until a later `switchProfile` succeeds.
@@ -433,8 +481,8 @@ public struct AuraProfile: Sendable, Identifiable, Equatable {
     var displayName: String
     var instructions: String            // the system prompt
     var model: Model
-    var sampling: SamplingParams        // only maxTokens reaches generation
-    var tools: [any LLMTool]            // GGUF backends only
+    var sampling: SamplingParams        // temperature + topP at load, maxTokens per turn; topK, contextOverride unused
+    var tools: [any LLMTool]            // GGUF only; an MLX model throws ModelConfigurationError
     var outputSchema: OutputSchema?
     var escalation: EscalationPolicy    // default .off
 }
@@ -717,12 +765,17 @@ public struct FitEstimate: Sendable, Equatable {
 ```
 
 `CompatibilityRules.all` lists the rules (`CompatibilityRule` has an `id` and a `summary`).
+`RepoSnapshot.listing` is the parsed repo listing (`HFRepoInfo`); its `revision` is the commit sha the listing
+describes, so later fetches can be pinned to it, as `CoreMLDiffusionInspector` does.
 `GGUFHeaderParser.parse(_:)` reads GGUF v2/v3 metadata from the first bytes of a file into a
 `GGUFHeader` (`isComplete` is `false` when the bytes ran out), and `SafetensorsHeader.parse(_:)`
 does the same for a safetensors header.
 
 To find repos to check, `HuggingFaceSearch.search(_:limit:sort:tag:session:)` queries the Hugging
-Face model search; `tag:` (`"mlx"`, `"gguf"`, …) filters on the server.
+Face model search; `tag:` (`"mlx"`, `"gguf"`, …) filters on the server. `HFPipelineFilter` keeps the hits
+whose declared `pipelineTag` it admits (`admits(_:)`); `HFPipelineFilter.chat` admits `text-generation`,
+`image-text-to-text` and `any-to-any`, plus repos that declare none (`admitsUndeclared`, `true` by default),
+since many GGUF uploads declare none. It reads only the tag: whether the weights load is still the checker's call.
 
 ### DevicePreset
 
@@ -791,12 +844,27 @@ var purpose: Purpose
 var format: ModelFormat                // .mlx or .gguf
 var ggufFilename: String?              // nil for MLX models
 var isMacOSRecommended: Bool          // true for models ≥15 GB
-var isDownloaded: Bool
-var cacheDirectory: URL
+var isDownloaded: Bool                 // in ModelStorage.rootDirectory, or a copy an earlier version left in Caches
+var cacheDirectory: URL                // GGUF download folder: <root>/models/<repoID> (not in Caches, despite the name)
+var resolvedFileURL: URL?              // GGUF: local file, else the finished download (root, then Caches), else its destination
 var kvLayers: KVCacheLayout?           // cache per layer type (sliding, recurrent); nil = all full attention
 var experts: ExpertRouting?            // mixture of experts: routedExperts, expertsPerToken, activeSizeMB; nil = dense
 var maxContextLength: Int?             // a ceiling the weights impose below the memory budget; nil = none
+var capabilities: ModelCapabilities    // see below
 ```
+
+### ModelCapabilities
+
+`model.capabilities` is an `OptionSet` saying what a model takes and does, read from its catalog category, its
+`defaultDocumentPrompt` and the backend `BackendRouter` picks for it. AuraExample's Chat tab shows it as badges and
+offers image input and document extraction only where they work.
+
+| Capability | Set when | Enables |
+|------------|----------|---------|
+| `.text` | category `.text` or `.vision` | a conversation from text alone (`chat`, `stream`, `stream(_:in:)`) |
+| `.vision` | category `.vision` or `.visionSpecialized`, MLX format (the llama.cpp backends drop the image) | an image with the prompt (`analyze`, `streamVision`) |
+| `.documentExtraction` | an image model with a `defaultDocumentPrompt` | `extractDocument(_:)` |
+| `.tools` | a GGUF model (only the llama.cpp backends run a tool loop) | `ModelManager.shared.load(_:tools:…)`; an MLX model throws `ModelConfigurationError.toolsUnsupported(.mlx)` |
 
 ### ModelRegistry
 
@@ -815,22 +883,49 @@ func refreshFromRemote(url: URL) async throws
 func loadCachedRemote(maxAge: TimeInterval = 86_400)
 ```
 
+### ModelStorage
+
+Where downloaded weights live: `<Application Support>/AuraLocal/Models`, excluded from backup. Inside the app
+container on iOS and in a sandboxed Mac app; `~/Library/Application Support/AuraLocal/Models`, shared, for a
+non-sandboxed macOS process (the `aura` CLI, an app without App Sandbox). Guide:
+[Where models are stored]({{ '/guide/models' | relative_url }}#where-models-are-stored).
+
+```swift
+public enum ModelStorage {
+    static var rootDirectory: URL     // first access creates it, excludes it from backup, migrates Caches when sandboxed
+    // Renames AuraLocal's downloads out of Caches (never copies, never overwrites); idempotent
+    @discardableResult static func migrateLegacyDownloads() -> ModelStorageMigration
+}
+
+public struct ModelStorageMigration: Sendable, Equatable {
+    let moved: [String]               // paths relative to the roots, now in the storage root
+    let conflicts: [String]           // left in Caches: the storage root already has that path
+    let failures: [String]            // left in Caches: the rename failed; still read from there
+    var isEmpty: Bool
+}
+```
+
 ### ModelDownloads
 
-Downloads a model to the exact path its backend loads from, without loading it. Each file arrives in
-`Range` chunks appended to `<file>.partial`, which survives a cancel, a network cut or a relaunch; a
-partial whose ETag no longer matches restarts from zero, and a file moves into place only when its size
-matches. Guide: [Downloading without loading]({{ '/guide/models' | relative_url }}#downloading-without-loading).
+Downloads a model to the exact path its backend loads from, under `ModelStorage.rootDirectory`, without loading
+it. Each file arrives in `Range` chunks appended to `<file>.partial`, which survives a cancel, a network cut or a
+relaunch; a partial whose ETag no longer matches restarts from zero, and a file moves into place only when its
+size matches and, for an LFS file, when its SHA-256 matches the one Hugging Face publishes. A finished model an
+earlier version left in Caches is used from there; a GGUF `.partial` left there moves into the storage root and is
+resumed. Guide:
+[Downloading without loading]({{ '/guide/models' | relative_url }}#downloading-without-loading).
 
 ```swift
 public enum ModelDownloads {
     static func plan(for model: Model, auth: any DownloadAuthorizing = KeychainDownloadAuth()) async throws -> DownloadPlan
-    // Resumes <file>.partial; returns the GGUF file or the MLX snapshot folder. progress: (bytes on disk, total)
+    // Resumes <file>.partial, verifies SHA-256; returns the GGUF file or the MLX snapshot folder.
+    // progress: (bytes on disk, total)
     static func download(_ model: Model, auth: any DownloadAuthorizing = KeychainDownloadAuth(),
                          progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL
-    static func delete(_ model: Model) throws               // finished and partial files; evict the model first
-    static func bytesOnDisk(for model: Model) -> Int64
+    static func delete(_ model: Model) throws               // finished and partial files, root and Caches; evict first
+    static func bytesOnDisk(for model: Model) -> Int64      // root and Caches
     static func availableDiskBytes() -> Int64?              // download needs the remaining bytes + 20%
+    static func verifiedSHA256(of file: URL) -> String?     // what a download verified the file against; nil = unverified
 
     // One folder of a repo at a pinned revision (e.g. a Core ML pipeline); sends no token by default
     static func downloadFolder(repoID: String, revision: String, folder: String, include: [String],
@@ -838,9 +933,12 @@ public enum ModelDownloads {
                                progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL
     static func planFolder(repoID: String, revision: String, folder: String, include: [String],
                            auth: any DownloadAuthorizing = NoDownloadAuth()) async throws -> DownloadPlan
-    static func localFolder(repoID: String, folder: String) -> URL
+    static func localFolder(repoID: String, folder: String) -> URL   // where downloadFolder writes
+    static func completedFolder(repoID: String, folder: String, revision: String) -> URL?  // root, else Caches
     static func isFolderComplete(repoID: String, folder: String, revision: String) -> Bool
-    static func deleteRepo(_ repoID: String) throws
+    static func deleteRepo(_ repoID: String) throws                   // models--org--repo: every folder, finished and partial
+    static func deleteFolder(repoID: String, folder: String) throws   // one folder with its partials and markers, then the
+                                                                      // parents it leaves empty; other folders stay
 }
 
 public struct DownloadPlan: Sendable, Equatable {
@@ -856,11 +954,20 @@ public enum ModelDownloadError: LocalizedError, Equatable, Sendable {
     case insufficientSpace(neededBytes: Int64, availableBytes: Int64), http(status: Int)
     case incompleteRepo(repoID: String), sizeMismatch(path: String, expected: Int64, actual: Int64), unsupported(String)
 }
+
+// Separate from ModelDownloadError so exhaustive switches over it keep compiling. The file is already deleted.
+public enum ModelIntegrityError: LocalizedError, Equatable, Sendable {
+    case checksumMismatch(path: String, expected: String, actual: String)   // lowercase hex SHA-256
+}
 ```
 
 Only single-file GGUF quants at the top level of a repo download; a split or subfolder quant, or a model
 backed by a local file, throws `.unsupported`. `DownloadedModels.scan()`, `scanSnapshots()` and
-`partialFiles()` list the GGUF files, MLX snapshots and `.partial` files on disk.
+`partialFiles()` list the GGUF files, MLX snapshots and `.partial` files on disk, in the storage root and in
+Caches; `DownloadedModels.modelsDirectory` is the GGUF root downloads write to and `modelsDirectories` every GGUF
+root that is read. `GGUFModelDownloader` (the GGUF path of `ModelManager.load`) and
+`ChunkedDownloader.download(from:to:fileName:expectedSHA256:onProgress:)` throw `ModelIntegrityError` too; the
+latter checks only a hash you pass.
 
 ### DownloadRecords
 
@@ -1122,7 +1229,9 @@ public struct LocalProviderModel: Sendable, Codable, Identifiable, Hashable {
 public final class HybridEscalator {
     init(ledger: CostLedger = .shared)   // prices and session spend come from this ledger
 
-    // Route by policy: stays local, escalates, or asks consent per rules R1–R7.
+    // Route by policy: stays local, escalates, or asks consent per rules R1–R7. Builds one payload
+    // (policy.keepRatio, redaction per policy.piiRedaction), shows it to the gate on an offer, and
+    // sends exactly it.
     func routeAndEscalate(
         policy: EscalationPolicy,
         systemPrompt: String? = nil,
@@ -1135,10 +1244,11 @@ public final class HybridEscalator {
         maxTokens: Int = 1024,
         targets: [RemoteTarget]? = nil,    // nil = candidateTargets(policy:)
         onToken: @escaping @MainActor (String) -> Void = { _ in }
-    ) async throws -> Result?              // nil = the router kept it local; never redacts PII
+    ) async throws -> Result?              // nil = the router kept it local
                                            // throws AuraError.escalationDeclined when the gate declines
 
-    // Direct escalation to a chosen target.
+    // Direct escalation to a chosen target: preparePayload(keepRatio: 0.5, redactPII:), then
+    // escalate(_:to:). Checks no policy, consent or cost cap.
     func escalate(
         to target: RemoteTarget,
         systemPrompt: String? = nil,
@@ -1146,6 +1256,26 @@ public final class HybridEscalator {
         question: String,
         maxTokens: Int = 1024,
         redactPII: Bool = false,           // PIIRedactor on the context and the question
+        onToken: @escaping @MainActor (String) -> Void = { _ in }
+    ) async throws -> Result
+
+    // The exact request, not sent: with redactPII, redacts the context and the question, then compresses
+    // the context to keepRatio × the target's context window (8192 when unknown) − maxTokens, at least 256.
+    func preparePayload(
+        for target: RemoteTarget,
+        systemPrompt: String? = nil,
+        context: String,
+        question: String,
+        maxTokens: Int = 1024,
+        keepRatio: Double = 0.5,
+        redactPII: Bool = false
+    ) -> EscalationPayload
+    // Sends a payload exactly as built, without recompressing or redacting; an earlier request with the same
+    // provider, model, messages and maxTokens is answered from ResponseCache.shared. Records cost. Checks no
+    // policy, consent or cap.
+    func escalate(
+        _ payload: EscalationPayload,
+        to target: RemoteTarget,
         onToken: @escaping @MainActor (String) -> Void = { _ in }
     ) async throws -> Result
 
@@ -1171,6 +1301,17 @@ public final class HybridEscalator {
         let fromCache: Bool
     }
 }
+
+public struct EscalationPayload: Sendable, Equatable {
+    let systemPrompt: String?            // sent verbatim: never compressed or redacted
+    let userMessage: String              // "Context:\n<context>\n\nQuestion: <question>", or the question alone
+    let maxTokens: Int
+    let redactionEnabled: Bool           // PIIRedactor ran on the context and the question
+    let redactedPIICount: Int            // in the question and the whole context, before compression
+    let compression: CompressionResult   // keptText is the context as sent
+    var messages: [[String: String]]     // role/content, system first; Anthropic sends it as top-level "system"
+    var estimatedInputTokens: Int        // system prompt + user message at ~4 chars/token; what routeAndEscalate prices
+}
 ```
 
 ### EscalationPolicy
@@ -1184,12 +1325,23 @@ public struct EscalationPolicy: Sendable, Equatable, Codable {
     // .costCapped, which the default ConsentGate.requestConsent(target:preview:offer:) declines.
     // An unpriced cloud model, or a session with unpriced calls, is offered as .costUnknown.
     var costCapUSDPerSession: Decimal
-    // Default 0.5. Sizes only the consent preview; escalate() always budgets 50% of the
-    // target's context window minus maxTokens.
+    // Default 0.5. routeAndEscalate compresses the context to keepRatio × the target's context window
+    // minus maxTokens; escalate(to:) always uses 0.5.
     var keepRatio: Double
+    // Default .cloudOnly. Where routeAndEscalate redacts the context and the question.
+    // A policy saved without this key decodes as .cloudOnly.
+    var piiRedaction: RedactionScope
 
-    init(mode: Mode = .off, allowCloud: Bool = false, costCapUSDPerSession: Decimal = 1.0, keepRatio: Double = 0.5)
+    enum RedactionScope: String, Sendable, Codable {
+        case cloudOnly                 // cloud targets; your own LAN box gets the text verbatim
+        case allTargets
+        case never
+    }
+
+    init(mode: Mode = .off, allowCloud: Bool = false, costCapUSDPerSession: Decimal = 1.0, keepRatio: Double = 0.5,
+         piiRedaction: RedactionScope = .cloudOnly)
     static let off: EscalationPolicy   // the default — never leaves the device
+    func redactsPII(for target: RemoteTarget) -> Bool
 }
 ```
 
@@ -1362,7 +1514,8 @@ public final class CostLedger: ObservableObject {
 
 @MainActor
 public protocol ConsentGate: Sendable {
-    // projectedCostUSD is nil when the target's price is unknown.
+    // projectedCostUSD is nil when the target's price is unknown. From routeAndEscalate, preview is the
+    // payload's compression: its keptText is the context as sent, without the question or system prompt.
     func requestConsent(target: RemoteTarget, preview: CompressionResult,
                         projectedCostUSD: Decimal?) async -> Bool
     // What routeAndEscalate calls. Default: declines .costCapped, passes any other offer to the method above.
@@ -1372,12 +1525,13 @@ public protocol ConsentGate: Sendable {
 
 public struct EscalationOffer: Sendable, Equatable {
     init(reason: EscalationReason, projectedCostUSD: Decimal?, sessionSpentUSD: Decimal,
-         unpricedRecordCount: Int, costCapUSD: Decimal)
+         unpricedRecordCount: Int, costCapUSD: Decimal, payload: EscalationPayload? = nil)
     let reason: EscalationReason
-    let projectedCostUSD: Decimal?     // nil when the target is unpriced
+    let projectedCostUSD: Decimal?     // payload's estimated tokens + maxTokens; nil when the target is unpriced
     let sessionSpentUSD: Decimal       // CostLedger.sessionCostUSD; a lower bound while unpricedRecordCount > 0
     let unpricedRecordCount: Int
     let costCapUSD: Decimal            // policy.costCapUSDPerSession
+    let payload: EscalationPayload?    // what approval sends; routeAndEscalate always sets it
 }
 ```
 
@@ -1407,9 +1561,9 @@ Also available: `ContextCompressor` (token-saving compression), `PIIRedactor`,
   `sessionCostUSD`, so while `unpricedRecordCount > 0` a priced request under the cap is offered as
   `.costUnknown` too.
 - Only `routeAndEscalate` applies the cap. `escalate(to:)` sends without checking it.
-- `ResponseCache.shared` is in memory only (64 entries by default, cleared on relaunch). Its key is
-  the provider, the model and the user message (compressed context plus question); the system
-  prompt is not part of it.
-- The consent preview `routeAndEscalate` shows is compressed with `policy.keepRatio`, but
-  `escalate` compresses again at a fixed 0.5. With any other `keepRatio`, the context sent differs
-  from the preview the user approved.
+- `ResponseCache.shared` is in memory only (64 entries by default, cleared on relaunch). `HybridEscalator`
+  keys it on the provider, the model and the whole payload: system prompt, user message (compressed
+  context plus question) and `maxTokens`. `lookup`/`insert` with `prompt:` key on that string alone.
+- `PIIRedactor` is pattern-based (emails, `sk-…`/`pk_…`/`rk-…` keys, bearer tokens, Slack and GitHub
+  tokens, AWS access key IDs) and covers the context and the question only. The system prompt is
+  sent verbatim on every path.

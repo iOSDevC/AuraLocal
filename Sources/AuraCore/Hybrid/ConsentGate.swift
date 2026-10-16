@@ -11,33 +11,37 @@ public struct EscalationOffer: Sendable, Equatable {
     public let unpricedRecordCount: Int
     /// The policy's `costCapUSDPerSession`.
     public let costCapUSD: Decimal
+    /// The exact request sent on approval. `routeAndEscalate` always sets it; nil only when the caller built the
+    /// offer without one.
+    public let payload: EscalationPayload?
 
     public init(reason: EscalationReason, projectedCostUSD: Decimal?, sessionSpentUSD: Decimal,
-                unpricedRecordCount: Int, costCapUSD: Decimal) {
+                unpricedRecordCount: Int, costCapUSD: Decimal, payload: EscalationPayload? = nil) {
         self.reason = reason
         self.projectedCostUSD = projectedCostUSD
         self.sessionSpentUSD = sessionSpentUSD
         self.unpricedRecordCount = unpricedRecordCount
         self.costCapUSD = costCapUSD
+        self.payload = payload
     }
 }
 
-/// Asks the user to approve sending a (compressed) payload off-device to a remote
-/// target. AuraUI implements the presenting conformer (showing the exact
-/// compressed payload, cost projection, and the provider's retention note).
+/// Asks the user to approve sending a payload off-device to a remote target.
+/// AuraLocal ships no presenting conformer; the app shows the payload, cost and retention note.
 @MainActor
 public protocol ConsentGate: Sendable {
     /// Return `true` to proceed with the remote call, `false` to keep the local answer.
-    /// `projectedCostUSD` is nil when the target's price is unknown; show it as
-    /// unknown, not as free.
+    /// `preview.keptText` is the context as sent; the question and system prompt reach a gate only
+    /// through the offer method's ``EscalationOffer/payload``. `projectedCostUSD` is nil when the
+    /// target's price is unknown; show it as unknown, not as free.
     func requestConsent(
         target: RemoteTarget,
         preview: CompressionResult,
         projectedCostUSD: Decimal?
     ) async -> Bool
 
-    /// What `HybridEscalator.routeAndEscalate` calls, with the router's reason and the session's spend.
-    /// The default declines a `.costCapped` offer and passes any other to
+    /// What `HybridEscalator.routeAndEscalate` calls, with the router's reason, the session's spend and
+    /// the exact payload. The default declines a `.costCapped` offer and passes any other to
     /// ``requestConsent(target:preview:projectedCostUSD:)``; implement it to let the user override the cap.
     func requestConsent(
         target: RemoteTarget,

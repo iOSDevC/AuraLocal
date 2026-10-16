@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import AuraCore
@@ -240,6 +241,58 @@ struct AuraHFDownloaderTests {
         #expect(fixture.requests.isEmpty)
     }
 
+    @Test("A file whose bytes match the tree's lfs.oid completes and is recorded as verified")
+    func verifiesPublishedChecksum() async throws {
+        let sha256 = FileIntegrity.hex(SHA256.hash(data: DownloadResponse.fileData))
+        let fixture = try SnapshotDownloadFixture(handler: { request in
+            DownloadResponse.withChecksum(sha256, request)
+        })
+        _ = try await fixture.download()
+        #expect(fixture.hasCompletionMarker)
+        #expect(FileIntegrity.verifiedSHA256(of: fixture.fileURL) == sha256)
+    }
+
+    @Test("A file whose bytes differ from the tree's lfs.oid is deleted and nothing is marked complete")
+    func rejectsChecksumMismatch() async throws {
+        let published = String(repeating: "0", count: 64)
+        let fixture = try SnapshotDownloadFixture(handler: { request in
+            DownloadResponse.withChecksum(published, request)
+        })
+        await #expect(throws: ModelIntegrityError.self) {
+            _ = try await fixture.download()
+        }
+        #expect(!fixture.hasCompletionMarker)
+        #expect(!FileManager.default.fileExists(atPath: fixture.fileURL.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.partialURL.path))
+    }
+
+    @Test("A finished file of the right size that hashes wrong is fetched again")
+    func refetchesWrongFinishedFile() async throws {
+        let sha256 = FileIntegrity.hex(SHA256.hash(data: DownloadResponse.fileData))
+        let fixture = try SnapshotDownloadFixture(handler: { request in
+            DownloadResponse.withChecksum(sha256, request)
+        })
+        try Data(repeating: 9, count: 4).write(to: fixture.fileURL)
+        _ = try await fixture.download()
+        #expect(try Data(contentsOf: fixture.fileURL) == DownloadResponse.fileData)
+        #expect(FileIntegrity.verifiedSHA256(of: fixture.fileURL) == sha256)
+        #expect(fixture.rangeRequests == 1)
+        #expect(fixture.hasCompletionMarker)
+    }
+
+    @Test("A snapshot completed in a fallback folder (Caches) loads in place without network")
+    func reusesFallbackSnapshot() async throws {
+        let fixture = try SnapshotDownloadFixture()
+        let fallback = fixture.rootURL.appending(path: "legacy")
+        let snapshot = fallback.appending(path: "huggingface/hub/models--tests--\(fixture.identifier)/snapshots/main")
+        try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
+        try Data().write(to: snapshot.appending(path: ".complete"))
+        try FileManager.default.removeItem(at: fixture.snapshotURL)
+
+        #expect(try await fixture.download(fallbackDirectories: [fallback]) == snapshot)
+        #expect(fixture.requests.isEmpty)
+    }
+
     @Test("Insufficient free space fails before downloading model bytes")
     func rejectsInsufficientDiskSpace() async throws {
         let fixture = try SnapshotDownloadFixture(availableDiskCapacity: { _ in 4 })
@@ -283,6 +336,14 @@ private struct DownloadResponse: Sendable {
         .init(status: 206, data: fileData, headers: ["Content-Length": "4"])
     }
 
+    static func withChecksum(_ sha256: String, _ request: URLRequest) -> Self {
+        if request.url?.path.contains("/tree/") == true {
+            let tree = "[{\"path\":\"model.safetensors\",\"type\":\"file\",\"lfs\":{\"oid\":\"\(sha256)\"}}]"
+            return .init(status: 200, data: Data(tree.utf8))
+        }
+        return standard(request)
+    }
+
     static func standard(_ request: URLRequest) -> Self {
         if request.url?.path.contains("/tree/") == true {
             return .init(status: 200, data: Data("[{\"path\":\"model.safetensors\",\"type\":\"file\"}]".utf8))
@@ -301,7 +362,7 @@ private final class SnapshotDownloadFixture: @unchecked Sendable {
     let session: URLSession
     private let lock = NSLock()
     private var recordedRequests: [URLRequest] = []
-    private let identifier: String
+    let identifier: String
     private let availableDiskCapacity: @Sendable (URL) throws -> Int64?
 
     init(
@@ -345,11 +406,13 @@ private final class SnapshotDownloadFixture: @unchecked Sendable {
 
     func download(
         useLatest: Bool = false,
+        fallbackDirectories: [URL] = [],
         progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }
     ) async throws -> URL {
         try await AuraHFDownloader(
             session: session,
             cacheDirectory: rootURL,
+            fallbackDirectories: fallbackDirectories,
             waitBeforeRetry: { _ in },
             availableDiskCapacity: availableDiskCapacity
         ).download(

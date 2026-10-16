@@ -22,6 +22,9 @@ enum DownloadMessages {
 
     @MainActor
     static func text(for error: any Error) -> String {
+        if error is ModelIntegrityError {
+            return "The download did not match its published checksum and was deleted. Download it again."
+        }
         guard let failure = error as? ModelDownloadError else {
             return "\(error.localizedDescription) The partial file is kept; Resume continues from it."
         }

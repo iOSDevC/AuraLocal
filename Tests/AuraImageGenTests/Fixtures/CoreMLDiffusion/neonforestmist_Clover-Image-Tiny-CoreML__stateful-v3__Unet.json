@@ -1,0 +1,1405 @@
+[
+  {
+    "shortDescription" : "Stable Diffusion generates images conditioned on text or other images as input through the diffusion process. Please refer to https:\/\/arxiv.org\/abs\/2112.10752 for details.",
+    "metadataOutputVersion" : "3.0",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 4 × 64 × 64)",
+        "shortDescription" : "Same shape and dtype as the `sample` input. The predicted noise to facilitate the reverse diffusion (denoising) process",
+        "shape" : "[1, 4, 64, 64]",
+        "name" : "noise_pred",
+        "type" : "MultiArray"
+      }
+    ],
+    "version" : "Clover-Image-Tiny-hf",
+    "modelParameters" : [
+
+    ],
+    "author" : "Please refer to the Model Card available at huggingface.co\/Clover-Image-Tiny-hf",
+    "specificationVersion" : 9,
+    "storagePrecision" : "Float16",
+    "license" : "OpenRAIL (https:\/\/huggingface.co\/spaces\/CompVis\/stable-diffusion-license)",
+    "mlProgramOperationTypeHistogram" : {
+      "Ios18.expandDims" : 3,
+      "Ios18.mul" : 28,
+      "Ios18.cos" : 1,
+      "Ios18.softmax" : 18,
+      "Ios18.matmul" : 180,
+      "Ios18.batchNorm" : 28,
+      "UpsampleNearestNeighbor" : 2,
+      "Ios16.reduceMean" : 56,
+      "Ios18.realDiv" : 28,
+      "Ios18.sin" : 1,
+      "Split" : 9,
+      "Ios18.readState" : 144,
+      "Ios18.add" : 154,
+      "Ios18.layerNorm" : 27,
+      "Ios18.reshape" : 146,
+      "Ios18.conv" : 151,
+      "Ios18.concat" : 8,
+      "Ios18.silu" : 21,
+      "Ios18.sub" : 28,
+      "Ios18.transpose" : 109,
+      "Ios18.sqrt" : 28,
+      "Ios18.gelu" : 9,
+      "Ios18.cast" : 1,
+      "Ios18.square" : 28,
+      "Ios18.sliceByIndex" : 290
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "stateSchema" : [
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "down_blocks_0_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn2_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn2_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn2_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn2_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn2_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn2_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "down_blocks_1_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn1_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn1_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn1_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn1_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn1_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn1_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn2_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn2_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn2_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn2_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn2_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn2_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "down_blocks_2_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn1_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn1_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn1_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn1_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn1_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn1_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn2_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn2_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn2_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn2_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn2_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn2_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn1_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn1_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn1_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn1_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn1_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn1_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn1_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn1_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn2_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn2_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn2_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn2_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn2_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn2_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 1280, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn2_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1280 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1280, 16, 1, 1]",
+        "name" : "up_blocks_0_attentions_1_transformer_blocks_0_attn2_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn1_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn1_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn1_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn1_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn1_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn1_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn2_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn2_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn2_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn2_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn2_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn2_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn1_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn1_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn1_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn1_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn1_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn1_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn1_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn1_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn2_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn2_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn2_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn2_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn2_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn2_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 640 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 640, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn2_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 640 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[640, 16, 1, 1]",
+        "name" : "up_blocks_1_attentions_1_transformer_blocks_0_attn2_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn1_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn1_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn1_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn1_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn1_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn1_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn1_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn2_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn2_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn2_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn2_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn2_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn2_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_0_transformer_blocks_0_attn2_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn1_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn1_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn1_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn1_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn1_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn1_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn1_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn1_to_out_0_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn2_to_q_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn2_to_q_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn2_to_k_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn2_to_k_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 768 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 768, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn2_to_v_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn2_to_v_lora_up",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 16 × 320 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[16, 320, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn2_to_out_0_lora_down",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 320 × 16 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[320, 16, 1, 1]",
+        "name" : "up_blocks_2_attentions_1_transformer_blocks_0_attn2_to_out_0_lora_up",
+        "type" : "State"
+      }
+    ],
+    "isUpdatable" : "0",
+    "availability" : {
+      "macOS" : "15.0",
+      "tvOS" : "18.0",
+      "visionOS" : "2.0",
+      "watchOS" : "11.0",
+      "iOS" : "18.0",
+      "macCatalyst" : "18.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 4 × 64 × 64)",
+        "shortDescription" : "The low resolution latent feature maps being denoised through reverse diffusion",
+        "shape" : "[1, 4, 64, 64]",
+        "name" : "sample",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1)",
+        "shortDescription" : "A value emitted by the associated scheduler object to condition the model on a given noise schedule",
+        "shape" : "[1]",
+        "name" : "timestep",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 768 × 1 × 77)",
+        "shortDescription" : "Output embeddings from the associated text_encoder model to condition to generated image on text. A maximum of 77 tokens (~40 words) are allowed. Longer text is truncated. Shorter text does not reduce computation.",
+        "shape" : "[1, 768, 1, 77]",
+        "name" : "encoder_hidden_states",
+        "type" : "MultiArray"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-08-03",
+      "com.github.apple.ml-stable-diffusion.version" : "1.1.0",
+      "com.github.apple.coremltools.source" : "torch==2.7.0",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "generatedClassName" : "Stable_Diffusion_version_Clover_Image_Tiny_hf_unet",
+    "method" : "predict"
+  }
+]

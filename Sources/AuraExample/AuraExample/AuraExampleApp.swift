@@ -7,7 +7,7 @@ struct AuraExampleApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
-        // Before the first body, so the Text menu already lists models downloaded from Hugging Face.
+        // Before the first body, so Chat and Voice already list models downloaded from Hugging Face.
         DownloadRecords.standard.registerDownloaded()
     }
 

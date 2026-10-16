@@ -40,6 +40,8 @@ public final class AuraLocal {
     
     let engine: AuraEngine
     public let model: Model
+    /// What the backend samples with; part of ``ModelManager``'s cache key.
+    let sampling: SamplingSettings
 
     /// Token counts and timings of the last generation that returned, labelled by
     /// ``GenerationStats/Provenance``. Read it after `chat` returns or a stream finishes; `nil` before the first
@@ -57,59 +59,82 @@ public final class AuraLocal {
     /// `nil` when it fit, the model does not run on MLX, or the last generation threw.
     public var lastContextOverflow: ContextWindowOverflow? { engine.lastContextOverflow }
 
+    /// The last `stream(_:in:)` run. History calls wait for it, so a stopped stream stores its reply before the
+    /// next prompt.
+    var historyInFlight: Task<Void, Never>?
+
     // MARK: - Init
 
     /// Internal init — creates an instance with backend auto-selected by ``BackendRouter``. `tools` (when
-    /// non-empty) enables GGUF function-calling: the model can invoke them during generation.
-    /// Use ``ModelManager/load(_:tools:onProgress:)`` or factory methods (``text``, ``vision``…) instead.
-    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = []) {
+    /// non-empty) enables GGUF function-calling; with an MLX model the backend's load throws
+    /// ``ModelConfigurationError/toolsUnsupported(_:)``. `nil` sampling takes the backend defaults.
+    /// Use ``ModelManager/load(_:tools:temperature:topP:onProgress:)`` or the factories (``text``, ``vision``…).
+    init(model: Model, sampling: SamplingSettings? = nil, tools: [any LLMTool] = []) {
+        let settings = sampling ?? .defaults(for: model)
         self.model = model
-        self.engine = AuraEngine(model: model, temperature: temperature, tools: tools)
+        self.sampling = settings
+        self.engine = AuraEngine(model: model, sampling: settings, tools: tools)
     }
 
     /// An instance around a prepared engine (tests).
-    init(engine: AuraEngine) {
+    init(engine: AuraEngine, sampling: SamplingSettings? = nil) {
         self.model = engine.model
+        self.sampling = sampling ?? .defaults(for: engine.model)
         self.engine = engine
     }
     
     // MARK: - Factory methods
     
-    /// Load a text-generation model.
+    /// Load a text-generation model. `temperature` and `topP` hold for the instance's lifetime; `nil` keeps the
+    /// backend default, and temperature 0 is greedy. Out-of-range values throw ``ModelConfigurationError``.
     public static func text(
         _ model: Model = .qwen3_1_7b,
+        temperature: Float? = nil,
+        topP: Float? = nil,
         onProgress: @escaping @MainActor (String) -> Void = { _ in }
     ) async throws -> AuraLocal {
         guard case .text = model.purpose else {
             throw AuraError.invalidResponse("Model \(model.displayName) is not a text model.")
         }
-        let instance = AuraLocal(model: model)
-        try await instance.engine.load(onProgress: onProgress)
-        return instance
+        return try await loaded(model, temperature: temperature, topP: topP, onProgress: onProgress)
     }
     
-    /// Load a general-purpose vision model.
+    /// Load a general-purpose vision model. `temperature` and `topP` behave as in
+    /// ``text(_:temperature:topP:onProgress:)``.
     public static func vision(
         _ model: Model = .qwen35_0_8b,
+        temperature: Float? = nil,
+        topP: Float? = nil,
         onProgress: @escaping @MainActor (String) -> Void = { _ in }
     ) async throws -> AuraLocal {
         guard case .vision = model.purpose else {
             throw AuraError.invalidResponse("Model \(model.displayName) is not a vision model.")
         }
-        let instance = AuraLocal(model: model)
-        try await instance.engine.load(onProgress: onProgress)
-        return instance
+        return try await loaded(model, temperature: temperature, topP: topP, onProgress: onProgress)
     }
     
-    /// Load an OCR / document-specialized vision model.
+    /// Load an OCR / document-specialized vision model. `temperature` and `topP` behave as in
+    /// ``text(_:temperature:topP:onProgress:)``.
     public static func specialized(
         _ model: Model = .fastVLM_0_5b_fp16,
+        temperature: Float? = nil,
+        topP: Float? = nil,
         onProgress: @escaping @MainActor (String) -> Void = { _ in }
     ) async throws -> AuraLocal {
         guard case .visionSpecialized = model.purpose else {
             throw AuraError.invalidResponse("Model \(model.displayName) is not a specialized model.")
         }
-        let instance = AuraLocal(model: model)
+        return try await loaded(model, temperature: temperature, topP: topP, onProgress: onProgress)
+    }
+
+    private static func loaded(
+        _ model: Model,
+        temperature: Float?,
+        topP: Float?,
+        onProgress: @escaping @MainActor (String) -> Void
+    ) async throws -> AuraLocal {
+        let sampling = try SamplingSettings.resolve(temperature: temperature, topP: topP, for: model)
+        let instance = AuraLocal(model: model, sampling: sampling)
         try await instance.engine.load(onProgress: onProgress)
         return instance
     }

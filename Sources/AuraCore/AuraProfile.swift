@@ -24,7 +24,8 @@ public struct AuraProfile: Sendable, Identifiable {
     /// Model + backend hint — `model.format` drives backend selection.
     public var model: Model
     public var sampling: SamplingParams
-    /// Empty ⇒ plain chat; non-empty ⇒ agentic (function-calling). Only the GGUF backend honors tools.
+    /// Empty ⇒ plain chat; non-empty ⇒ agentic (function-calling). Tools need a GGUF model: with an MLX model
+    /// ``AuraSession`` throws ``ModelConfigurationError/toolsUnsupported(_:)``.
     public var tools: [any LLMTool]
     /// Optional JSON Schema every reply must conform to. ``AuraSession`` compiles it when the profile is applied
     /// and validates each reply, re-prompting on violations; see ``OutputSchema``.
@@ -71,8 +72,8 @@ extension AuraProfile: Equatable {
 
 // MARK: - SamplingParams
 
-/// The knobs that shape generation. In increment 1 only `temperature` is threaded end-to-end; the rest are
-/// carried so profiles can express them and later increments widen `LlamaClient.Parameter` to honor them.
+/// The knobs that shape generation. ``AuraSession/liveEngine(_:)`` loads the model with `temperature` (0 is greedy)
+/// and `topP`, and each turn defaults to `maxTokens`. `topK` and `contextOverride` are carried but not applied.
 public struct SamplingParams: Sendable, Equatable, Codable {
     public var temperature: Float
     public var topP: Float
@@ -90,9 +91,10 @@ public struct SamplingParams: Sendable, Equatable, Codable {
         self.contextOverride = contextOverride
     }
 
-    /// General-purpose chat sampling (matches today's engine default).
+    /// General-purpose chat sampling: the GGUF default. MLX's own default leaves top-p off.
     public static let `default` = SamplingParams()
-    /// Low-temperature sampling for deterministic tool-calling / structured output (agent, security review).
+    /// Low-temperature sampling for tool-calling / structured output (agent, security review). Not greedy; use
+    /// temperature 0 for repeatable output.
     public static let precise = SamplingParams(temperature: 0.2)
 }
 
@@ -101,7 +103,7 @@ public struct SamplingParams: Sendable, Equatable, Codable {
 /// A structured-output contract carried by a profile. Enforced by validation and repair: ``AuraSession`` checks each
 /// reply with ``OutputSchemaValidator`` and re-prompts with the violations (at most ``AuraSession/maxRepairAttempts``
 /// times). Not constrained decoding: llama.cpp fixes a grammar when the context is created, and ``ModelManager``
-/// caches one per model; there is no JSON-Schema-to-GBNF converter, and MLX has no grammar engine.
+/// caches one per model and sampling; there is no JSON-Schema-to-GBNF converter, and MLX has no grammar engine.
 public enum OutputSchema: Sendable, Equatable, Codable {
     /// A JSON Schema document, limited to the keywords ``OutputSchemaValidator`` supports. Anything else,
     /// including a GBNF grammar, is rejected with ``OutputSchemaError`` when the profile is applied.

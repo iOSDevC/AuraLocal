@@ -2,7 +2,8 @@ import Foundation
 
 /// Errors thrown by the AuraLocal inference pipeline.
 public enum AuraError: LocalizedError {
-    /// The model has not been loaded yet — call a factory method or ``ModelManager/load(_:onProgress:)`` first.
+    /// The model has not been loaded yet — call a factory method or
+    /// ``ModelManager/load(_:tools:temperature:topP:onProgress:)`` first.
     case modelNotLoaded
     /// The provided image could not be converted to the format required by the vision model.
     case imageProcessingFailed
@@ -41,6 +42,29 @@ public enum AuraError: LocalizedError {
                 return "Context compression failed: \(detail)"
             case .modelTooLarge(let detail):
                 return "Model too large for this device: \(detail)"
+        }
+    }
+}
+
+/// A load option the model's backend cannot honour, or a sampling value out of range. Thrown before anything is
+/// downloaded or loaded.
+public enum ModelConfigurationError: LocalizedError, Equatable, Sendable {
+    /// Tools were passed for a backend without a tool-calling loop. MLX has none yet; tools need a GGUF model.
+    case toolsUnsupported(BackendKind)
+    /// A temperature that is negative, infinite or NaN.
+    case invalidTemperature(Float)
+    /// A top-p outside `0 < topP <= 1`, or NaN.
+    case invalidTopP(Float)
+
+    public var errorDescription: String? {
+        switch self {
+            case .toolsUnsupported(let kind):
+                return "The \(kind.rawValue) backend cannot call tools. Load a GGUF model to use tools, "
+                    + "or pass none."
+            case .invalidTemperature(let value):
+                return "Temperature must be a finite number of at least 0 (0 is greedy); got \(value)."
+            case .invalidTopP(let value):
+                return "Top-p must be greater than 0 and at most 1; got \(value)."
         }
     }
 }

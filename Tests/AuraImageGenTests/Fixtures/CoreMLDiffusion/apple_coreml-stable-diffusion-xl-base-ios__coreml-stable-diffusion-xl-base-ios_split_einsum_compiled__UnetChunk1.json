@@ -1,0 +1,229 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "storagePrecision" : "Mixed (Float16, Palettized (1 bits), Palettized (2 bits), Palettized (4 bits), Palettized (6 bits), Palettized (8 bits))",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 1280 × 24 × 24)",
+        "shortDescription" : "",
+        "shape" : "[2, 1280, 24, 24]",
+        "name" : "input_213_cast",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 320 × 96 × 96)",
+        "shortDescription" : "",
+        "shape" : "[2, 320, 96, 96]",
+        "name" : "input_43_cast",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 640 × 48 × 48)",
+        "shortDescription" : "",
+        "shape" : "[2, 640, 48, 48]",
+        "name" : "input_113_cast",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 1280 × 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[2, 1280, 1, 1]",
+        "name" : "input_21_cast",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 320 × 96 × 96)",
+        "shortDescription" : "",
+        "shape" : "[2, 320, 96, 96]",
+        "name" : "input_13_cast",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 320 × 48 × 48)",
+        "shortDescription" : "",
+        "shape" : "[2, 320, 48, 48]",
+        "name" : "input_45_cast",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 320 × 96 × 96)",
+        "shortDescription" : "",
+        "shape" : "[2, 320, 96, 96]",
+        "name" : "input_29_cast",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 640 × 24 × 24)",
+        "shortDescription" : "",
+        "shape" : "[2, 640, 24, 24]",
+        "name" : "input_115_cast",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 1280 × 1 × 576)",
+        "shortDescription" : "",
+        "shape" : "[2, 1280, 1, 576]",
+        "name" : "inputs_251_cast",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 10240 × 1 × 576)",
+        "shortDescription" : "",
+        "shape" : "[2, 10240, 1, 576]",
+        "name" : "var_37735_cast",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 640 × 48 × 48)",
+        "shortDescription" : "",
+        "shape" : "[2, 640, 48, 48]",
+        "name" : "input_79_cast",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 1280 × 24 × 24)",
+        "shortDescription" : "",
+        "shape" : "[2, 1280, 24, 24]",
+        "name" : "hidden_states_283_cast",
+        "type" : "MultiArray"
+      }
+    ],
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 7,
+    "mlProgramOperationTypeHistogram" : {
+      "Transpose" : 84,
+      "Ios16.reduceMean" : 300,
+      "Ios16.sin" : 2,
+      "Ios16.softmax" : 1600,
+      "Split" : 41,
+      "Ios16.add" : 425,
+      "Concat" : 90,
+      "Ios16.realDiv" : 24,
+      "Ios16.square" : 24,
+      "ExpandDims" : 6,
+      "Ios16.sub" : 150,
+      "Ios16.cast" : 12,
+      "Ios16.conv" : 467,
+      "Ios16.constexprLutToDense" : 463,
+      "Ios16.einsum" : 3200,
+      "Ios16.gelu" : 41,
+      "Ios16.batchNorm" : 24,
+      "Ios16.reshape" : 61,
+      "Ios16.rsqrt" : 126,
+      "Ios16.silu" : 21,
+      "Ios16.sqrt" : 24,
+      "Ios16.mul" : 2021,
+      "Ios16.cos" : 2,
+      "SliceByIndex" : 4804
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "isUpdatable" : "0",
+    "availability" : {
+      "macOS" : "13.0",
+      "tvOS" : "16.0",
+      "visionOS" : "1.0",
+      "watchOS" : "9.0",
+      "iOS" : "16.0",
+      "macCatalyst" : "16.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.version" : "7.0b2",
+      "com.github.apple.coremltools.source" : "milinternal"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 2 × 4 × 96 × 96)",
+        "shortDescription" : "",
+        "shape" : "[2, 4, 96, 96]",
+        "name" : "sample",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 2)",
+        "shortDescription" : "",
+        "shape" : "[2]",
+        "name" : "timestep",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 2 × 2048 × 1 × 77)",
+        "shortDescription" : "",
+        "shape" : "[2, 2048, 1, 77]",
+        "name" : "encoder_hidden_states",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 2 × 6)",
+        "shortDescription" : "",
+        "shape" : "[2, 6]",
+        "name" : "time_ids",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 2 × 1280)",
+        "shortDescription" : "",
+        "shape" : "[2, 1280]",
+        "name" : "text_embeds",
+        "type" : "MultiArray"
+      }
+    ],
+    "generatedClassName" : "Stable_Diffusion_version_stabilityai_stable_diffusion_xl_base_1_0_unet_chunk1",
+    "method" : "predict"
+  }
+]

@@ -42,8 +42,8 @@ when you do escalate, compress the context, optionally redact obvious secrets, a
 |---|---|
 | Local-first routing | Most turns never leave the device — **$0**, no tokens sent |
 | Selective-context compression | Trims the context toward the remote's budget — **fewer tokens, input-dependent** (no fixed ratio; a context that already fits is passed through unchanged) |
-| Response cache | A repeated request (same provider, model and payload) returns from memory — **$0** |
-| PII redaction | Strips obvious secrets before the payload is sent (opt-in: `escalate(to:…, redactPII: true)`) |
+| Response cache | A repeated request (same provider, model, messages and `maxTokens`) returns from memory — **$0** |
+| PII redaction | Strips obvious secrets before the payload is sent: on `routeAndEscalate` per `EscalationPolicy.piiRedaction` (cloud targets by default), on `escalate(to:)` only with `redactPII: true` |
 | Cost ledger | Per-escalation token + dollar accounting; an unpriced model counts as unknown, not $0 |
 
 Every escalation returns what a receipt needs: `HybridEscalator.Result` carries `providerName`,
@@ -102,8 +102,9 @@ the prompt to Ollama's cloud. A `baseURL` is classified by its host only: a loca
 ## Escalate a request
 
 `HybridEscalator` compresses the context toward the remote's budget, checks the response
-cache, streams the answer, and records cost. PII redaction runs only when you call
-`escalate(to:…, redactPII: true)` directly; `routeAndEscalate` (and so `AgentCrew`) never redacts.
+cache, streams the answer, and records cost. `routeAndEscalate` (and so `AgentCrew`) redacts obvious
+secrets/PII per `EscalationPolicy.piiRedaction`: cloud targets by default (`.cloudOnly`), every target
+with `.allTargets`, none with `.never`. `escalate(to:)` redacts only with `redactPII: true`.
 
 ```swift
 import AuraCore
@@ -140,11 +141,13 @@ raises the bar for the latter).
 - Cloud targets are always offered to your `ConsentGate`, never escalated silently; only a LAN
   target under `.autoWithConsentMemory` escalates without asking.
 - `costCapUSDPerSession` is compared with what the session has already spent
-  (`CostLedger.sessionCostUSD`) plus the projected cost of the current request (estimated prompt
-  tokens + `maxTokens` at the ledger's price). Over the cap, the router offers with the reason
-  `.costCapped`, the default `ConsentGate.requestConsent(target:preview:offer:)` declines it, and
-  `routeAndEscalate` throws `AuraError.escalationDeclined` without sending anything. Implement that
-  method to show the budget and let the user go over. A projection of $0, such as any LAN target,
+  (`CostLedger.sessionCostUSD`) plus the projected cost of the current request: the estimated
+  tokens of the payload it sends (system prompt plus the compressed, redacted user message) and
+  `maxTokens`, at the ledger's price. Size overflow still reads the uncompressed prompt. Over the
+  cap, the router offers with the reason `.costCapped`, the default
+  `ConsentGate.requestConsent(target:preview:offer:)` declines it, and `routeAndEscalate` throws
+  `AuraError.escalationDeclined` without sending anything. Implement that method to show the budget
+  and let the user go over. A projection of $0, such as any LAN target,
   never trips the cap.
 - When the cloud target has no price in the ledger, the router offers with the reason
   `.costUnknown` and the offer's `projectedCostUSD` is `nil`. A priced request under the cap gets the
@@ -154,6 +157,28 @@ raises the bar for the latter).
   otherwise the first cloud key found (Anthropic, then OpenAI), or the first of the `targets:` you
   pass. An error from it, such as HTTP 429, is thrown to the caller; there is no fall-through to the
   next target.
+
+### Consent sees the exact payload
+
+`routeAndEscalate` builds the request once: it redacts per `policy.piiRedaction`, compresses the
+context to `policy.keepRatio` of the target's context window minus `maxTokens`, and passes that
+`EscalationPayload` to your gate as `offer.payload`, with `offer.projectedCostUSD` priced from it
+(`payload.estimatedInputTokens` plus `maxTokens`). Approving sends exactly its messages and
+`maxTokens`, with no second compression; when the same provider and model already answered an
+identical payload this app session, that answer comes from `ResponseCache` and nothing is sent.
+To ask consent in your own flow, do the same in two steps:
+
+```swift
+let escalator = HybridEscalator()
+let payload = escalator.preparePayload(
+    for: target, systemPrompt: system, context: longContext, question: prompt,
+    keepRatio: policy.keepRatio, redactPII: policy.redactsPII(for: target))
+// Show payload.messages and payload.redactedPIICount; on approval:
+let result = try await escalator.escalate(payload, to: target)
+```
+
+`escalate(to:context:question:…)` is `preparePayload` with a fixed `keepRatio` of 0.5 followed by
+`escalate(_:to:)`; it checks no policy, consent or cost cap.
 
 ## Cloud targets (BYOK)
 
@@ -201,9 +226,9 @@ host `.cloud`. Each `Failure` has an `errorDescription` that says what to do nex
 Escalation isn't only for the top-level answer. In `AgentCrew`, the Architect step's local
 draft goes through `routeAndEscalate(localAnswer:)` and escalates only when it looks weak;
 the Extractor, Reviewer and Reporter steps always stay local. It reuses the same compression,
-consent, and cost machinery. Fail-closed: any error or a *stay-local* decision keeps the
-local draft. It passes no `targets:`, so it escalates only to a llama-server or Ollama on the same
-machine, or to a cloud key.
+consent, and cost machinery, and redacts per the policy's `piiRedaction` (cloud targets by
+default). Fail-closed: any error or a *stay-local* decision keeps the local draft. It passes no
+`targets:`, so it escalates only to a llama-server or Ollama on the same machine, or to a cloud key.
 
 The reusable pipeline lives in the **`AuraAgents`** module (requires iOS 26 / macOS 26 and
 the Xcode 26 SDK):
@@ -220,19 +245,21 @@ await crew.run(topic: "Q3 security posture", policy: policy, consent: myConsentG
 
 - **BYOK keys** live only in the Keychain (`WhenUnlockedThisDeviceOnly`), never synced to iCloud.
 - Your **`ConsentGate`** is called before an offered escalation with the `target` (including
-  `target.provider.retentionNote`), the compressed preview (`CompressionResult`) and an
-  `EscalationOffer`: the router's `reason`, `projectedCostUSD` (`nil` when the model is unpriced),
-  `sessionSpentUSD`, `unpricedRecordCount` and `costCapUSD`. A gate must implement
+  `target.provider.retentionNote`), the `preview` (`CompressionResult`) and an `EscalationOffer`:
+  the router's `reason`, `projectedCostUSD` (`nil` when the model is unpriced), `sessionSpentUSD`,
+  `unpricedRecordCount`, `costCapUSD` and `payload`, the exact request: `systemPrompt`,
+  `userMessage`, `maxTokens`, `redactionEnabled` and `redactedPIICount`. `preview` is
+  `payload.compression`, whose `keptText` is the context as sent. A gate must implement
   `requestConsent(target:preview:projectedCostUSD:)`. `routeAndEscalate` calls
   `requestConsent(target:preview:offer:)`, whose default declines `.costCapped` and passes any other
-  offer to the first. AuraLocal ships no consent UI; the Example app's `UIConsentGate` (Hybrid
-  settings) implements both and shows "Cost unknown" for `nil`, the session spend against the cap,
-  and a warning when sending goes over it. The preview
-  is compressed with `policy.keepRatio` while the request sent uses 0.5, so the previewed context
-  equals the sent context only at the default `keepRatio` of 0.5; the request also carries the
-  question and system prompt.
-- **`PIIRedactor`** strips obvious secrets/PII (code-safe, high-precision) from the context and
-  the question, only on `escalate(to:…, redactPII: true)`.
+  offer to the first; only a gate that implements the offer method sees the question and system
+  prompt. AuraLocal ships no consent UI; the Example app's `UIConsentGate` (Hybrid settings)
+  implements both and shows the exact payload with its redaction count, "Cost unknown" for `nil`,
+  the session spend against the cap, and a warning when sending goes over it.
+- **`PIIRedactor`** strips obvious secrets/PII (code-safe, high-precision patterns) from the
+  context and the question before compression, so the sentence split cannot break an email apart.
+  `routeAndEscalate` runs it per `policy.piiRedaction`, `escalate(to:)` with `redactPII: true`.
+  The system prompt is never redacted.
 - **`CostLedger`** records per-escalation token usage and cost. Local-network targets cost exactly
   $0. Built-in prices cover only the default cloud models, `claude-sonnet-4-5` on `cloud.anthropic`
   ($3 in / $15 out per 1M tokens) and `gpt-4o` on `cloud.openai` ($2.50 / $10), as approximate list
@@ -245,9 +272,9 @@ await crew.run(topic: "Q3 security posture", policy: policy, consent: myConsentG
   `sessionCostUSD` sums the priced records since the session started, `unpricedRecordCount` counts
   the others and `sessionRecordCount` counts both; `startNewSession()` restarts them and keeps
   `records`. The Example app's Hybrid settings show these totals and a **Start new session** button.
-- **`ResponseCache`** avoids paying twice for a repeated request. It is keyed on provider id,
-  model id and the user payload (context + question), not on the system prompt or `maxTokens`,
-  and is held in memory (64 entries, FIFO, cleared on relaunch).
+- **`ResponseCache`** avoids paying twice for a repeated request. `HybridEscalator` keys it on
+  provider id, model id and the whole payload: the system prompt, the user message (context +
+  question) and `maxTokens`. It is held in memory (64 entries, FIFO, cleared on relaunch).
 
 Set prices on the ledger your `HybridEscalator` uses (`HybridEscalator(ledger:)`, `.shared` by
 default), in USD per 1M tokens. A model-specific price wins over a provider-wide one:

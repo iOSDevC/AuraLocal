@@ -371,7 +371,7 @@ public actor ConversationStore {
             .joined(separator: " OR ")
         guard !safe.isEmpty else { return [] }
         return try self.query(
-            "SELECT t.* FROM turns t JOIN turns_fts f ON t.id = f.id WHERE turns_fts MATCH ? ORDER BY rank LIMIT ?;",
+            "SELECT t.* FROM turns t JOIN turns_fts f ON t.rowid = f.rowid WHERE turns_fts MATCH ? ORDER BY rank LIMIT ?;",
             bindings: [safe, limit],
             map: rowToTurn
         )
@@ -392,7 +392,7 @@ public actor ConversationStore {
         return try self.query(
             """
             SELECT t.* FROM turns t
-            JOIN turns_fts f ON t.id = f.id
+            JOIN turns_fts f ON t.rowid = f.rowid
             JOIN conversations c ON t.conversation_id = c.id
             WHERE turns_fts MATCH ? AND c.title LIKE 'AgentCrew:%' AND t.role != 'system'
             ORDER BY rank LIMIT ?;
@@ -470,24 +470,49 @@ public actor ConversationStore {
             CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts
             USING fts5(id UNINDEXED, content, content=turns, content_rowid=rowid);
             """)
-        
-        // Keep FTS in sync via triggers
-        try exec("""
-            CREATE TRIGGER IF NOT EXISTS turns_ai AFTER INSERT ON turns BEGIN
-                INSERT INTO turns_fts(id, content) VALUES (new.id, new.content);
-            END;
-            """)
-        try exec("""
-            CREATE TRIGGER IF NOT EXISTS turns_ad AFTER DELETE ON turns BEGIN
-                INSERT INTO turns_fts(turns_fts, id, content) VALUES('delete', old.id, old.content);
-            END;
-            """)
+        try installFullTextTriggers()
+    }
+
+    /// Earlier triggers omitted the rowid, so a delete never reached the full-text index and later matches
+    /// pointed at missing or reused rows; this replaces them and rebuilds the index from `turns` once.
+    private func installFullTextTriggers() throws {
+        let current = try query("""
+            SELECT 1 FROM sqlite_master WHERE type = 'trigger'
+              AND ((name = 'turns_ai' AND sql LIKE '%new.rowid%') OR (name = 'turns_ad' AND sql LIKE '%old.rowid%'));
+            """) { _ in true }
+        guard current.count < 2 else { return }
+        try inTransaction {
+            try exec("DROP TRIGGER IF EXISTS turns_ai;")
+            try exec("DROP TRIGGER IF EXISTS turns_ad;")
+            try exec("""
+                CREATE TRIGGER turns_ai AFTER INSERT ON turns BEGIN
+                    INSERT INTO turns_fts(rowid, id, content) VALUES (new.rowid, new.id, new.content);
+                END;
+                """)
+            try exec("""
+                CREATE TRIGGER turns_ad AFTER DELETE ON turns BEGIN
+                    INSERT INTO turns_fts(turns_fts, rowid, id, content) VALUES('delete', old.rowid, old.id, old.content);
+                END;
+                """)
+            try exec("INSERT INTO turns_fts(turns_fts) VALUES('rebuild');")
+        }
     }
     
     // MARK: - SQLite helpers
     
     private func ensureOpen() throws {
         if db == nil { try open() }
+    }
+
+    private func inTransaction(_ work: () throws -> Void) throws {
+        try exec("BEGIN TRANSACTION;")
+        do {
+            try work()
+            try exec("COMMIT;")
+        } catch {
+            try? exec("ROLLBACK;")
+            throw error
+        }
     }
     
     private func exec(_ sql: String, bindings: [Any] = []) throws {
@@ -518,9 +543,13 @@ public actor ConversationStore {
         bind(stmt, values: bindings)
         
         var results: [T] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
+        var status = sqlite3_step(stmt)
+        while status == SQLITE_ROW {
             if let value = map(stmt) { results.append(value) }
+            status = sqlite3_step(stmt)
         }
+        // Any status but DONE is an error, not the end of the rows.
+        guard status == SQLITE_DONE else { throw dbError() }
         return results
     }
     

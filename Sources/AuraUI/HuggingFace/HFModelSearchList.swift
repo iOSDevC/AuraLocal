@@ -70,6 +70,10 @@ struct HFSearchControls: View {
 
         VStack(alignment: .leading, spacing: 2) {
             Text(search.currentTarget.source)
+            if let filter = search.pipelineFilter {
+                Text("Shows \(filter.pipelineTags.sorted().joined(separator: ", "))"
+                     + (filter.admitsUndeclared ? " and repos that declare no task." : "."))
+            }
             #if targetEnvironment(simulator)
             Text("Simulator: memory is the Mac's, not an iPhone's.")
             #endif

@@ -34,7 +34,7 @@ output as well (see
 [Generation Stats]({{ '/api/core' | relative_url }}#generation-stats)).
 
 {: .warning }
-> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:onProgress:)`, `AuraProfile.tools`) reach only the GGUF backends; an MLX model silently ignores them. The llama.cpp backends are text-only (an `image:` argument is ignored). Both families pass a multi-turn history with its roles; the llama.cpp backends render it with the GGUF's own chat template (see [Multi-turn conversations](#multi-turn-conversations-gguf)). A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `AuraSession` enforces `AuraProfile.outputSchema` the same way on every backend, by validating each reply and re-prompting, not by constrained decoding; other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). Of `AuraProfile.sampling` only `maxTokens` reaches generation.
+> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:temperature:topP:onProgress:)`, `AuraProfile.tools`) run only on the GGUF backends; with an MLX model `ModelManager.load` and `AuraSession` throw `ModelConfigurationError.toolsUnsupported(.mlx)` before loading anything. The llama.cpp backends are text-only (an `image:` argument is ignored). Both families pass a multi-turn history with its roles; the llama.cpp backends render it with the GGUF's own chat template (see [Multi-turn conversations](#multi-turn-conversations-gguf)). A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `AuraSession` enforces `AuraProfile.outputSchema` the same way on every backend, by validating each reply and re-prompting, not by constrained decoding; other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). `AuraSession` loads the model with `AuraProfile.sampling`'s `temperature` and `topP` and uses its `maxTokens` per turn; `topK` and `contextOverride` are not applied (see [Sampling](#sampling-temperature-and-top-p)).
 
 `BackendKind` also declares `.remote` and `.hybrid`, but no AuraCore API returns them; remote inference goes through `HybridEscalator` (see [Hybrid inference]({{ '/guide/hybrid' | relative_url }})).
 
@@ -47,14 +47,16 @@ output as well (see
 ```swift
 // Internal to AuraCore, shown for illustration: AuraEngine calls it on init.
 // From app code, call BackendRouter.recommendedBackend(for:) instead.
-let backend = BackendRouter.selectBackend(for: model, temperature: temperature, tools: tools)
+let backend = BackendRouter.selectBackend(for: model, sampling: sampling, tools: tools)
 ```
 
 The routing logic:
 
 ```
 model.format == .mlx
-    → MLXBackend  (device or Mac; `tools` are ignored)
+    → MLXBackend  (device or Mac)
+    → UnavailableBackend with tools
+      (load throws ModelConfigurationError.toolsUnsupported(.mlx); the public paths throw it first)
     → UnavailableBackend on the iOS Simulator
       (load throws "MLX models can't run on the iOS Simulator")
 
@@ -81,6 +83,41 @@ let kind = BackendRouter.recommendedBackend(for: .llama3_1_8b_gguf)
 
 ---
 
+## Sampling (temperature and top-p)
+
+`ModelManager.shared.load(_:tools:temperature:topP:onProgress:)` and the factories
+(`AuraLocal.text(_:temperature:topP:onProgress:)`, `.vision`, `.specialized`) take a temperature and a top-p. They
+hold for the instance's lifetime; there is no per-call setting.
+
+```swift
+// Repeatable extraction: temperature 0 is greedy on both backends.
+let llm = try await ModelManager.shared.load(.llama3_1_8b_gguf, temperature: 0)
+let total = try await llm.chat("Coffee 3.50, bagel 2.25. Reply with the total only.", maxTokens: 16)
+```
+
+| | `nil` (the default) | Temperature 0 |
+|---|---|---|
+| GGUF (`LlamaCppBackend`, `LayerStreamingBackend`) | temperature 0.7, top-p 0.95 | llama.cpp's temperature sampler keeps only the most likely token |
+| MLX | temperature 0.7 (text), 0.1 (vision), 0 (OCR / document); top-p off (1) | `GenerateParameters.sampler()` returns `ArgMaxSampler` |
+
+- **Why per instance:** llama.cpp builds its sampler chain when the context is created, and the pinned
+  LocalLLMClient (0.5.0) keeps the chain private, so a loaded GGUF cannot change its temperature without a new
+  context, which reloads the model. MLX takes its parameters per call, but an instance keeps one setting on both
+  backends so a shared instance never changes under another caller.
+- **Cache:** `ModelManager` caches one instance per model and setting, after filling in the defaults: `load(model)`
+  and `load(model, temperature: 0.7, topP: 0.95)` share a GGUF instance. Each other setting is a separate instance
+  that loads the model again, counts against `memoryBudget` and is evicted like any other.
+  `evict(_:)`, `isLoaded(_:)` and `cancelLoad(_:)` act on every setting of the model.
+- **Validation:** a temperature below 0, infinite or NaN throws `ModelConfigurationError.invalidTemperature`; a
+  top-p outside `0 < topP <= 1` throws `.invalidTopP`. Both are thrown before anything is downloaded or loaded.
+- **Constrained calls** run on a dedicated client with the instance's temperature and top-p.
+- **At temperature 0** on GGUF, the repetition penalty (1.1 over the last 64 tokens) has no effect, since
+  LocalLLMClient applies it after the temperature sampler. Greedy decoding can repeat itself; budget `maxTokens`.
+- `AuraSession` loads its model with `AuraProfile.sampling.temperature` and `.topP` (`SamplingParams.default` is
+  0.7 / 0.95, `.precise` 0.2 / 0.95). On MLX that turns top-p on, unlike a plain `load`.
+
+---
+
 ## MLX Backend
 
 Used for all `.mlx` format models, from Granite Docling 258M up to Ornith 1.5 35B A3B in the catalog. The 12B-and-larger entries exceed every iPhone budget preset and fit only on a Mac; check `HardwareAnalyzer.assess(_:)`.
@@ -92,6 +129,10 @@ Used for all `.mlx` format models, from Granite Docling 258M up to Ornith 1.5 35
 - GPU cache scaled by model weight size (~1/12 of the weights), clamped to 128 MB – 512 MB
 - KV cache bounded by `HardwareAnalyzer.recommendedContextWindow(for:)` (`maxKVSize`). Past it MLX overwrites the oldest tokens without an error, which `AuraLocal.lastContextOverflow` reports. Qwen 3.5 text models, Gemma 3 and 4, and LFM2 build their own caches and ignore the bound (see [Memory]({{ '/guide/memory' | relative_url }}#mlx-kv-window))
 - 20–45 tokens/second for ≤4B models on iPhone 15 Pro / M-series Mac
+- No tool calling yet: `ModelManager.load` and `AuraSession` throw `ModelConfigurationError.toolsUnsupported(.mlx)`
+  when given tools. The pinned mlx-swift-lm (3.31.3) already takes tool specs (`UserInput`'s `tools:`) and streams
+  `Generation.toolCall` from per-family parsers, so the next step is an MLX call → execute → resume loop like the
+  GGUF tool engine's.
 
 **When it's used:** Any model case without `_gguf` suffix — Qwen3, Llama 3.2, Gemma 3, Phi-3.5, SmolVLM, FastVLM, Granite Docling.
 

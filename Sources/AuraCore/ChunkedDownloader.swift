@@ -89,8 +89,23 @@ public actor ChunkedDownloader {
     ///   - url: Remote file URL.
     ///   - destination: Local file URL to write to.
     ///   - fileName: Display name for progress reporting.
+    ///   - expectedSHA256: The file's SHA-256 as hex, when the source publishes one. The finished file is hashed
+    ///     and, on a mismatch, deleted with ``ModelIntegrityError/checksumMismatch(path:expected:actual:)``.
+    ///     `nil` (the default) skips the check; nothing else tells this downloader what the bytes should be.
     ///   - onProgress: Called periodically with download progress.
     public func download(
+        from url: URL,
+        to destination: URL,
+        fileName: String,
+        expectedSHA256: String? = nil,
+        onProgress: @Sendable @escaping (DownloadProgress) -> Void
+    ) async throws {
+        try await transfer(from: url, to: destination, fileName: fileName, onProgress: onProgress)
+        guard let expectedSHA256 else { return }
+        try FileIntegrity.verify(destination, expectedSHA256: expectedSHA256.lowercased(), path: fileName)
+    }
+
+    private func transfer(
         from url: URL,
         to destination: URL,
         fileName: String,

@@ -9,7 +9,7 @@ description: "AuraUI API reference — prebuilt SwiftUI tabs for text chat, visi
 # AuraUI
 {: .no_toc }
 
-Prebuilt SwiftUI views. Import `AuraUI` and compose the public tab views — `TextChatTab`, `VisionTab`, `OCRTab` — into your own `TabView`. The library ships no top-level `ContentView`; you own the container. (`ContentView` exists only in the bundled `AuraExample` demo app, not in the `AuraUI` library.)
+Prebuilt SwiftUI views. Import `AuraUI` and compose the public tab views — `TextChatTab`, `VisionTab`, `OCRTab` — into your own `TabView`. The library ships no top-level `ContentView`; you own the container. (`ContentView` exists only in the bundled `AuraExample` demo app, not in the `AuraUI` library. That app no longer uses these three tabs: its Chat tab is one multimodal chat built on `Model.capabilities`; see [The example apps]({{ '/guide/models' | relative_url }}#the-example-apps).)
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -120,11 +120,11 @@ brings its own navigation container, so they fit a `NavigationStack`, a `Navigat
 
 | Type | What it is |
 |------|------------|
-| `HFModelSearch` | `@MainActor @Observable` state: `init(query:devices:compatibleOnly:)` and `search()`. Fetched repo snapshots are cached; changing the device re-evaluates them offline. |
+| `HFModelSearch` | `@MainActor @Observable` state: `init(query:devices:compatibleOnly:pipelineFilter:)` and `search()`. Fetched repo snapshots are cached; changing the device re-evaluates them offline. `pipelineFilter` (an `HFPipelineFilter` from AuraCore, such as `.chat`; `nil` by default) hides results whose declared pipeline it does not admit, and the list's controls name the pipelines it keeps. |
 | `HFModelSearchList` | `init(search:selection:)`. Search field, format filter (starts on GGUF on the Simulator), sort, device picker (only with more than one device), **Compatible only**, and a verdict badge per row. Selecting a row sets `selection` to its repo id. |
 | `HFRepoDetailView` | `init(repoID:search:)`. Fetches the repo if needed and shows the findings, per-quant fits, license and gating, plus a **Download** section for repos rated runnable: quant picker, size and free space, progress, Cancel/Resume, **Try it** (load, one 32-token reply, unload). A key button and the gated error open the token form. |
-| `ModelDownloadCenter` | `ModelDownloadCenter.shared`: the single running download. `revision` changes whenever models are downloaded, deleted or registered; `keepsScreenAwake`; `isBusy`. It records each download started from a search result with `DownloadRecords` and registers it when it finishes; resuming a catalog file does not record it (see [Keeping downloads across launches]({{ '/guide/models' | relative_url }}#keeping-downloads-across-launches)). |
-| `DownloadedModelsList` | `init()`. Everything on disk under the AuraLocal caches, finished or paused, with Try it, Resume, Cancel and Delete (unload every model reading the file, files, record, registry), plus the keep-awake switch. Try it and Resume are off for a file whose size is unknown (no record or catalog entry). Sets the title "Downloads". |
+| `DownloadedModelsList` | `init()`. Everything on disk under the model storage root and the Caches folder earlier versions used, finished or paused, with Try it, Resume, Cancel and Delete (unload every model reading the file, files, record, registry), plus the keep-awake switch. Try it and Resume are off for a file whose size is unknown (no record or catalog entry). A paused `.partial` whose finished file is already on disk (left in Caches by an older build) shows as **Leftover**: no Resume, and Delete removes only that partial. Sets the title "Downloads". |
+| `ModelDownloadCenter` | `ModelDownloadCenter.shared`: the single running download. `revision` changes whenever models are downloaded, deleted or registered; `keepsScreenAwake`; `isBusy`. `isDownloading(_:)` says whether this center or a `ModelSection` row is writing a model's file; `delete(_:)` unloads every model reading that file, removes its finished and partial files, forgets its record and unregisters a model added from search (catalog models stay registered), and throws while a download writes the file. It records each download started from a search result with `DownloadRecords` and registers it when it finishes; resuming a catalog file does not record it (see [Keeping downloads across launches]({{ '/guide/models' | relative_url }}#keeping-downloads-across-launches)). |
 | `HuggingFaceTokenSection` | `init()`. Two `Form` sections that save, show and remove the read token for gated repos (`KeychainDownloadAuth`). |
 
 ```swift
@@ -166,11 +166,15 @@ struct FindModelsSplit: View {
 // Elsewhere:
 NavigationStack { DownloadedModelsList() }
 Form { HuggingFaceTokenSection() }
+
+// A chat's model finder: text-generation, image-text-to-text and any-to-any repos, plus undeclared ones.
+let chatSearch = HFModelSearch(query: "qwen", devices: [DevicePreset.thisDevice()],
+                               compatibleOnly: true, pipelineFilter: .chat)
 ```
 
 Call `DownloadRecords.standard.registerDownloaded()` once at launch (for example in your `App`'s `init`) so models
 downloaded in an earlier run are in the pickers before the first view draws.
 
 Limits: one download at a time; no background downloads (about 30 s of background time, then Resume continues from
-the partial file); files live in Caches; `ModelDownloadCenter` uses `UIApplication.shared` on iOS, so it is not
+the partial file); `ModelDownloadCenter` uses `UIApplication.shared` on iOS, so it is not
 app-extension-safe; on the Simulator MLX can't run and "this device" is the Mac's memory.

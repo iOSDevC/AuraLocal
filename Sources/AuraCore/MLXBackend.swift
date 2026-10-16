@@ -1,7 +1,4 @@
-// MLX backend — compiled in only when the MLX products (mlx-swift-lm) are a direct dependency. They were
-// dropped from Package.swift because mlx-swift-lm@main pins swift-syntax 602, which conflicts with
-// LocalLLMClient's 600. Target models are GGUF/Ollama, so this whole backend is off by default. Re-enable by
-// adding LocalLLMClientMLX (or a swift-syntax-600-compatible mlx-swift-lm) back to the AuraCore target.
+// MLX backend — compiled in only when the MLX products (mlx-swift-lm) are linked.
 #if canImport(MLXLLM)
 import Foundation
 import MLX
@@ -39,18 +36,15 @@ final class MLXBackend: InferenceBackend {
 
     // MARK: - Init
 
-    init(model: Model, temperature: Float? = nil) {
+    /// `nil` sampling takes ``SamplingSettings/defaults(for:)``. Temperature 0 selects MLX's argmax sampler.
+    init(model: Model, sampling: SamplingSettings? = nil) {
         self.model = model
-        let defaultTemp: Float
-        switch model.purpose {
-        case .text:              defaultTemp = 0.7
-        case .vision:            defaultTemp = 0.1
-        case .visionSpecialized: defaultTemp = 0.0
-        }
+        let settings = sampling ?? .defaults(for: model)
         // Unbounded, the KV cache grows with every token until jetsam; the window makes MLX rotate it instead.
         self.parameters = GenerateParameters(
             maxKVSize: HardwareAnalyzer.recommendedContextWindow(for: model),
-            temperature: temperature ?? defaultTemp)
+            temperature: settings.temperature,
+            topP: settings.topP)
     }
 
     // MARK: - InferenceBackend
@@ -308,6 +302,7 @@ final class MLXBackend: InferenceBackend {
 /// restarts from byte 0 on every network failure, so large LFS files stalled
 /// forever (~40%) when the CDN paused mid-stream. Each 32 MB chunk is written
 /// to a `.partial` on disk and persists across cuts; progress is monotonic.
+/// A finished LFS file is hashed against the tree's `lfs.oid` before it is promoted.
 struct AuraHFDownloader: Downloader {
     private static let base = "https://huggingface.co"
     private static let chunkSize: Int64 = 32 * 1024 * 1024
@@ -333,12 +328,17 @@ struct AuraHFDownloader: Downloader {
 
     private let session: URLSession
     private let cacheDirectory: URL
+    /// Read only: a snapshot already completed there is loaded in place instead of downloaded again.
+    private let fallbackDirectories: [URL]
     private let waitBeforeRetry: @Sendable (Double) async throws -> Void
     private let availableDiskCapacity: @Sendable (URL) throws -> Int64?
 
+    /// A `nil` `cacheDirectory` downloads into ``ModelStorage/rootDirectory`` and falls back to Caches;
+    /// otherwise only `fallbackDirectories` are read besides it.
     init(
         session: URLSession = Self.defaultSession,
         cacheDirectory: URL? = nil,
+        fallbackDirectories: [URL] = [],
         waitBeforeRetry: @escaping @Sendable (Double) async throws -> Void = { seconds in
             try await Task.sleep(for: .seconds(seconds))
         },
@@ -350,8 +350,8 @@ struct AuraHFDownloader: Downloader {
         }
     ) {
         self.session = session
-        self.cacheDirectory = cacheDirectory
-            ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        self.cacheDirectory = cacheDirectory ?? ModelStorage.rootDirectory
+        self.fallbackDirectories = cacheDirectory == nil ? ModelStorage.fallbackRoots : fallbackDirectories
         self.waitBeforeRetry = waitBeforeRetry
         self.availableDiskCapacity = availableDiskCapacity
     }
@@ -362,14 +362,20 @@ struct AuraHFDownloader: Downloader {
     ) async throws -> URL {
         try Task.checkCancellation()
         let sanitized = id.replacingOccurrences(of: "/", with: "--")
-        let dir = cacheDirectory
-            .appending(path: "huggingface/hub/models--\(sanitized)/snapshots/main")
+        let snapshotPath = "huggingface/hub/models--\(sanitized)/snapshots/main"
+        let dir = cacheDirectory.appending(path: snapshotPath)
 
         let completionMarker = dir.appending(path: ".complete")
 
         if !useLatest, FileManager.default.fileExists(atPath: completionMarker.path()) {
             Self.log.info("snapshot already complete — skip · \(dir.path(), privacy: .public)")
             return dir
+        }
+        let previous = fallbackDirectories.lazy.map { $0.appending(path: snapshotPath) }
+            .first { FileManager.default.fileExists(atPath: $0.appending(path: ".complete").path()) }
+        if !useLatest, let previous {
+            Self.log.info("snapshot complete in Caches — load in place · \(previous.path(), privacy: .public)")
+            return previous
         }
         // Refreshing may replace previously complete files. Invalidate their old marker before
         // touching the snapshot, so a failed or cancelled refresh cannot take the offline fast path.
@@ -390,10 +396,24 @@ struct AuraHFDownloader: Downloader {
         }
         Self.log.info("tree API status=\(treeHTTP.statusCode)")
 
-        struct F: Codable { let path: String?; let type: String? }
-        let files = try JSONDecoder().decode([F].self, from: data)
-            .filter { $0.type == "file" }
-            .compactMap(\.path)
+        struct LFSPointer: Codable { let oid: String? }
+        struct F: Codable {
+            let path: String?
+            let type: String?
+            let largeFile: LFSPointer?
+            enum CodingKeys: String, CodingKey {
+                case path, type
+                case largeFile = "lfs"
+            }
+        }
+        let entries = try JSONDecoder().decode([F].self, from: data).filter { $0.type == "file" }
+        let files = entries.compactMap(\.path)
+        var checksums: [String: String] = [:]
+        for entry in entries {
+            if let path = entry.path, let sha256 = FileIntegrity.normalizedSHA256(entry.largeFile?.oid) {
+                checksums[path] = sha256
+            }
+        }
         guard !files.isEmpty else {
             throw AuraError.invalidResponse("Hugging Face snapshot contains no files")
         }
@@ -452,14 +472,18 @@ struct AuraHFDownloader: Downloader {
             if FileManager.default.fileExists(atPath: dest.path()) {
                 let attributes = try FileManager.default.attributesOfItem(atPath: dest.path())
                 if attributes[.type] as? FileAttributeType == .typeRegular,
-                   attributes[.size] as? Int64 == expectedSize {
+                   attributes[.size] as? Int64 == expectedSize,
+                   try FileIntegrity.reusable(dest, expectedSHA256: checksums[name]) {
                     aggregated += expectedSize
                     progress.completedUnitCount = aggregated
                     progressHandler(progress)
                     Self.log.info("\(name, privacy: .public) already on disk — size verified")
                     continue
                 }
-                try FileManager.default.removeItem(at: dest)
+                // `reusable` has already deleted a file that hashed wrong.
+                if FileManager.default.fileExists(atPath: dest.path()) {
+                    try FileManager.default.removeItem(at: dest)
+                }
             }
             try FileManager.default.createDirectory(
                 at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -469,6 +493,7 @@ struct AuraHFDownloader: Downloader {
                 from: url,
                 to: dest,
                 expectedSize: expectedSize,
+                expectedSHA256: checksums[name],
                 fileBaseBytes: aggregated,
                 progress: progress,
                 progressHandler: progressHandler
@@ -486,10 +511,12 @@ struct AuraHFDownloader: Downloader {
 
     /// Downloads one file in 32 MB `Range` chunks, appending to a `.partial`
     /// on disk. Resumes from the last completed chunk after any network cut.
+    /// With `expectedSHA256` the finished partial must hash to it before it is promoted.
     private func downloadFileChunked(
         from url: URL,
         to destination: URL,
         expectedSize: Int64,
+        expectedSHA256: String?,
         fileBaseBytes: Int64,
         progress: Progress,
         progressHandler: @Sendable @escaping (Progress) -> Void
@@ -522,6 +549,9 @@ struct AuraHFDownloader: Downloader {
         // Partial already complete (only the move failed last time) → promote.
         if offset == expectedSize {
             try Task.checkCancellation()
+            if let expectedSHA256 {
+                try FileIntegrity.verify(partial, expectedSHA256: expectedSHA256, path: destination.lastPathComponent)
+            }
             try? FileManager.default.removeItem(at: destination)
             try FileManager.default.moveItem(at: partial, to: destination)
             Self.log.info("\(destination.lastPathComponent, privacy: .public): partial already complete — promoted")
@@ -631,6 +661,9 @@ struct AuraHFDownloader: Downloader {
                 Self.log.error("\(destination.lastPathComponent, privacy: .public): final size \(finalSize) != expected \(expectedSize)")
                 throw AuraError.invalidResponse("Incomplete download of \(destination.lastPathComponent): \(finalSize)/\(expectedSize) bytes")
             }
+        }
+        if let expectedSHA256 {
+            try FileIntegrity.verify(partial, expectedSHA256: expectedSHA256, path: destination.lastPathComponent)
         }
 
         try? FileManager.default.removeItem(at: destination)

@@ -8,7 +8,7 @@ public enum OnDeviceImageGenError: LocalizedError, Equatable, Sendable {
     case unsupportedPlatform
     /// The Simulator has no Neural Engine, and on the CPU this model only produces black images.
     case simulatorUnsupported
-    /// The model folder is missing or incomplete (iOS may have purged Caches).
+    /// The model folder is missing or incomplete (never downloaded, deleted, or a pre-migration copy iOS purged).
     case modelNotDownloaded(sizeBytes: Int64)
     /// Free memory is below the estimated peak.
     case insufficientMemory(requiredBytes: Int64, availableBytes: Int64)

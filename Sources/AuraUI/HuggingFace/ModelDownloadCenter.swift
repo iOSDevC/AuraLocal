@@ -96,9 +96,15 @@ public final class ModelDownloadCenter {
         job?.cancel()
     }
 
+    /// Whether a download writes `candidate`'s file now: this center's or a ``ModelSection`` row's.
+    public func isDownloading(_ candidate: Model) -> Bool {
+        let key = DownloadRecords.key(for: candidate)
+        return activeKey == key || claimedKeys.contains(key)
+    }
+
     /// Unloads every model that reads this file, removes its finished and partial files, forgets its record and
-    /// unregisters it. Catalog models stay registered.
-    func delete(_ candidate: Model) throws {
+    /// unregisters it. Catalog models stay registered. Throws while a download writes the file.
+    public func delete(_ candidate: Model) throws {
         guard activeModelID != candidate.id, !isWritingElsewhere(candidate) else {
             throw DownloadInProgressError(name: candidate.displayName)
         }
@@ -106,6 +112,16 @@ public final class ModelDownloadCenter {
         try ModelDownloads.delete(candidate)
         DownloadRecords.standard.remove(candidate)
         phases[candidate.id] = nil
+        revision += 1
+    }
+
+    /// Removes only `partial`, a paused file whose finished copy is already on disk; the finished file, its record
+    /// and its registration stay.
+    func deleteLeftover(_ partial: URL, of candidate: Model) throws {
+        guard activeModelID != candidate.id, !isWritingElsewhere(candidate) else {
+            throw DownloadInProgressError(name: candidate.displayName)
+        }
+        try FileManager.default.removeItem(at: partial)
         revision += 1
     }
 

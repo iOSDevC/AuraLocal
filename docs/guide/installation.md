@@ -17,6 +17,16 @@ description: "Add AuraLocal to your iOS, macOS, or visionOS project via Swift Pa
 
 ---
 
+{: .important }
+> AuraLocal is licensed under **AGPL-3.0-or-later**, or under a commercial license from the copyright holder.
+> Under the AGPL, an app or package that links it and is distributed must be released under AGPL-3.0-compatible
+> terms, with its source available, and if you modify AuraLocal and let people use it over a network, you must
+> offer them the source of your version too. The AGPL's conditions conflict with the App Store's terms; a
+> closed-source app, an App Store release, or a network service whose source you don't publish needs the
+> commercial license. Commits published before the change (up to `1647874`, including the `v0.1.0` tag) remain
+> available under the MIT License they shipped with. Models you download carry their own licenses. See
+> [License]({{ '/license' | relative_url }}).
+
 ## Requirements
 
 | Requirement | Minimum |
@@ -90,12 +100,13 @@ AuraLocal depends on LocalLLMClient by revision, so SwiftPM rejects a version re
 
 ## Dependencies
 
-AuraLocal pulls in five dependencies automatically — you do not need to add them manually:
+AuraLocal pulls in six dependencies automatically — you do not need to add them manually:
 
 | Package | Purpose |
 |---------|---------|
 | [LocalLLMClient](https://github.com/tattn/LocalLLMClient) 0.5.0, pinned by revision | Swift wrapper for llama.cpp (build b8851): GGUF inference |
 | [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) 3.31.3 or later | MLX GPU inference for `.mlx` models |
+| [mlx-swift](https://github.com/ml-explore/mlx-swift) 0.31.3 up to, not including, 0.31.5 | The MLX arrays and Metal kernels under mlx-swift-lm. 0.31.5 does not build for iOS (mlx-swift #436) and 0.31.6 is the version in an open report of an app hanging before `main()` on iOS 27 (#485); a resolve without AuraLocal's lockfile gets 0.31.4 |
 | [swift-transformers](https://github.com/huggingface/swift-transformers) 1.3.0 or later | Tokenizers for MLX models and for the Core ML text-embedding tool (multilingual-e5) |
 | [swift-jinja](https://github.com/huggingface/swift-jinja) 2.3.5 or later | Renders each GGUF model's chat template, so every llama.cpp turn starts from an empty KV cache with real roles |
 | [ml-stable-diffusion](https://github.com/apple/ml-stable-diffusion) 1.1.1 (exact) | Core ML Stable Diffusion for `AuraImageGen` on iOS and macOS (not linked on visionOS) |
@@ -147,6 +158,34 @@ AuraExample declares it:
 ```
 
 The default endpoints (`localhost:11434`, `127.0.0.1:8080`) are loopback and do not need it.
+
+---
+
+## Privacy manifests
+
+`AuraCore` and `AuraImageGen` each ship a `PrivacyInfo.xcprivacy` in their resource bundles
+(`AuraLocal_AuraCore.bundle`, `AuraLocal_AuraImageGen.bundle`), which Xcode reads into your app's privacy report.
+Both declare no tracking, no tracking domains and no collected data. The required-reason APIs they declare:
+
+| Module | Category | Reasons | Used by |
+|--------|----------|---------|---------|
+| `AuraCore` | File timestamp | `C617.1`, `3B52.1` | the age of the cached remote catalog in Caches; the fingerprint of the model `CoreMLModelTool` compiles, which can be a file the user picked |
+| `AuraCore` | Disk space | `E174.1`, `85F4.1` | the free-space check before a model download; the free space `ModelDownloads.availableDiskBytes()` returns for display (AuraUI's download views) |
+| `AuraCore` | User defaults | `CA92.1` | `DownloadRecords` |
+| `AuraImageGen` | User defaults | `CA92.1` | `CoreMLDiffusionModelStore` |
+
+The other modules use none of these APIs and ship no manifest.
+
+**What your app declares.** AuraLocal sends nothing to its developer. Hybrid escalation sends text (system prompt,
+question and compressed context) to the endpoint your app configures, after your `ConsentGate` approves it; model
+downloads request files from Hugging Face, with your token for gated repos. Whether that is data your app collects
+depends on who runs the endpoint and how long it keeps requests, so declare it in your app's own manifest and App
+Store privacy details when it applies, for example `NSPrivacyCollectedDataTypeOtherUserContent` for App
+Functionality.
+
+AuraLocal's manifests cover its own code only. Of the packages in its `Package.resolved`, only swift-nio and
+swift-crypto ship manifests; the rest, including LocalLLMClient with its `llama.framework`, mlx-swift and
+mlx-swift-lm, ship none at the pinned versions, so check their API use for your app's manifest.
 
 ---
 

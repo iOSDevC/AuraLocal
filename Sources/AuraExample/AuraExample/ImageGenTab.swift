@@ -16,7 +16,8 @@ import UniformTypeIdentifiers
 // All on-device and Apple results share one grid (ImageGenState), so switching segments keeps them.
 
 struct ImageGenTab: View {
-    @State private var state = ImageGenState()
+    /// Owned by ContentView, so the Models tab deletes image models through the same state.
+    let state: ImageGenState
     @State private var pane = ImageGenPane.available[0]
     @Environment(\.scenePhase) private var scenePhase
 

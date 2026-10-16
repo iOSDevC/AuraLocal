@@ -1,0 +1,257 @@
+{
+ "id": "apple/coreml-stable-diffusion-v1-5-palettized",
+ "sha": "04a6a0bdd66fb8da470c14e56d762343ef579d88",
+ "gated": false,
+ "tags": [
+  "coreml",
+  "stable-diffusion",
+  "stable-diffusion-diffusers",
+  "text-to-image",
+  "core-ml",
+  "arxiv:2207.12598",
+  "arxiv:2112.10752",
+  "arxiv:2103.00020",
+  "arxiv:2205.11487",
+  "arxiv:1910.09700",
+  "license:other",
+  "region:us"
+ ],
+ "pipeline_tag": "text-to-image",
+ "cardData": {
+  "license": "other"
+ },
+ "siblings": [
+  {
+   "rfilename": "README.md",
+   "size": 13863
+  },
+  {
+   "rfilename": "coreml-stable-diffusion-v1-5-palettized_original_compiled.zip",
+   "size": 1563656510
+  },
+  {
+   "rfilename": "coreml-stable-diffusion-v1-5-palettized_split_einsum_v2_compiled.zip",
+   "size": 1565721769
+  },
+  {
+   "rfilename": "original/compiled/.DS_Store",
+   "size": 8196
+  },
+  {
+   "rfilename": "original/compiled/SafetyChecker.mlmodelc/analytics/coremldata.bin",
+   "size": 207
+  },
+  {
+   "rfilename": "original/compiled/SafetyChecker.mlmodelc/coremldata.bin",
+   "size": 1415
+  },
+  {
+   "rfilename": "original/compiled/SafetyChecker.mlmodelc/metadata.json",
+   "size": 4339
+  },
+  {
+   "rfilename": "original/compiled/SafetyChecker.mlmodelc/model.mil",
+   "size": 374111
+  },
+  {
+   "rfilename": "original/compiled/SafetyChecker.mlmodelc/weights/weight.bin",
+   "size": 607990114
+  },
+  {
+   "rfilename": "original/compiled/TextEncoder.mlmodelc/analytics/coremldata.bin",
+   "size": 207
+  },
+  {
+   "rfilename": "original/compiled/TextEncoder.mlmodelc/coremldata.bin",
+   "size": 825
+  },
+  {
+   "rfilename": "original/compiled/TextEncoder.mlmodelc/metadata.json",
+   "size": 2771
+  },
+  {
+   "rfilename": "original/compiled/TextEncoder.mlmodelc/model.mil",
+   "size": 208229
+  },
+  {
+   "rfilename": "original/compiled/TextEncoder.mlmodelc/weights/weight.bin",
+   "size": 139866304
+  },
+  {
+   "rfilename": "original/compiled/Unet.mlmodelc/analytics/coremldata.bin",
+   "size": 207
+  },
+  {
+   "rfilename": "original/compiled/Unet.mlmodelc/coremldata.bin",
+   "size": 1207
+  },
+  {
+   "rfilename": "original/compiled/Unet.mlmodelc/metadata.json",
+   "size": 3673
+  },
+  {
+   "rfilename": "original/compiled/Unet.mlmodelc/model.mil",
+   "size": 968176
+  },
+  {
+   "rfilename": "original/compiled/Unet.mlmodelc/weights/weight.bin",
+   "size": 645167616
+  },
+  {
+   "rfilename": "original/compiled/VAEDecoder.mlmodelc/analytics/coremldata.bin",
+   "size": 207
+  },
+  {
+   "rfilename": "original/compiled/VAEDecoder.mlmodelc/coremldata.bin",
+   "size": 755
+  },
+  {
+   "rfilename": "original/compiled/VAEDecoder.mlmodelc/metadata.json",
+   "size": 2472
+  },
+  {
+   "rfilename": "original/compiled/VAEDecoder.mlmodelc/model.mil",
+   "size": 181386
+  },
+  {
+   "rfilename": "original/compiled/VAEDecoder.mlmodelc/weights/weight.bin",
+   "size": 98993280
+  },
+  {
+   "rfilename": "original/compiled/VAEEncoder.mlmodelc/analytics/coremldata.bin",
+   "size": 207
+  },
+  {
+   "rfilename": "original/compiled/VAEEncoder.mlmodelc/coremldata.bin",
+   "size": 761
+  },
+  {
+   "rfilename": "original/compiled/VAEEncoder.mlmodelc/metadata.json",
+   "size": 2460
+  },
+  {
+   "rfilename": "original/compiled/VAEEncoder.mlmodelc/model.mil",
+   "size": 139736
+  },
+  {
+   "rfilename": "original/compiled/VAEEncoder.mlmodelc/weights/weight.bin",
+   "size": 68338112
+  },
+  {
+   "rfilename": "original/compiled/merges.txt",
+   "size": 524657
+  },
+  {
+   "rfilename": "original/compiled/vocab.json",
+   "size": 862328
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/SafetyChecker.mlmodelc/analytics/coremldata.bin",
+   "size": 207
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/SafetyChecker.mlmodelc/coremldata.bin",
+   "size": 1415
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/SafetyChecker.mlmodelc/metadata.json",
+   "size": 4339
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/SafetyChecker.mlmodelc/model.mil",
+   "size": 374111
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/SafetyChecker.mlmodelc/weights/weight.bin",
+   "size": 607990114
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/TextEncoder.mlmodelc/analytics/coremldata.bin",
+   "size": 207
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/TextEncoder.mlmodelc/coremldata.bin",
+   "size": 825
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/TextEncoder.mlmodelc/metadata.json",
+   "size": 2771
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/TextEncoder.mlmodelc/model.mil",
+   "size": 208229
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/TextEncoder.mlmodelc/weights/weight.bin",
+   "size": 139866304
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/Unet.mlmodelc/analytics/coremldata.bin",
+   "size": 207
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/Unet.mlmodelc/coremldata.bin",
+   "size": 1207
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/Unet.mlmodelc/metadata.json",
+   "size": 3705
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/Unet.mlmodelc/model.mil",
+   "size": 3040467
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/Unet.mlmodelc/weights/weight.bin",
+   "size": 645167616
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/VAEDecoder.mlmodelc/analytics/coremldata.bin",
+   "size": 207
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/VAEDecoder.mlmodelc/coremldata.bin",
+   "size": 755
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/VAEDecoder.mlmodelc/metadata.json",
+   "size": 2472
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/VAEDecoder.mlmodelc/model.mil",
+   "size": 181386
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/VAEDecoder.mlmodelc/weights/weight.bin",
+   "size": 98993280
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/VAEEncoder.mlmodelc/analytics/coremldata.bin",
+   "size": 207
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/VAEEncoder.mlmodelc/coremldata.bin",
+   "size": 761
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/VAEEncoder.mlmodelc/metadata.json",
+   "size": 2460
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/VAEEncoder.mlmodelc/model.mil",
+   "size": 139736
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/VAEEncoder.mlmodelc/weights/weight.bin",
+   "size": 68338112
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/merges.txt",
+   "size": 524657
+  },
+  {
+   "rfilename": "split_einsum_v2/compiled/vocab.json",
+   "size": 862328
+  }
+ ]
+}

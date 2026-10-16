@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ page.title }} — AuraLocal</title>
-  {% seo %}
+  {% seo title=false %}
   {% include head_custom.html %}
   <link rel="stylesheet" href="{{ '/assets/css/design-system.css' | relative_url }}">
   <style>
@@ -688,9 +688,10 @@
             <a href="{{ '/guide/quickstart' | relative_url }}">Quick Start</a>
             <a href="{{ '/guide/installation' | relative_url }}">Installation</a>
             <a href="{{ '/guide/models' | relative_url }}">Models</a>
+            <a href="{{ '/license' | relative_url }}">License</a>
             <a href="https://github.com/iOSDevC/AuraLocal" target="_blank" rel="noopener">GitHub</a>
           </nav>
-          <p class="ds-footer-copy">MIT License &copy; 2026 iOSDevC &nbsp;&middot;&nbsp; Built with Swift 6.1 on Apple Silicon.</p>
+          <p class="ds-footer-copy">AGPL-3.0-or-later or commercial license &nbsp;&middot;&nbsp; &copy; 2026 iOSDevC &nbsp;&middot;&nbsp; Built with Swift 6.1 on Apple Silicon.</p>
         </div>
       </footer>
     </div>

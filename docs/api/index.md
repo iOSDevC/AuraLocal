@@ -15,7 +15,7 @@ Other modules are covered elsewhere:
 
 - The on-device ML tools (Vision, Natural Language, Sound Analysis, Core ML, Create ML): the
   [On-device ML tools]({{ '/guide/ml-tools' | relative_url }}) guide.
-- AuraImageGen (Core ML Stable Diffusion on device, FLUX via mflux on macOS): the [Image Generation]({{ '/guide/imagegen' | relative_url }}) guide.
+- AuraImageGen (Core ML Stable Diffusion on device, built in or adopted from Hugging Face with `CoreMLDiffusionInspector`; FLUX via mflux on macOS): the [Image Generation]({{ '/guide/imagegen' | relative_url }}) guide.
 - AuraAgents (`AgentCrew`): the [Hybrid Inference]({{ '/guide/hybrid' | relative_url }}#per-step-escalation-agent-orchestration) guide.
 - AuraAppleIntelligence is not documented on this site.
 

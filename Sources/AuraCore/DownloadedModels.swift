@@ -2,7 +2,8 @@ import Foundation
 
 // MARK: - DownloadedGGUF
 
-/// A `.gguf` model already present on disk under the download cache (`<Caches>/models/<org>/<repo>/<file>.gguf`).
+/// A `.gguf` model already present on disk under a models root (`<root>/models/<org>/<repo>/<file>.gguf`, see
+/// ``DownloadedModels/modelsDirectories``).
 ///
 /// Produced by ``DownloadedModels/scan(fileManager:)`` so a host app can offer an "already-downloaded" picker
 /// instead of forcing the user to re-paste a Hugging Face URL. A downloaded file loads **in place** via
@@ -49,27 +50,40 @@ public struct DownloadedGGUF: Sendable, Identifiable, Equatable {
 
 // MARK: - DownloadedModels
 
-/// Enumerates the GGUF models a user has **already downloaded** (or dropped in place) under the shared model
-/// cache. Pure and deterministic: the scan takes an injectable `FileManager`/root so it can be unit-tested
-/// against a temp directory without touching the real caches.
+/// Enumerates the GGUF models a user has **already downloaded** (or dropped in place) under the model storage
+/// root, and under Caches where earlier versions downloaded. Pure and deterministic: the scan takes an injectable
+/// `FileManager`/root so it can be unit-tested against a temp directory without touching the real folders.
 public enum DownloadedModels {
 
-    /// The root directory GGUF models download into: `<Caches>/models`. Mirrors the base of
-    /// ``Model/cacheDirectory`` (which appends `<repoID>` to this).
+    /// The root directory GGUF models download into: `<root>/models` under ``ModelStorage/rootDirectory``.
+    /// Mirrors the base of ``Model/cacheDirectory`` (which appends `<repoID>` to this).
     public static var modelsDirectory: URL {
-        modelsDirectory(fileManager: .default)
+        modelsDirectory(root: ModelStorage.rootDirectory)
     }
 
-    /// The models root for a specific `FileManager` (injectable for tests).
-    static func modelsDirectory(fileManager: FileManager) -> URL {
-        fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("models")
+    /// Every GGUF models root that is read: ``modelsDirectory`` first, then `<Caches>/models`, where earlier
+    /// versions downloaded and where files stay until ``ModelStorage/migrateLegacyDownloads()`` moves them.
+    public static var modelsDirectories: [URL] {
+        ModelStorage.readRoots.map(modelsDirectory(root:))
     }
 
-    /// Recursively enumerate every `.gguf` file under the real models root (`<Caches>/models`), sorted by
-    /// ``DownloadedGGUF/displayName``. Partial/URLSession temp files (no `.gguf` extension) are skipped.
+    static func modelsDirectory(root: URL) -> URL {
+        ModelDownloads.modelsRoot(root)
+    }
+
+    /// Recursively enumerate every `.gguf` file under ``modelsDirectories``, sorted by
+    /// ``DownloadedGGUF/displayName``. A file in both roots is listed once, from the storage root. Partial and
+    /// URLSession temp files (no `.gguf` extension) are skipped.
     public static func scan(fileManager: FileManager = .default) -> [DownloadedGGUF] {
-        scan(root: modelsDirectory(fileManager: fileManager), fileManager: fileManager)
+        scan(roots: modelsDirectories, fileManager: fileManager)
+    }
+
+    /// ``scan(root:fileManager:)`` over each root, keeping the first file for each `<repo>/<file>`.
+    static func scan(roots: [URL], fileManager: FileManager) -> [DownloadedGGUF] {
+        var seen = Set<String>()
+        return roots.flatMap { scan(root: $0, fileManager: fileManager) }
+            .filter { seen.insert($0.repoID + "/" + $0.filename).inserted }
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 
     /// Testable core — enumerate `*.gguf` files under `root`. A missing/empty root yields `[]`.
@@ -116,7 +130,8 @@ public enum DownloadedModels {
 
 // MARK: - MLX snapshots and partial files
 
-/// An MLX snapshot folder under `<Caches>/huggingface/hub/models--<org>--<repo>/snapshots/main`.
+/// An MLX snapshot folder under `<root>/huggingface/hub/models--<org>--<repo>/snapshots/main`, in the storage root
+/// or in Caches.
 public struct DownloadedSnapshot: Sendable, Identifiable, Equatable {
     public let repoID: String
     public let directory: URL
@@ -137,23 +152,33 @@ public struct DownloadedSnapshot: Sendable, Identifiable, Equatable {
 
 public extension DownloadedModels {
 
-    /// MLX snapshots on disk, complete or not, sorted by repo id.
+    /// MLX snapshots on disk, complete or not, sorted by repo id. A repo in both the storage root and Caches is
+    /// listed once: the complete copy, else the storage root's.
     static func scanSnapshots(fileManager: FileManager = .default) -> [DownloadedSnapshot] {
-        scanSnapshots(hubRoot: hubDirectory(fileManager: fileManager), fileManager: fileManager)
+        scanSnapshots(hubRoots: ModelStorage.readRoots.map(hubDirectory(root:)), fileManager: fileManager)
     }
 
-    /// Unfinished `*.partial` downloads under the GGUF models root and the MLX hub folder.
+    /// Unfinished `*.partial` downloads under the GGUF models roots and the MLX hub folders.
     static func partialFiles(fileManager: FileManager = .default) -> [URL] {
-        partialFiles(roots: [modelsDirectory(fileManager: fileManager), hubDirectory(fileManager: fileManager)],
+        partialFiles(roots: ModelStorage.readRoots.flatMap { [modelsDirectory(root: $0), hubDirectory(root: $0)] },
                      fileManager: fileManager)
     }
 }
 
 extension DownloadedModels {
 
-    static func hubDirectory(fileManager: FileManager) -> URL {
-        fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appending(path: "huggingface/hub")
+    static func hubDirectory(root: URL) -> URL {
+        root.appending(path: "huggingface/hub")
+    }
+
+    static func scanSnapshots(hubRoots: [URL], fileManager: FileManager) -> [DownloadedSnapshot] {
+        var chosen: [String: DownloadedSnapshot] = [:]
+        for snapshot in hubRoots.flatMap({ scanSnapshots(hubRoot: $0, fileManager: fileManager) }) {
+            if let kept = chosen[snapshot.repoID], kept.isComplete || !snapshot.isComplete { continue }
+            chosen[snapshot.repoID] = snapshot
+        }
+        return chosen.values
+            .sorted { $0.repoID.localizedCaseInsensitiveCompare($1.repoID) == .orderedAscending }
     }
 
     static func scanSnapshots(hubRoot: URL, fileManager: FileManager) -> [DownloadedSnapshot] {

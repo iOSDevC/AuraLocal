@@ -1,0 +1,110 @@
+[
+  {
+    "shortDescription" : "Stable Diffusion generates images conditioned on text or other images as input through the diffusion process. Please refer to https:\/\/arxiv.org\/abs\/2112.10752 for details.",
+    "metadataOutputVersion" : "3.0",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 4 × 48 × 48)",
+        "shortDescription" : "Same shape and dtype as the `sample` input. The predicted noise to facilitate the reverse diffusion (denoising) process",
+        "shape" : "[1, 4, 48, 48]",
+        "name" : "noise_pred",
+        "type" : "MultiArray"
+      }
+    ],
+    "version" : "stabilityai\/sd-turbo",
+    "modelParameters" : [
+
+    ],
+    "author" : "Please refer to the Model Card available at huggingface.co\/stabilityai\/sd-turbo",
+    "specificationVersion" : 7,
+    "storagePrecision" : "Mixed (Float16, Palettized (6 bits))",
+    "license" : "OpenRAIL (https:\/\/huggingface.co\/spaces\/CompVis\/stable-diffusion-license)",
+    "mlProgramOperationTypeHistogram" : {
+      "Transpose" : 32,
+      "UpsampleNearestNeighbor" : 3,
+      "Ios16.reduceMean" : 122,
+      "Ios16.sin" : 1,
+      "Ios16.softmax" : 390,
+      "Split" : 16,
+      "Ios16.add" : 169,
+      "Concat" : 46,
+      "Ios16.realDiv" : 61,
+      "Ios16.square" : 61,
+      "ExpandDims" : 3,
+      "Ios16.sub" : 61,
+      "Ios16.sqrt" : 61,
+      "Ios16.conv" : 282,
+      "Ios16.constexprLutToDense" : 282,
+      "Ios16.einsum" : 780,
+      "Ios16.layerNorm" : 48,
+      "SliceByIndex" : 1172,
+      "Ios16.batchNorm" : 61,
+      "Ios16.reshape" : 154,
+      "Ios16.silu" : 47,
+      "Ios16.gelu" : 16,
+      "Ios16.mul" : 407,
+      "Ios16.cos" : 1,
+      "Ios16.cast" : 1
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "stateSchema" : [
+
+    ],
+    "isUpdatable" : "0",
+    "availability" : {
+      "macOS" : "13.0",
+      "tvOS" : "16.0",
+      "visionOS" : "1.0",
+      "watchOS" : "9.0",
+      "iOS" : "16.0",
+      "macCatalyst" : "16.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 4 × 48 × 48)",
+        "shortDescription" : "The low resolution latent feature maps being denoised through reverse diffusion",
+        "shape" : "[1, 4, 48, 48]",
+        "name" : "sample",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1)",
+        "shortDescription" : "A value emitted by the associated scheduler object to condition the model on a given noise schedule",
+        "shape" : "[1]",
+        "name" : "timestep",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 1024 × 1 × 77)",
+        "shortDescription" : "Output embeddings from the associated text_encoder model to condition to generated image on text. A maximum of 77 tokens (~40 words) are allowed. Longer text is truncated. Shorter text does not reduce computation.",
+        "shape" : "[1, 1024, 1, 77]",
+        "name" : "encoder_hidden_states",
+        "type" : "MultiArray"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-07-23",
+      "com.github.apple.ml-stable-diffusion.version" : "1.1.0",
+      "com.github.apple.coremltools.source" : "torch==2.13.0",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "generatedClassName" : "Stable_Diffusion_version_stabilityai_sd_turbo_unet",
+    "method" : "predict"
+  }
+]

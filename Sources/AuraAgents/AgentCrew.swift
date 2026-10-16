@@ -293,7 +293,7 @@ public final class AgentCrew: ObservableObject {
     }
 
     /// Escalate the Architect step to a bigger model when the local draft looks weak.
-    /// Reuses HybridEscalator (router + compression + consent + cost). Returns the
+    /// Reuses HybridEscalator (router + compression + `policy.piiRedaction` + consent + cost). Returns the
     /// local answer unchanged when the policy is off, the router keeps it local, or
     /// anything fails.
     private func escalateIfWeak(

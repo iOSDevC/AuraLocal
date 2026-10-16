@@ -142,7 +142,7 @@ final class ModelDownloadsTests {
 
         #expect(file == ggufFile("stub/dl-gguf", "m.gguf"))
         let resolved = try #require(model.resolvedFileURL)
-        #expect(resolved.path.replacingOccurrences(of: ModelDownloads.cachesRoot.path, with: root.path) == file.path)
+        #expect(resolved.path.replacingOccurrences(of: ModelDownloads.storageRoot.path, with: root.path) == file.path)
         #expect(try Data(contentsOf: file) == body)
         #expect(!FileManager.default.fileExists(atPath: HubFileTransfer.partialURL(for: file).path))
         let last = try #require(reports.last)
@@ -453,7 +453,8 @@ private final class ProgressLog: Sendable {
 }
 
 /// Canned responses keyed by URL. Honours `Range: bytes=a-b` (206, or 416 past the end) unless a route opts out,
-/// and answers HEAD with the size headers only.
+/// and answers HEAD with the size headers only. An unrouted paths-info request gets `[]`, Hugging Face's answer for a
+/// path it has no LFS entry for, so a download without a published SHA-256 is not verified.
 final class DownloadStubs: Sendable {
     static let shared = DownloadStubs()
 
@@ -493,7 +494,10 @@ final class DownloadStubs: Sendable {
             current.received.append(request)
             return current.byURL[request.url?.absoluteString ?? ""]
         }
-        guard let route else { return (404, [:], Data()) }
+        guard let route else {
+            let isPathsInfo = request.url?.path.contains("/paths-info/") == true
+            return isPathsInfo ? (200, [:], Data("[]".utf8)) : (404, [:], Data())
+        }
         var headers = ["Content-Length": "\(route.body.count)"]
         if let linkedSize = route.linkedSize { headers["x-linked-size"] = "\(linkedSize)" }
         if let etag = route.etag { headers["ETag"] = etag }

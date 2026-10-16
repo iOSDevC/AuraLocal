@@ -211,6 +211,30 @@ final class GGUFMultiTurnTests: XCTestCase {
         XCTAssertEqual(again, fresh, "the KV cache held \(again - fresh) stale positions")
     }
 
+    func testStoppingAHistoryStreamStopsItsDecodeAndKeepsThePartialReply() async throws {
+        let llm = try await loadModel()
+        let store = try temporaryStore()
+        let conversation = try await store.createConversation(model: llm.engine.model).id
+        var shown = ""
+        for try await delta in llm.stream("Write a long story about a lighthouse.", in: conversation,
+                                          systemPrompt: "Be brief.", maxTokens: 400, store: store) {
+            shown += delta
+            if shown.count > 20 { break }
+        }
+
+        let next = try await llm.chat("Name one primary color.", in: conversation, maxTokens: 24, store: store)
+        XCTAssertFalse(next.isEmpty)
+        let turns = try await store.turns(for: conversation)
+        XCTAssertEqual(turns.map(\.role), [.system, .user, .assistant, .user, .assistant])
+        let partial = try XCTUnwrap(turns.dropFirst(2).first).content
+        print("stopped history stream: \(shown.count) characters shown, \(partial.count) stored")
+        XCTAssertTrue(partial.hasPrefix(shown), "\(partial) does not start with \(shown)")
+        // Left to its 400-token budget, the story runs well past a thousand characters.
+        XCTAssertLessThan(partial.count, shown.count + 200, partial)
+        let engine = try turnEngine(of: llm)
+        XCTAssertEqual(engine.lastHistory.map(\.role), [.system, .user, .assistant, .user])
+    }
+
     func testAConstrainedCallBetweenChatTurnsLeavesTheConversationIntact() async throws {
         let llm = try await loadModel()
         let store = try temporaryStore()

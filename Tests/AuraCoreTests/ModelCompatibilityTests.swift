@@ -372,6 +372,19 @@ extension ModelCompatibilityTests {
         XCTAssertTrue(onPhone.blockers.contains { $0.rule == "imagegen" })
     }
 
+    func testListingRevisionComesFromTheSha() throws {
+        let sha = "04a6a0bdd66fb8da470c14e56d762343ef579d88"
+        let pinned = try XCTUnwrap(HFRepoInfo.parse(Data(#"{"id": "o/r", "sha": "\#(sha)", "siblings": []}"#.utf8)))
+        XCTAssertEqual(pinned.revision, sha)
+
+        let unpinned = try XCTUnwrap(HFRepoInfo.parse(Data(#"{"id": "o/r", "siblings": []}"#.utf8)))
+        XCTAssertNil(unpinned.revision)
+
+        let built = HFRepoInfo(repoID: "o/r", files: [], tags: ["coreml"], licenseID: "mit")
+        XCTAssertNil(built.revision, "the init without revision still compiles")
+        XCTAssertEqual(HFRepoInfo(repoID: "o/r", files: [], revision: sha).revision, sha)
+    }
+
     func testEveryPresetIsReachableByID() {
         for preset in DevicePreset.classes {
             XCTAssertEqual(DevicePreset.named(preset.id)?.id, preset.id)

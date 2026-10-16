@@ -17,7 +17,8 @@ public enum ModelFormat: String, Sendable, Codable {
 /// and the device's hardware profile.
 ///
 /// Routing logic:
-/// - **MLX format** → always ``MLXBackend`` (current behavior)
+/// - **MLX format** → ``MLXBackend``; with tools, a backend whose load throws
+///   ``ModelConfigurationError/toolsUnsupported(_:)``
 /// - **GGUF format + fits in RAM** → ``LlamaCppBackend`` (standard full-load)
 /// - **GGUF format + too large** → ``LayerStreamingBackend`` (layer-by-layer)
 ///
@@ -26,15 +27,20 @@ public enum ModelFormat: String, Sendable, Codable {
 @MainActor
 public enum BackendRouter {
 
-    /// Select the best backend for the given model and device.
+    /// Select the best backend for the given model and device. `nil` sampling takes the backend defaults.
     static func selectBackend(
         for model: Model,
-        temperature: Float? = nil,
+        sampling: SamplingSettings? = nil,
         profile: HardwareProfile = .current(),
         tools: [any LLMTool] = []
     ) -> any InferenceBackend {
         switch model.format {
         case .mlx:
+            // Public paths throw this before building an engine; refusing here too keeps an internal caller from
+            // loading weights that would ignore the tools.
+            guard tools.isEmpty else {
+                return UnavailableBackend(failure: ModelConfigurationError.toolsUnsupported(.mlx))
+            }
             #if targetEnvironment(simulator)
             // MLX needs a Metal GPU family the simulator does not provide; upstream mlx-swift
             // documents that MLX cannot run there. Fail clearly instead of crashing mid-load.
@@ -42,7 +48,7 @@ public enum BackendRouter {
                 "MLX models can't run on the iOS Simulator (no Metal GPU). Use a GGUF model here, "
                 + "or run on a device.")
             #elseif canImport(MLXLLM)
-            return MLXBackend(model: model, temperature: temperature)
+            return MLXBackend(model: model, sampling: sampling)
             #else
             return UnavailableBackend(
                 "This is an MLX model, but the MLX backend isn't linked. Add the MLX products or "
@@ -57,20 +63,38 @@ public enum BackendRouter {
             switch assessment.fitLevel {
             case .excellent, .good, .marginal:
                 // Model fits in RAM — use standard llama.cpp load
-                return LlamaCppBackend(model: model, temperature: temperature, tools: tools)
+                return LlamaCppBackend(model: model, sampling: sampling, tools: tools)
 
             case .streamingRequired:
                 // Model too large for monolithic load — use layer streaming
-                return LayerStreamingBackend(model: model, temperature: temperature, tools: tools)
+                return LayerStreamingBackend(model: model, sampling: sampling, tools: tools)
 
             case .tooLarge:
                 // Even streaming can't help (e.g. 70B on iPhone). ModelManager.load refuses this
                 // case up front (throws .modelTooLarge before downloading), so this is only reached
                 // if a caller drives the router directly — return llama.cpp as a defensive fallback
                 // that fails at load rather than silently doing nothing.
-                return LlamaCppBackend(model: model, temperature: temperature, tools: tools)
+                return LlamaCppBackend(model: model, sampling: sampling, tools: tools)
             }
         }
+    }
+
+    /// Throws ``ModelConfigurationError/toolsUnsupported(_:)`` when `model`'s backend has no tool-calling loop:
+    /// only the llama.cpp backends run one.
+    nonisolated static func requireToolSupport(_ tools: [any LLMTool], for model: Model) throws {
+        guard !tools.isEmpty, !runsToolLoop(for: model) else { return }
+        throw ModelConfigurationError.toolsUnsupported(.mlx)
+    }
+
+    /// Whether `model`'s backend runs a tool-calling loop, reported as ``ModelCapabilities/tools``.
+    nonisolated static func runsToolLoop(for model: Model) -> Bool {
+        model.format == .gguf
+    }
+
+    /// Whether `model`'s backend passes an image to it, reported as ``ModelCapabilities/vision``. The llama.cpp
+    /// backends are text-only and drop the image, whatever the model's category says.
+    nonisolated static func acceptsImages(for model: Model) -> Bool {
+        model.format == .mlx
     }
 
     /// Returns the ``BackendKind`` that would be selected for a model.
@@ -91,38 +115,39 @@ public enum BackendRouter {
 
 // MARK: - UnavailableBackend
 
-/// A no-op ``InferenceBackend`` for a format whose engine isn't built into this configuration (currently
-/// MLX, compiled out when the mlx-swift products aren't a direct dependency). It never loads and fails with
-/// a clear message, so a stray MLX model degrades gracefully instead of crashing the router.
+/// A no-op ``InferenceBackend`` for a model this configuration cannot run: MLX on the simulator or without the
+/// mlx-swift products, or MLX asked for tools. It never loads and every call throws `failure`, so the model fails
+/// clearly instead of crashing the router or answering without its tools.
 @MainActor
 final class UnavailableBackend: InferenceBackend {
-    private let message: String
-    init(_ message: String) { self.message = message }
+    let failure: any Error
+    init(_ message: String) { self.failure = AuraError.invalidResponse(message) }
+    init(failure: any Error) { self.failure = failure }
 
     var isLoaded: Bool { false }
 
     func load(onProgress: @escaping @MainActor (String) -> Void) async throws {
-        throw AuraError.invalidResponse(message)
+        throw failure
     }
 
     func generate(prompt: String, systemPrompt: String?, maxTokens: Int,
                   onToken: @escaping @MainActor (String) -> Void) async throws -> String {
-        throw AuraError.invalidResponse(message)
+        throw failure
     }
 
     func generate(prompt: String, systemPrompt: String?, maxTokens: Int, constraint: GenerationConstraint,
                   onToken: @escaping @MainActor (String) -> Void) async throws -> String {
-        throw AuraError.invalidResponse(message)
+        throw failure
     }
 
     func generate(prompt: String, image: PlatformImage?, maxTokens: Int,
                   onToken: @escaping @MainActor (String) -> Void) async throws -> String {
-        throw AuraError.invalidResponse(message)
+        throw failure
     }
 
     func generate(messages: [[String: String]], maxTokens: Int,
                   onToken: @escaping @MainActor (String) -> Void) async throws -> String {
-        throw AuraError.invalidResponse(message)
+        throw failure
     }
 
     func unload() {}

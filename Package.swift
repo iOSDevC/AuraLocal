@@ -39,6 +39,10 @@ let package = Package(
         // it already downloads. Ranges mirror LocalLLMClient's own so they unify instead of
         // conflicting; `from:` (not a branch) is what lets SwiftPM backtrack off the 602 floor.
         .package(url: "https://github.com/ml-explore/mlx-swift-lm",      from: "3.31.3"),
+        // mlx-swift-lm 3.31.3 allows mlx-swift 0.31.3..<0.32.0, so a resolve without our lockfile took
+        // 0.31.6, the version in the open pre-main launch hang report (mlx-swift #485); 0.31.5 does not
+        // build for iOS (#436). 0.31.4 vendors the same Cmlx sources as 0.31.3.
+        .package(url: "https://github.com/ml-explore/mlx-swift",         "0.31.3"..<"0.31.5"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
         // Also already resolved: LocalLLMClient renders chat templates with it. The GGUF backends render the
         // same templates themselves, so every turn can start from an empty KV cache with real roles.
@@ -61,6 +65,9 @@ let package = Package(
                 .product(name: "MLXLLM",      package: "mlx-swift-lm"),
                 .product(name: "MLXVLM",      package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                // Already linked through MLXLLM; naming it makes the mlx-swift range bind downstream, where a
+                // dependency no target uses is not resolved.
+                .product(name: "MLX",         package: "mlx-swift"),
                 .product(name: "Tokenizers",  package: "swift-transformers"),
                 .product(name: "Jinja",       package: "swift-jinja"),
             ],
@@ -134,6 +141,7 @@ let package = Package(
                          condition: .when(platforms: [.iOS, .macOS, .macCatalyst])),
             ],
             path: "Sources/AuraImageGen",
+            resources: [.process("PrivacyInfo.xcprivacy")],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
@@ -170,6 +178,7 @@ let package = Package(
             name: "AuraImageGenTests",
             dependencies: ["AuraImageGen"],
             path: "Tests/AuraImageGenTests",
+            resources: [.copy("Fixtures")],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         )
     ]

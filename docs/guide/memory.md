@@ -32,14 +32,14 @@ On-device LLMs can consume significant RAM. AuraLocal has multiple layers of pro
 
 ## LRU Model Cache
 
-`ModelManager.shared` maintains a least-recently-used cache of up to `memoryBudget` models (public, read-only). The budget is computed once, when `ModelManager.shared` is first used, from the memory the process could allocate at that moment (not total device RAM): `min(4, max(1, (available − 2 GB) / 1.5 GB))`, or 1 when the OS reports unknown.
+`ModelManager.shared` maintains a least-recently-used cache of up to `memoryBudget` instances (public, read-only), one per model and sampling setting: a model loaded at two temperature or top-p settings is two cache entries, each a separate load of the model (see [Sampling]({{ '/guide/backends' | relative_url }}#sampling-temperature-and-top-p)). The budget is computed once, when `ModelManager.shared` is first used, from the memory the process could allocate at that moment (not total device RAM): `min(4, max(1, (available − 2 GB) / 1.5 GB))`, or 1 when the OS reports unknown.
 
 | Available memory at first use | Cache size |
 |-----------|------------|
-| under ~4.9 GB, or unknown | 1 model (evicts on every switch) |
-| ~4.9–6.4 GB | 2 models |
-| ~6.4–7.9 GB | 3 models |
-| ~7.9 GB or more | 4 models (the cap) |
+| under ~4.9 GB, or unknown | 1 instance (evicts on every switch) |
+| ~4.9–6.4 GB | 2 instances |
+| ~6.4–7.9 GB | 3 instances |
+| ~7.9 GB or more | 4 instances (the cap) |
 
 When you load a model that would exceed the budget, the LRU model is automatically `unload()`ed before the new one loads.
 On iOS more can go: models are also evicted while the new one would not fit the app's memory limit beside them

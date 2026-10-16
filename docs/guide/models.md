@@ -419,8 +419,8 @@ decides it. Any blocker means **Won't run**.
 | `gguf.qwen35-nextn` | `qwen35` / `qwen35moe` with `nextn_predict_layers` > 0 | b8851 marks recurrent layers arithmetically and demands `ssm_*` tensors the MTP block lacks; fixed upstream in b9180 (PR #22673) |
 | `gguf.shards` | every quant is split (`-0000N-of-0000M`); a caveat when only some are | the GGUF path loads one file |
 | `fit` | the weights (MLX) or every single-file quant (GGUF) are too large for the device | `HardwareAnalyzer.assess` against the device budget |
-| `imagegen` | a text-to-image pipeline on an iPhone preset (a caveat on a Mac: mflux support is not verified) | AuraImageGen runs only its built-in Core ML preset on iOS (Stable Diffusion 2.1 base); other diffusion repos are not supported |
-| `license` | never blocks: flags gated repos, a missing license, non-commercial (`cc-by-nc*`) and custom (`other`) licenses by name | |
+| `imagegen` | a text-to-image pipeline on an iPhone preset (a caveat on a Mac: mflux support is not verified) | the chat runtimes do not run diffusion repos; on iPhone, AuraImageGen runs Core ML Stable Diffusion 1.x/2.x folders that `CoreMLDiffusionInspector` accepts ([Image Generation]({{ '/guide/imagegen' | relative_url }}#other-models-from-hugging-face)) |
+| `license` | never blocks: flags gated repos, a missing license, non-commercial (`cc-by-nc*`) and custom (`other`) licenses by name, and licenses with use restrictions (OpenRAIL and BLOOM RAIL variants, Llama 2–4, Gemma, DeepSeek, Tongyi Qianwen, Apple AMLR, CC-BY-SA-4.0, GPL-3.0, AGPL-3.0) | |
 
 `mlx.tokenizer`, `gguf.header`, `gguf.projector` and `context` add caveats and context (missing tokenizer files,
 unreadable headers, an ignored mmproj, trained contexts below 32768 tokens) but never block.
@@ -508,27 +508,47 @@ per-quant fit table and the `models.json` entry; `--entry` prints only the entry
 ### The example apps
 
 Both example apps use AuraUI's Hugging Face browser (`HFModelSearchList`, `HFRepoDetailView`,
-`DownloadedModelsList`, `HuggingFaceTokenSection`; see the [UI API]({{ '/api/ui' | relative_url }}#hugging-face-browser)),
+`HuggingFaceTokenSection`, and in ModelFinder `DownloadedModelsList`; see the
+[UI API]({{ '/api/ui' | relative_url }}#hugging-face-browser)),
 built on the same checker and on [`ModelDownloads`](#downloading-without-loading): search with format and sort
 filters, a verdict badge per result (checked lazily as rows appear), a **Compatible only** toggle, and a detail
 view with the findings, the per-quant fit table, **Copy catalog entry**, **Open on Hugging Face** and, for repos
 rated runnable, a **Download** section (quant picker, size and free space, progress, Cancel/Resume, **Try it** once
 finished). A gated repo shows **Add a token**, which opens the token form in place.
 
-- **AuraExample** (iOS 18.6+ and macOS 26.2+): **Models → Search Hugging Face** and **Models → Downloads**, plus
-  **Find on Hugging Face…** at the top of the Text tab's model menu (on iPhone, Models sits under More). Search
-  judges repos against this device only and starts with **Compatible only** on. A finished download is listed
-  under **Downloaded** in the Text menu (and in the Vision picker for an MLX vision model) without a relaunch,
-  and again after one. In the Text menu's **Downloaded** section a model that can't load now is disabled with the
-  reason; the Vision picker leaves out downloaded models rated *Too Large*. Nothing loads until you send a
-  message.
+- **AuraExample** (iOS 18.6+ and macOS 26.2+): each section finds and downloads its own kind of model.
+  - **Chat** is one chat for text, images and documents. Tap the model name above the conversation to open the
+    model sheet: **Browse the catalog** lists the catalog's chat models that fit this device (Text, Vision,
+    Documents (OCR) and the domain sections, with Download, Cancel and Delete per row and Test on domain rows; on
+    the Simulator GGUF only), **Find on Hugging Face** searches against this device only, starts with
+    **Compatible only** on and keeps text-generation, image-text-to-text and any-to-any repos plus those that
+    declare no pipeline (`HFPipelineFilter.chat`), and **On this device** lists the downloaded models. A finished
+    download is listed there without a relaunch, and again after one; a model downloaded while the sheet is open
+    becomes the chat model when it closes, unless you picked one. Only downloaded models that take text or images
+    can be picked, and one that can't load now (too large for free memory, or MLX on the Simulator) is disabled
+    with the reason. Badges under the name come from `Model.capabilities`: **Text**, **Vision** (MLX only; the
+    photo button attaches an image), **OCR** (the document button runs the model's document prompt on the
+    attached image; Markdown for DocTags models, JSON otherwise) and **Tools** (GGUF). Picking a model starts a
+    new conversation; nothing loads until you send, and **Stop** keeps the text generated so far. The
+    conversation a reply is streaming into can't be deleted until it ends.
+  - **Voice** talks to a downloaded model that chats from text, loading the one last picked there (or the first
+    that fits) when the tab opens, with **Try again** if the load fails; get more in Chat.
+  - **Image** has its own Core ML finder (see [Image generation]({{ '/guide/imagegen' | relative_url }})).
+  - **Library** imports its embedding model from Files instead of searching: it is a Core ML bundle that
+    `scripts/embeddings/convert_e5_coreml.py` converts and checks on a Mac (`embedding-model.json`, schema
+    `aura.text-embedding/1`), not a file a Hugging Face repo serves as is.
+  - **Models** (under More on iPhone) only manages storage: every chat, image and embedding model on disk,
+    finished, downloading or paused, with its size, the section that uses it and Delete, plus the space used and
+    free. Delete is disabled while a download writes the files or a model loads from them, including the MLX
+    snapshots Library and Agents download through `ModelManager`. Badges appear only on files that a download
+    record or `ModelRegistry` identifies.
 - **[ModelFinder](https://github.com/iOSDevC/AuraLocal/blob/main/Examples/ModelFinder/README.md)** (iOS 18 and
   macOS 15): the same views in a split view with a device picker (this device, iPhone classes, Macs), a Downloads
   tab and a Settings tab. Its README explains how to generate and open the project.
 
-On the Simulator the format filter starts on GGUF, MLX models are disabled in the Text menu's **Downloaded**
-section and in Try it (MLX can't run there; picked anywhere else, they fail to load with an error), and "this
-device" reports the Mac's memory, not an iPhone's.
+On the Simulator the format filter starts on GGUF, MLX models are left out of AuraExample's catalog list and
+disabled in its Chat and Voice pickers, in AuraUI's Text menu and in Try it (MLX can't run there; picked anywhere
+else, they fail to load with an error), and "this device" reports the Mac's memory, not an iPhone's.
 
 ---
 
@@ -541,7 +561,7 @@ and never copied. `Model.from(_:)` takes the same as a `ModelSource` (`.huggingF
 
 ```swift
 if let model = Model.fromURL("https://huggingface.co/<owner>/<repo>/resolve/main/<file>.gguf") {
-    let llm = try await ModelManager.shared.load(model)   // downloads to <Caches>/models/<owner>/<repo>/
+    let llm = try await ModelManager.shared.load(model)   // downloads to <root>/models/<owner>/<repo>/
     print(try await llm.chat("Hello"))
 }
 ```
@@ -575,15 +595,19 @@ ModelManager.shared.evict(model)                                // unload before
 try ModelDownloads.delete(model)                                // file + .partial, or the whole MLX repo folder
 ```
 
-- **Where files land**: GGUF at `<Caches>/models/<org>/<repo>/<file>.gguf`; MLX at
-  `<Caches>/huggingface/hub/models--<org>--<repo>/snapshots/main/` with a `.complete` marker written after the
+- **Where files land**: under the storage root `<root>` (see [Where models are stored](#where-models-are-stored)):
+  GGUF at `<root>/models/<org>/<repo>/<file>.gguf`; MLX at
+  `<root>/huggingface/hub/models--<org>--<repo>/snapshots/main/` with a `.complete` marker written after the
   last file. The MLX load path (`MLXBackend`) has its own downloader that uses the same folder and marker, so a
-  snapshot downloaded here loads without a second download.
+  snapshot downloaded here loads without a second download. A finished model an earlier version left in Caches
+  is returned from there instead of downloaded again.
 - **One folder, pinned**: `ModelDownloads.downloadFolder(repoID:revision:folder:include:auth:progress:)` fetches
   the files under one folder of a repo at a fixed revision into
-  `<Caches>/huggingface/hub/models--<org>--<repo>/snapshots/main/<folder>`. It resumes `.partial` files, deletes
+  `<root>/huggingface/hub/models--<org>--<repo>/snapshots/main/<folder>`. It resumes `.partial` files, deletes
   files from any other revision first, and sends no token unless you pass `auth`. `planFolder`, `localFolder`,
-  `isFolderComplete` and `deleteRepo` go with it. AuraImageGen downloads its Core ML Stable Diffusion this way
+  `completedFolder` (the finished folder, in the storage root or in Caches), `isFolderComplete`, `deleteRepo` (the
+  whole repo) and `deleteFolder(repoID:folder:)` (one folder; the others stay) go with it. AuraImageGen downloads its
+  Core ML Stable Diffusion this way
   (see [Image generation]({{ '/guide/imagegen' | relative_url }})).
 - **What MLX fetches**: top-level `*.safetensors`, `*.json` and `*.jinja` files of `main` only (mlx-swift-lm's
   patterns). Weights in a subfolder, or no `config.json`, throw `ModelDownloadError.incompleteRepo`.
@@ -596,6 +620,8 @@ try ModelDownloads.delete(model)                                // file + .parti
   server that sends no ETag cannot be checked. The file is moved into place only when its size matches.
   `ModelDownloads.bytesOnDisk(for:)` reports partial bytes; `DownloadedModels.partialFiles()` lists the `.partial`
   files; `DownloadedModels.scanSnapshots()` lists MLX snapshots, complete or not.
+- **Checksums**: see [SHA-256 verification](#sha-256-verification). A file that does not match is deleted and the
+  download throws `ModelIntegrityError.checksumMismatch(path:expected:actual:)`.
 - **Free space**: `download` throws `ModelDownloadError.insufficientSpace` before writing when the remaining bytes
   plus 20 % do not fit.
 - **Errors** (`ModelDownloadError`): `unauthorized` (`X-Error-Code: GatedRepo`, or 401/403 with a token sent:
@@ -611,7 +637,76 @@ try ModelDownloads.delete(model)                                // file + .parti
   CDN a file redirects to. On iOS the item belongs to the app that saved it.
 - **Limits**: one download at a time per model (do not run it and `GGUFModelDownloader` on the same model at
   once); no background `URLSession`, so a transfer stops when the app is suspended and resumes from the partial
-  file later; files live in Caches, which iOS may purge when storage is low.
+  file later.
+
+### Where models are stored
+
+`ModelStorage.rootDirectory` is `<Application Support>/AuraLocal/Models`. Every AuraLocal download path writes
+under it: `ModelDownloads`, `GGUFModelDownloader` (the GGUF path of `ModelManager.load`), the MLX load path and
+AuraImageGen's Core ML folders. The first access creates the folder and sets `isExcludedFromBackup` on it, so
+multi-gigabyte weights stay out of iCloud and device backups (and Time Machine), and iOS does not purge them the
+way it purges Caches when storage runs low.
+
+- **iOS, sandboxed Mac app**: the folder is inside the app's container; apps do not share models.
+- **Non-sandboxed macOS process** (the `aura` CLI, an app without App Sandbox such as AuraExample, `swift test`):
+  `~/Library/Application Support/AuraLocal/Models`, shared by all of them, so one download serves each.
+- **Compiled Core ML caches** (`Caches/AuraLocal/CompiledModels`) and the remote catalog cache stay in Caches: both
+  are rebuilt when missing.
+
+Earlier versions downloaded into Caches (`<Caches>/models/…` and `<Caches>/huggingface/hub/…`). Those files keep
+working:
+
+- **Read fallback**: `Model.isDownloaded`, `Model.resolvedFileURL`, the backends, `ModelDownloads.download`,
+  `downloadFolder`, `completedFolder` and `CoreMLDiffusionModel.resourcesDirectory` use a finished copy in Caches
+  while the storage root has none. `DownloadedModels.scan()`, `scanSnapshots()` and `partialFiles()` list both
+  roots (`DownloadedModels.modelsDirectories`); `delete`, `deleteFolder`, `deleteRepo` and `bytesOnDisk` cover
+  both (in Caches an MLX delete removes only `snapshots/main` and the folders it leaves empty, since a Hugging Face
+  cache there may hold the same repo). New downloads always go to the storage root. `ModelDownloads.download`
+  resumes a GGUF `.partial` still in Caches by moving it into the storage root first, unless the root already has
+  a partial for that file; an MLX or Core ML `.partial` in Caches is not resumed (the file starts over in the
+  storage root) unless it was migrated first.
+- **Migration**: `ModelStorage.migrateLegacyDownloads()` moves `.gguf` and `.gguf.partial` files under
+  `<Caches>/models/` and AuraLocal's `snapshots/main` folders under `<Caches>/huggingface/hub/` to the same
+  relative paths in the storage root. Each item is renamed with `RENAME_EXCL`: never copied, never moved over
+  something already there, and a partial keeps its ETag record. A conflict or a failed rename (another volume,
+  permissions) leaves the item in Caches, where the read fallback still finds it; nothing is deleted. Another
+  tool's Hugging Face cache (`blobs/`, `refs/`, commit-named snapshots) is left alone. The returned
+  `ModelStorageMigration` lists `moved`, `conflicts` and `failures`; a second call finds nothing.
+- **When it runs**: by itself on the first access to the storage root in a sandboxed process (every iOS app). A
+  non-sandboxed macOS process never moves anything on its own, because `~/Library/Caches` is shared with every
+  other process of the user, older AuraLocal builds included; call `migrateLegacyDownloads()` yourself once nothing
+  else reads the old paths. The one exception is `ModelDownloads.download` resuming a GGUF, which moves that
+  file's partial.
+
+```swift
+let report = ModelStorage.migrateLegacyDownloads()   // non-sandboxed Mac app, once
+print(report.moved, report.conflicts, report.failures)
+```
+
+### SHA-256 verification
+
+Hugging Face publishes a SHA-256 for every LFS file (`lfs.oid`). Each download path AuraLocal runs compares it with
+the downloaded bytes before the file is moved into place:
+
+- `ModelDownloads.download` / `downloadFolder` and the MLX load path read it from the tree listing they already
+  fetch; GGUF downloads (`ModelDownloads` and `GGUFModelDownloader`) ask the paths-info API
+  (`POST /api/models/<repo>/paths-info/<revision>`) for the one file, at the revision of the download URL.
+- The file is hashed by streaming it in 4 MB reads (CryptoKit, bounded memory) once the last byte is on disk,
+  resumed downloads included, since a partial's hash cannot be carried across launches.
+- A mismatch deletes the file (the next download starts from zero) and throws
+  `ModelIntegrityError.checksumMismatch(path:expected:actual:)`. It is a separate enum, so exhaustive switches over
+  `ModelDownloadError` keep compiling.
+- A verified file carries an extended attribute (`dev.auralocal.sha256`: hash and size), which moves with it
+  through the migration. `ModelDownloads.verifiedSHA256(of:)` reads it; a resumed snapshot or folder download keeps
+  a finished file that has it without hashing it again, and hashes one that has not (a file of the right size that
+  hashes wrong is fetched again). Loading a model that is already downloaded neither hashes it nor asks the network.
+- Not verified: files kept in git rather than LFS (usually `config.json` and small tokenizer files; they come from
+  the same host as the hash, over TLS, and are size-checked), GGUFs from a non-Hugging Face `directURL`, files
+  downloaded before this check existed, and anything a user drops in place.
+  `ChunkedDownloader.download(from:to:fileName:expectedSHA256:onProgress:)` verifies only when you pass the hash.
+- Cost: on an M1 Pro, hashing ran at about 370 MB/s from a cold read and 750–1000 MB/s warm, so a 2 GB model
+  adds roughly 2–6 s to a download that takes minutes. On an iPhone it is likely in the same range or slower; that
+  is an estimate, not a measurement. Verification has no opt-out.
 
 ### Keeping downloads across launches
 
@@ -637,7 +732,8 @@ DownloadRecords.standard.remove(model)
 - Records are keyed by file (`gguf:<repo>/<file>`, `mlx:<repo>`), not by id: recording the same file under
   another id replaces the old record.
 - `registerDownloaded()` registers only what is fully on disk. It drops a record when neither the file nor a
-  `.partial` is left (Caches purged) and keeps it while a partial exists, so Resume stays sized.
+  `.partial` is left (deleted, or purged from Caches before migration) and keeps it while a partial exists, so
+  Resume stays sized.
 - A record for a file a registry entry already points at (same repo, format and GGUF filename) is not registered:
   that entry loads the same file, and a second id would list it twice.
 - `ModelRegistry.unregister(id:)` removes only models added with `register(_:)`; bundled and remote catalog
@@ -648,8 +744,7 @@ DownloadRecords.standard.remove(model)
   search result and recorded files it resumes, never a catalog or unsized model. The Model Finder's old
   `downloadRecords` key is copied over once.
 
-Limits: weights live in Caches, which iOS may purge (the record is then dropped at the next launch); no background
-`URLSession`; MLX can't run on the Simulator; on the Simulator "this device" is the Mac's memory; the extra EOS
+Limits: no background `URLSession`; MLX can't run on the Simulator; on the Simulator "this device" is the Mac's memory; the extra EOS
 tokens some MLX catalog entries get (`MLXBackend.configuration(for:)`) are keyed by catalog id, so an MLX repo
 added from search does not get them; a GGUF repo's `mmproj` projector is ignored, so GGUF repos always load as
 text.
@@ -760,23 +855,24 @@ let runnableUncensored = Model.uncensoredModels.filter { model in
 
 ## Model Cache Location
 
-Models are cached after download and reused across app launches:
+Models are kept after download and reused across app launches:
 
-| Format | Cache path (`<Caches>` is the app's Caches directory) |
+| Format | Path (`<root>` is `ModelStorage.rootDirectory`, `<Application Support>/AuraLocal/Models`) |
 |--------|-----------|
-| MLX | `<Caches>/huggingface/hub/models--<sanitized>/snapshots/main/` (loadable once `.complete` exists) |
-| GGUF | `<Caches>/models/<repoID>/<filename>.gguf` |
+| MLX | `<root>/huggingface/hub/models--<sanitized>/snapshots/main/` (loadable once `.complete` exists) |
+| GGUF | `<root>/models/<repoID>/<filename>.gguf` |
 
-An unfinished file sits next to its destination as `<file>.partial` until its size matches; see
-[Downloading without loading](#downloading-without-loading).
+An unfinished file sits next to its destination as `<file>.partial` until its size (and, for an LFS file, its
+SHA-256) matches; see [Downloading without loading](#downloading-without-loading). The same layout under Caches is
+where earlier versions downloaded; see [Where models are stored](#where-models-are-stored).
 
 ```swift
 // Check if a model is already downloaded
 if Model.qwen3_1_7b.isDownloaded {
-    print("Qwen3 1.7B is cached")   // MLX: Caches/huggingface/hub/models--…/snapshots/main
+    print("Qwen3 1.7B is downloaded")   // MLX: <root>/huggingface/hub/models--…/snapshots/main
 }
 let gguf = Model.llama3_1_8b_gguf
 if gguf.isDownloaded, let file = gguf.resolvedFileURL {
-    print("Cached at: \(file.path)")   // GGUF: Caches/models/<repoID>/<file>.gguf
+    print("Stored at: \(file.path)")    // GGUF: <root>/models/<repoID>/<file>.gguf
 }
 ```

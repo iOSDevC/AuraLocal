@@ -189,33 +189,33 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
         }
     }
 
-    /// Local cache directory where the model is downloaded.
-    /// Mirrors the `<org>/<repo>` folder structure used by mlx-swift.
+    /// The folder a GGUF download lands in: `<root>/models/<repoID>` under ``ModelStorage/rootDirectory``.
+    /// Mirrors the `<org>/<repo>` folder structure used by mlx-swift. Despite the name it is not in Caches.
     public var cacheDirectory: URL {
         DownloadedModels.modelsDirectory.appendingPathComponent(repoID)
     }
 
     /// The on-disk location of this model's GGUF weights: a user's own file loaded in place
-    /// (``localFileURL``), otherwise the download destination under ``cacheDirectory``. `nil` for MLX models
-    /// or a GGUF with no filename. Both the downloader and the llama.cpp backends resolve the file here.
+    /// (``localFileURL``), else the finished download under ``cacheDirectory``, else one an earlier version left
+    /// in Caches, else the download destination under ``cacheDirectory``. `nil` for MLX models or a GGUF with no
+    /// filename. Both the downloader and the llama.cpp backends resolve the file here.
     public var resolvedFileURL: URL? {
         if let localFileURL { return localFileURL }
         guard let ggufFilename else { return nil }
-        return cacheDirectory.appendingPathComponent(ggufFilename)
+        let destination = cacheDirectory.appendingPathComponent(ggufFilename)
+        return ModelStorage.firstFile("models/\(repoID)/\(ggufFilename)", in: ModelStorage.readRoots) ?? destination
     }
 
-    /// `true` when the snapshot is fully downloaded on disk.
+    /// `true` when the model is fully downloaded on disk, in ``ModelStorage/rootDirectory`` or in Caches.
     /// MLX models check the `.complete` marker at the `AuraHFDownloader` path
-    /// (`$Caches/huggingface/hub/models--<sanitized>/snapshots/main/.complete`);
-    /// GGUF models check `cacheDirectory` (legacy path).
+    /// (`<root>/huggingface/hub/models--<sanitized>/snapshots/main/.complete`);
+    /// GGUF models check ``resolvedFileURL``.
     public var isDownloaded: Bool {
         switch format {
         case .mlx:
             let sanitized = repoID.replacingOccurrences(of: "/", with: "--")
-            let marker = FileManager.default
-                .urls(for: .cachesDirectory, in: .userDomainMask)[0]
-                .appending(path: "huggingface/hub/models--\(sanitized)/snapshots/main/.complete")
-            return FileManager.default.fileExists(atPath: marker.path())
+            let marker = "huggingface/hub/models--\(sanitized)/snapshots/main/.complete"
+            return ModelStorage.firstFile(marker, in: ModelStorage.readRoots) != nil
         case .gguf:
             // Check the actual .gguf FILE (an in-place local file, or the download destination), not just the
             // cache dir: a partial/interrupted download leaves the dir (and a URLSession temp) but never the

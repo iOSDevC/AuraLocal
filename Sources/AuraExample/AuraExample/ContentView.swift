@@ -12,58 +12,58 @@ import AuraAgents
 // §3.2 sidebarAdaptable: Single TabView that adapts to sidebar (macOS/iPad),
 // bottom tab bar (iPhone), or ornament (visionOS).
 // §3.2.1 TabSection: Groups tabs logically for density-adaptive display.
+// Each section finds and downloads its own models; Models only manages what is on disk.
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
+    @AppStorage("auraExample.selectedTab") private var storedTab = AppTab.chat
+    /// Starts on the remembered tab, or on the one a `-auraExample.openTab <tab>` launch argument names. The
+    /// argument has its own key: one on the stored key would win every read and pin the tab.
+    @State private var selectedTab: AppTab
+    @State private var imageState = ImageGenState()
+
+    init() {
+        let defaults = UserDefaults.standard
+        let name = defaults.string(forKey: "auraExample.openTab") ?? defaults.string(forKey: "auraExample.selectedTab")
+        _selectedTab = State(initialValue: name.flatMap(AppTab.init(rawValue:)) ?? .chat)
+    }
 
     var body: some View {
-        TabView {
-            // MARK: - AI Chat section
-            Tab("Text", systemImage: "text.bubble") {
-                // Models sits under More on iPhone; this is the one-tap way to search.
-                TextChatTab(offersHuggingFaceSearch: true)
+        TabView(selection: $selectedTab) {
+            // iPhone shows the first four tabs in the bar; the rest sit under More.
+            Tab("Chat", systemImage: "bubble.left.and.text.bubble.right", value: AppTab.chat) {
+                ChatTab()
             }
 
-            Tab("Voice", systemImage: "mic.fill") {
+            Tab("Voice", systemImage: "mic.fill", value: AppTab.voice) {
                 VoiceTab()
             }
 
-            // MARK: - Documents section
-            TabSection("Documents") {
-                Tab("Library", systemImage: "doc.text.magnifyingglass") {
-                    DocsTab()
-                }
+            Tab("Image", systemImage: "photo.on.rectangle.angled", value: AppTab.image) {
+                ImageGenTab(state: imageState)
+            }
 
-                Tab("Vision", systemImage: "eye") {
-                    VisionTab()
-                }
-
-                Tab("OCR", systemImage: "doc.viewfinder") {
-                    OCRTab()
-                }
+            Tab("Library", systemImage: "doc.text.magnifyingglass", value: AppTab.library) {
+                DocsTab()
             }
 
             // MARK: - Tools section
             TabSection("Tools") {
-                Tab("Models", systemImage: "square.stack.3d.up") {
-                    ModelsTab()
+                Tab("Models", systemImage: "internaldrive", value: AppTab.models) {
+                    ModelsTab(imageState: imageState)
                 }
 
-                Tab("Hybrid", systemImage: "cloud.bolt") {
+                Tab("Hybrid", systemImage: "cloud.bolt", value: AppTab.hybrid) {
                     HybridTab()
                 }
 
-                Tab("ML", systemImage: "brain") {
+                Tab("ML", systemImage: "brain", value: AppTab.ml) {
                     MLToolsTab()
-                }
-
-                Tab("Image", systemImage: "photo.on.rectangle.angled") {
-                    ImageGenTab()
                 }
 
                 // AgentCrew — requires iOS 26+ with Apple Intelligence
                 if #available(iOS 26, macOS 26, *) {
-                    Tab("Agents", systemImage: "cpu") {
+                    Tab("Agents", systemImage: "cpu", value: AppTab.agents) {
                         AgentCrewInlineView()
                             .environmentObject(appState)
                     }
@@ -71,7 +71,12 @@ struct ContentView: View {
             }
         }
         .tabViewStyle(.sidebarAdaptable)
+        .onChange(of: selectedTab) { _, tab in storedTab = tab }
     }
+}
+
+enum AppTab: String {
+    case chat, voice, image, library, models, hybrid, ml, agents
 }
 
 // MARK: - AgentCrew Inline View
@@ -123,118 +128,6 @@ struct AgentCrewInlineView: View {
             .sheet(item: $consentGate.pending) { request in
                 ConsentSheet(request: request, gate: consentGate)
             }
-        }
-    }
-}
-
-// MARK: - Models Tab
-
-struct ModelsTab: View {
-    private let profile = HardwareProfile.current()
-    @State private var testTarget: DomainTestTarget?
-    @State private var showsSearch = false
-    @State private var showsDownloads = false
-
-    /// Only show models that can actually run on this device.
-    private var runnableText: [Model] { runnable(Model.textModels) }
-    private var runnableVision: [Model] { runnable(Model.visionModels) }
-    private var runnableOCR: [Model] { runnable(Model.specializedModels) }
-
-    /// Models added from Hugging Face are managed under Downloads, not in the catalog sections.
-    private func runnable(_ models: [Model]) -> [Model] {
-        let added = Set(DownloadRecords.standard.models.map(\.id))
-        return models.filter {
-            !added.contains($0.id) && HardwareAnalyzer.assess($0, profile: profile).fitLevel.isRunnable
-        }
-    }
-
-    private func color(for domain: Model.Domain) -> Color {
-        switch domain {
-        case .code:     .purple
-        case .security: .red
-        case .finance:  .mint
-        case .medicine: .pink
-        }
-    }
-
-    var body: some View {
-        // Read so the sections are rebuilt when a download finishes or a model is deleted.
-        let _ = ModelDownloadCenter.shared.revision
-        NavigationStack {
-            List {
-                Section {
-                    Button("Search Hugging Face", systemImage: "magnifyingglass") { showsSearch = true }
-                    Button("Downloads", systemImage: "arrow.down.circle") { showsDownloads = true }
-                } header: {
-                    Text("Hugging Face")
-                } footer: {
-                    Text("Search shows what runs on this device. Downloaded models come first in the Text and Vision pickers.")
-                }
-
-                // Domain-specialized picks (code / security / finance / medicine).
-                ForEach(Model.Domain.allCases) { domain in
-                    let models = runnable(Model.models(in: domain))
-                    if !models.isEmpty {
-                        ModelSection(title: domain.displayName, icon: domain.systemImage, color: color(for: domain), models: models) { model in
-                            testTarget = DomainTestTarget(model: model, domain: domain)
-                        }
-                    }
-                }
-
-                if !runnableOCR.isEmpty {
-                    ModelSection(title: "Specialized OCR", icon: "doc.viewfinder", color: .orange, models: runnableOCR)
-                }
-                if !runnableVision.isEmpty {
-                    ModelSection(title: "Vision",          icon: "eye",            color: .blue,   models: runnableVision)
-                }
-                if !runnableText.isEmpty {
-                    ModelSection(title: "Text",            icon: "text.bubble",    color: .green,  models: runnableText)
-                }
-
-                // Device info
-                Section {
-                    LabeledContent("Device", value: profile.deviceName)
-                        .font(.subheadline)
-                    LabeledContent("Memory", value: String(format: "%.1f GB", profile.totalMemoryGB))
-                        .font(.subheadline)
-                    LabeledContent("Available") {
-                        // Distinguish a real reading from the estimate. The OS reports "unknown"
-                        // exactly when the process is at its jetsam limit, and every safety check
-                        // treats that as pressure — so a rosy number here without the caveat would
-                        // contradict what the engine is actually doing.
-                        if let available = HardwareProfile.availableMemoryBytes() {
-                            Text(String(format: "%.1f GB", Double(available) / 1_073_741_824))
-                        } else {
-                            VStack(alignment: .trailing, spacing: 2) {
-                                Text(String(format: "~%.1f GB", profile.availableMemoryGB))
-                                Text("estimated — OS reported unknown")
-                                    .font(.caption2).foregroundStyle(.orange)
-                            }
-                        }
-                    }
-                    .font(.subheadline)
-                    #if os(iOS)
-                    // What fit verdicts are judged against on iOS: it does not shrink while a model is loaded.
-                    if let limit = HardwareProfile.memoryLimitBytes() {
-                        LabeledContent("App memory limit",
-                                       value: String(format: "%.1f GB", Double(limit) / 1_073_741_824))
-                            .font(.subheadline)
-                    }
-                    #endif
-                    LabeledContent("Compatible models", value: "\(runnableText.count + runnableVision.count + runnableOCR.count)")
-                        .font(.subheadline)
-                } header: {
-                    Label("Device", systemImage: "iphone")
-                } footer: {
-                    Text("Only models compatible with this device are shown. Download uses parallel chunks for large files.")
-                }
-            }
-            .navigationTitle("Models")
-            .sheet(item: $testTarget) { target in
-                DomainTestView(model: target.model, domain: target.domain)
-            }
-            .sheet(isPresented: $showsSearch) { HFSearchScreen() }
-            .sheet(isPresented: $showsDownloads) { DownloadsScreen() }
         }
     }
 }

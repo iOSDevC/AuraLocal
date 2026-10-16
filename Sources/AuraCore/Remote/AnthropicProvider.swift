@@ -10,6 +10,8 @@ public struct AnthropicProvider: RemoteLLMProvider {
     private let apiKey: String
     private let baseURL: URL
     private let version: String
+    /// Tests swap in a session with a stub `URLProtocol`.
+    var makeSession: @Sendable () -> URLSession = { SSELineStream.makeSession() }
 
     public init(
         apiKey: String,
@@ -26,7 +28,7 @@ public struct AnthropicProvider: RemoteLLMProvider {
             let task = Task {
                 do {
                     let urlRequest = try makeRequest(request)
-                    let session = SSELineStream.makeSession()
+                    let session = makeSession()
                     defer { session.invalidateAndCancel() }
                     var inputTokens: Int?
                     for try await line in SSELineStream.lines(for: urlRequest, session: session) {

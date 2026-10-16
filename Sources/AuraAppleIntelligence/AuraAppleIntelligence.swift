@@ -128,7 +128,7 @@ public final class AISession: @unchecked Sendable {
         options: GenerationOptions = GenerationOptions()
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let responseStream = session.streamResponse(to: prompt, options: options)
                     var previousContent = ""
@@ -145,6 +145,8 @@ public final class AISession: @unchecked Sendable {
                     continuation.finish(throwing: self.mapGenerationError(error))
                 }
             }
+            // A session takes one request at a time; an abandoned response would refuse the next one.
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
@@ -175,7 +177,7 @@ public final class AISession: @unchecked Sendable {
         options: GenerationOptions = GenerationOptions()
     ) -> AsyncThrowingStream<T.PartiallyGenerated, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let stream = session.streamResponse(
                         to: prompt,
@@ -191,6 +193,7 @@ public final class AISession: @unchecked Sendable {
                     continuation.finish(throwing: self.mapGenerationError(error))
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 
@@ -314,7 +317,7 @@ public final class AIPipeline: @unchecked Sendable {
         onStep: (@Sendable (String, String) -> Void)? = nil
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     self.stepOutputs = []
                     var current = input
@@ -338,6 +341,7 @@ public final class AIPipeline: @unchecked Sendable {
                     continuation.finish(throwing: error)
                 }
             }
+            continuation.onTermination = { _ in task.cancel() }
         }
     }
 }

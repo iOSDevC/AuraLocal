@@ -343,6 +343,62 @@ final class ModelDownloadsFolderTests {
         #expect(!FileManager.default.fileExists(atPath: ModelDownloads.repoFolder(repoID: repo, root: root).path))
         #expect(!ModelDownloads.isFolderComplete(at: directory, revision: Self.revision))
     }
+
+    // MARK: Delete one folder
+
+    /// A finished folder written straight to disk: a component, both markers and a partial file.
+    private func makeLocalFolder(_ repoID: String, _ folder: String) throws -> URL {
+        let directory = ModelDownloads.localFolder(repoID: repoID, folder: folder, root: root)
+        try FileManager.default.createDirectory(at: directory.appending(path: "Unet.mlmodelc"),
+                                                withIntermediateDirectories: true)
+        try Data(count: 8).write(to: directory.appending(path: "Unet.mlmodelc/model.mil"))
+        try Data(count: 4).write(to: HubFileTransfer.partialURL(for: directory.appending(path: "vocab.json")))
+        try Data(Self.revision.utf8).write(to: directory.appendingPathComponent(ModelDownloads.revisionMarker))
+        try Data(Self.revision.utf8).write(to: directory.appendingPathComponent(ModelDownloads.completeMarker))
+        return directory
+    }
+
+    @Test func deleteFolderKeepsSiblingFolders() throws {
+        let repo = "stub/two-folders"
+        let removed = try makeLocalFolder(repo, "original/compiled")
+        let kept = try makeLocalFolder(repo, "split_einsum_v2/compiled")
+
+        try ModelDownloads.deleteFolder(repoID: repo, folder: "original/compiled", root: root)
+
+        #expect(!FileManager.default.fileExists(atPath: removed.path))
+        #expect(!FileManager.default.fileExists(atPath: removed.deletingLastPathComponent().path),
+                "the emptied parent goes too")
+        #expect(ModelDownloads.isFolderComplete(at: kept, revision: Self.revision))
+        #expect(FileManager.default.fileExists(atPath: kept.appending(path: "Unet.mlmodelc/model.mil").path))
+    }
+
+    @Test func deleteFolderRemovesTheRepoWithItsLastFolderAndKeepsTheHub() throws {
+        let repo = "stub/last-folder"
+        let directory = try makeLocalFolder(repo, "compiled")
+        let other = try makeLocalFolder("stub/neighbour", "compiled")
+
+        try ModelDownloads.deleteFolder(repoID: repo, folder: "compiled", root: root)
+
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+        #expect(!FileManager.default.fileExists(atPath: ModelDownloads.repoFolder(repoID: repo, root: root).path))
+        #expect(FileManager.default.fileExists(atPath: other.path))
+        let hub = ModelDownloads.repoFolder(repoID: repo, root: root).deletingLastPathComponent()
+        #expect(FileManager.default.fileExists(atPath: hub.path))
+    }
+
+    @Test func deleteFolderRejectsUnsafeFoldersAndIgnoresAbsentOnes() throws {
+        for bad in ["", "..", "a/../..", "/abs/compiled"] {
+            #expect(throws: ModelDownloadError.self) {
+                try ModelDownloads.deleteFolder(repoID: "stub/unsafe", folder: bad, root: self.root)
+            }
+        }
+        #expect(throws: ModelDownloadError.self) {
+            try ModelDownloads.deleteFolder(repoID: "../..", folder: "compiled", root: self.root)
+        }
+        try ModelDownloads.deleteFolder(repoID: "stub/absent", folder: "compiled", root: root)
+        let absent = ModelDownloads.repoFolder(repoID: "stub/absent", root: root)
+        #expect(!FileManager.default.fileExists(atPath: absent.path))
+    }
 }
 
 // MARK: - Stubs

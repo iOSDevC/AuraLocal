@@ -24,7 +24,8 @@ final class LlamaCppBackend: InferenceBackend {
     /// background; the engine waits for it before the next turn touches the context.
     private let decodeLock = DecodeGate()
     private let model: Model
-    private let temperature: Float
+    /// Fixed at load: the sampler chain is built with the context. Dedicated constrained clients use it too.
+    let sampling: SamplingSettings
     private let tools: [any LLMTool]
     private(set) var lastGenerationStats: GenerationStats?
 
@@ -36,9 +37,9 @@ final class LlamaCppBackend: InferenceBackend {
 
     // MARK: - Init
 
-    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = []) {
+    init(model: Model, sampling: SamplingSettings? = nil, tools: [any LLMTool] = []) {
         self.model = model
-        self.temperature = temperature ?? 0.7
+        self.sampling = sampling ?? .defaults(for: model)
         self.tools = tools
     }
 
@@ -51,8 +52,8 @@ final class LlamaCppBackend: InferenceBackend {
             throw AuraError.invalidResponse("Model \(model.displayName) has no GGUF filename")
         }
 
-        // In-place user file (localFileURL), else the download destination under cacheDirectory.
-        let ggufURL = model.localFileURL ?? model.cacheDirectory.appendingPathComponent(filename)
+        // In-place user file, else the download (storage root first, then a copy left in Caches).
+        let ggufURL = model.resolvedFileURL ?? model.cacheDirectory.appendingPathComponent(filename)
 
         guard FileManager.default.fileExists(atPath: ggufURL.path) else {
             throw AuraError.invalidResponse(
@@ -62,13 +63,7 @@ final class LlamaCppBackend: InferenceBackend {
 
         onProgress("Loading \(model.displayName)...")
 
-        let parameter = LlamaClient.Parameter(
-            context: contextSize(),
-            numberOfThreads: threadCount(),
-            batch: batchSize(),
-            temperature: temperature,
-            topP: 0.95
-        )
+        let parameter = loadParameter()
 
         // With `tools` the engine runs LocalLLMClient's tool-calling loop, so the generate calls below invoke tools
         // and feed their results back transparently.
@@ -110,8 +105,8 @@ final class LlamaCppBackend: InferenceBackend {
             context: window,
             numberOfThreads: threadCount(),
             batch: min(window, 2048),
-            temperature: temperature,
-            topP: 0.95,
+            temperature: sampling.temperature,
+            topP: sampling.topP,
             options: .init(responseFormat: constraint.llamaFormat)
         )
 
@@ -272,6 +267,17 @@ final class LlamaCppBackend: InferenceBackend {
     }
 
     // MARK: - Platform Configuration
+
+    /// The loaded context's parameters. llama.cpp's temperature sampler keeps only the top token at 0, so 0 is greedy.
+    func loadParameter() -> LlamaClient.Parameter {
+        LlamaClient.Parameter(
+            context: contextSize(),
+            numberOfThreads: threadCount(),
+            batch: batchSize(),
+            temperature: sampling.temperature,
+            topP: sampling.topP
+        )
+    }
 
     /// KV-aware window for THIS model — a hardcoded platform tier used to collapse
     /// every model to 2048 (iOS) / 8192 (macOS) no matter what it supported.

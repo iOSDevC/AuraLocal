@@ -55,7 +55,7 @@ public struct DiffusionRequest: Sendable, Equatable {
 
 /// Core ML compute units for the pipeline. There is no CPU-only option: on the CPU this model's latents are NaN
 /// from the first step, so every image comes out black.
-public enum DiffusionComputeUnits: String, Sendable, CaseIterable {
+public enum DiffusionComputeUnits: String, Sendable, CaseIterable, Codable {
     /// `.cpuAndNeuralEngine`
     case neuralEngine
     /// `.cpuAndGPU`

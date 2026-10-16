@@ -35,6 +35,7 @@ public extension AuraLocal {
         maxContextTokens: Int = 3072,
         store: ConversationStore = .shared
     ) async throws -> String {
+        await historyInFlight?.value
 
         // Optionally persist a system prompt on first use
         if let sys = systemPrompt {
@@ -88,6 +89,16 @@ public extension AuraLocal {
     /// The assistant turn is persisted when the stream finishes successfully. When it finishes with an error, the
     /// transcript is settled as in ``chat(_:in:systemPrompt:maxTokens:maxContextTokens:store:)``.
     ///
+    /// Stopping early cancels the generation: cancelling the task that iterates, or leaving the loop once nothing else
+    /// holds the stream. A stream kept in a variable or property is cancelled only when it is released, so stop one
+    /// by cancelling its task. As with a ``GenerationInterrupted``, the text generated until then is saved as the
+    /// assistant turn, and the user turn is removed when there was none. Those writes land after the loop has ended,
+    /// so the next `chat(_:in:)` or `stream(_:in:)` on this instance waits for them, and for any stream still
+    /// generating, before it stores its prompt.
+    ///
+    /// On a GGUF instance with tools the reply is cut and stored at once, but llama.cpp keeps decoding until the end
+    /// of generation or a full context window, and the next turn on that instance waits for it.
+    ///
     /// ```swift
     /// for try await token in llm.stream("Tell me more", in: conv.id) {
     ///     print(token, terminator: "")
@@ -101,74 +112,85 @@ public extension AuraLocal {
         maxContextTokens: Int = 3072,
         store: ConversationStore = .shared
     ) -> AsyncThrowingStream<String, Error> {
+        let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
+        let prior = historyInFlight
+        let task = Task { @MainActor in
+            await prior?.value
+            do {
+                // A consumer gone before anything was stored leaves nothing to settle.
+                try Task.checkCancellation()
 
-        AsyncThrowingStream { continuation in
-            Task { @MainActor in
+                // System prompt (once)
+                if let sys = systemPrompt {
+                    let existing = try await store.turns(for: conversationID)
+                    if !existing.contains(where: { $0.role == .system }) {
+                        try await store.appendTurn(Turn(
+                            conversationID: conversationID,
+                            role: .system,
+                            content: sys
+                        ))
+                    }
+                }
+
+                // Persist user turn
+                let userTurn = try await store.appendTurn(Turn(
+                    conversationID: conversationID,
+                    role: .user,
+                    content: prompt
+                ))
+
+                // Build full multi-turn messages from the context window
+                let context = try await store.contextWindow(
+                    for: conversationID,
+                    maxTokens: maxContextTokens
+                )
+                let messages = context.map { turn -> [String: String] in
+                    ["role": turn.role.rawValue, "content": turn.content]
+                }
+
+                var fullReply = ""
+                var lastLength = 0
+                var failure: (any Error)?
                 do {
-                    // System prompt (once)
-                    if let sys = systemPrompt {
-                        let existing = try await store.turns(for: conversationID)
-                        if !existing.contains(where: { $0.role == .system }) {
-                            try await store.appendTurn(Turn(
-                                conversationID: conversationID,
-                                role: .system,
-                                content: sys
-                            ))
+                    _ = try await engine.generate(
+                        messages: messages,
+                        maxTokens: maxTokens
+                    ) { @MainActor partial in
+                        let newText = String(partial.dropFirst(lastLength))
+                        lastLength = partial.count
+                        if !newText.isEmpty {
+                            fullReply += newText
+                            continuation.yield(newText)
                         }
                     }
+                } catch {
+                    failure = error
+                }
 
-                    // Persist user turn
-                    let userTurn = try await store.appendTurn(Turn(
-                        conversationID: conversationID,
-                        role: .user,
-                        content: prompt
-                    ))
-
-                    // Build context
-                    let context = try await store.contextWindow(
-                        for: conversationID,
-                        maxTokens: maxContextTokens
-                    )
-
-                    // Build full multi-turn messages from context window
-                    let messages = context.map { turn -> [String: String] in
-                        ["role": turn.role.rawValue, "content": turn.content]
-                    }
-
-                    // Stream with full conversational context
-                    var fullReply = ""
-                    var lastLength = 0
-
-                    do {
-                        _ = try await engine.generate(
-                            messages: messages,
-                            maxTokens: maxTokens
-                        ) { @MainActor partial in
-                            let newText = String(partial.dropFirst(lastLength))
-                            lastLength = partial.count
-                            if !newText.isEmpty {
-                                fullReply += newText
-                                continuation.yield(newText)
-                            }
-                        }
-                    } catch {
-                        await Self.settleFailedTurn(userTurn, error: error, store: store)
-                        throw error
-                    }
-
-                    // Persist completed assistant turn
+                // Only onTermination cancels this task. Backends differ on whether a cancelled decode returns or
+                // throws, so the consumer's stop is read here rather than from the error.
+                if Task.isCancelled {
+                    await Self.settleStoppedTurn(userTurn, partialText: fullReply, store: store)
+                } else if let failure {
+                    await Self.settleFailedTurn(userTurn, error: failure, store: store)
+                    throw failure
+                } else {
                     try await store.appendTurn(Turn(
                         conversationID: conversationID,
                         role: .assistant,
                         content: fullReply
                     ))
-
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
                 }
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
             }
         }
+        historyInFlight = task
+        continuation.onTermination = { termination in
+            if case .cancelled = termination { task.cancel() }
+        }
+        return stream
     }
 
     // MARK: - Context-aware one-liner
@@ -259,14 +281,21 @@ public extension AuraLocal {
     /// Keeps the transcript one assistant turn per user turn after a failed generation. Store errors are dropped:
     /// the caller is already throwing the generation's error.
     private static func settleFailedTurn(_ userTurn: Turn, error: any Error, store: ConversationStore) async {
-        if let stop = error as? GenerationInterrupted, !stop.partialText.isEmpty {
+        let partialText = (error as? GenerationInterrupted)?.partialText ?? ""
+        await settleStoppedTurn(userTurn, partialText: partialText, store: store)
+    }
+
+    /// Saves `partialText` as the reply, or removes the user turn when nothing was generated. Store errors are
+    /// dropped; after a stop nobody is left to receive them.
+    private static func settleStoppedTurn(_ userTurn: Turn, partialText: String, store: ConversationStore) async {
+        if partialText.isEmpty {
+            try? await store.deleteTurn(id: userTurn.id)
+        } else {
             _ = try? await store.appendTurn(Turn(
                 conversationID: userTurn.conversationID,
                 role: .assistant,
-                content: stop.partialText
+                content: partialText
             ))
-        } else {
-            try? await store.deleteTurn(id: userTurn.id)
         }
     }
 

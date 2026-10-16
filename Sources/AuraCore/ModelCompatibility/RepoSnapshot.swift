@@ -41,11 +41,13 @@ public struct HFRepoInfo: Sendable, Equatable {
     /// HF's own GGUF summary, a fallback when the header cannot be read.
     public let ggufArchitecture: String?
     public let ggufContextLength: Int?
+    /// `sha`: the commit the listing describes, so later fetches can be pinned to it.
+    public let revision: String?
 
     public init(repoID: String, files: [RepoFile], tags: [String] = [], pipelineTag: String? = nil,
                 libraryName: String? = nil, gatedMode: String? = nil,
                 licenseID: String? = nil, licenseName: String? = nil, licenseLink: String? = nil,
-                ggufArchitecture: String? = nil, ggufContextLength: Int? = nil) {
+                ggufArchitecture: String? = nil, ggufContextLength: Int? = nil, revision: String? = nil) {
         self.repoID = repoID
         self.files = files
         self.tags = tags
@@ -57,6 +59,7 @@ public struct HFRepoInfo: Sendable, Equatable {
         self.licenseLink = licenseLink
         self.ggufArchitecture = ggufArchitecture
         self.ggufContextLength = ggufContextLength
+        self.revision = revision
     }
 
     /// Decode the model-info payload. Pure, so fixtures can drive it.
@@ -78,7 +81,8 @@ public struct HFRepoInfo: Sendable, Equatable {
             licenseName: card["license_name"] as? String,
             licenseLink: card["license_link"] as? String,
             ggufArchitecture: gguf["architecture"] as? String,
-            ggufContextLength: gguf["context_length"] as? Int)
+            ggufContextLength: gguf["context_length"] as? Int,
+            revision: object["sha"] as? String)
     }
 
     private static func file(from sibling: [String: Any]) -> RepoFile? {

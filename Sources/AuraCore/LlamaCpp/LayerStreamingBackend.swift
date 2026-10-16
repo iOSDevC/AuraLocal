@@ -25,7 +25,7 @@ final class LayerStreamingBackend: InferenceBackend {
     /// Turns would otherwise overlap on the one context.
     private let decodeLock = DecodeGate()
     private let model: Model
-    private let temperature: Float
+    let sampling: SamplingSettings
     private let memoryManager: MemoryBudgetManager
     private let tools: [any LLMTool]
     private(set) var lastGenerationStats: GenerationStats?
@@ -36,9 +36,9 @@ final class LayerStreamingBackend: InferenceBackend {
 
     // MARK: - Init
 
-    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = []) {
+    init(model: Model, sampling: SamplingSettings? = nil, tools: [any LLMTool] = []) {
         self.model = model
-        self.temperature = temperature ?? 0.7
+        self.sampling = sampling ?? .defaults(for: model)
         self.memoryManager = MemoryBudgetManager(safetyMarginMB: 250)
         self.tools = tools
     }
@@ -52,8 +52,8 @@ final class LayerStreamingBackend: InferenceBackend {
             throw AuraError.invalidResponse("Model \(model.displayName) has no GGUF filename")
         }
 
-        // In-place user file (localFileURL), else the download destination under cacheDirectory.
-        let ggufURL = model.localFileURL ?? model.cacheDirectory.appendingPathComponent(filename)
+        // In-place user file, else the download (storage root first, then a copy left in Caches).
+        let ggufURL = model.resolvedFileURL ?? model.cacheDirectory.appendingPathComponent(filename)
 
         guard FileManager.default.fileExists(atPath: ggufURL.path) else {
             throw AuraError.invalidResponse(
@@ -63,18 +63,7 @@ final class LayerStreamingBackend: InferenceBackend {
 
         onProgress("Preparing \(model.displayName) (streaming mode)...")
 
-        // Configure for minimal memory: small context, CPU-only, mmap
-        let parameter = LlamaClient.Parameter(
-            context: adaptiveContextLength(),
-            numberOfThreads: streamingThreadCount(),
-            // Streaming runs on memory-constrained devices and pages weights from disk, so a huge
-            // prefill chunk buys little and lengthens the window where memory can spike. Modest
-            // bump over the 512 default, still bounded by the (already small) context.
-            batch: min(adaptiveContextLength(), 1024),
-            temperature: temperature,
-            topP: 0.95
-        )
-
+        let parameter = loadParameter()
         engine = try await GGUFTurnEngines.load(url: ggufURL, parameter: parameter, tools: tools)
 
         onProgress("\(model.displayName) ready (streaming mode)")
@@ -175,6 +164,20 @@ final class LayerStreamingBackend: InferenceBackend {
     }
 
     // MARK: - Adaptive Configuration
+
+    /// Configured for minimal memory: small context, CPU-only, mmap.
+    func loadParameter() -> LlamaClient.Parameter {
+        LlamaClient.Parameter(
+            context: adaptiveContextLength(),
+            numberOfThreads: streamingThreadCount(),
+            // Streaming runs on memory-constrained devices and pages weights from disk, so a huge
+            // prefill chunk buys little and lengthens the window where memory can spike. Modest
+            // bump over the 512 default, still bounded by the (already small) context.
+            batch: min(adaptiveContextLength(), 1024),
+            temperature: sampling.temperature,
+            topP: sampling.topP
+        )
+    }
 
     private func adaptiveContextLength() -> Int {
         let base: Int

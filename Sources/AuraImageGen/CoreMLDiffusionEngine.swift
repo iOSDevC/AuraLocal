@@ -99,7 +99,7 @@ public final class CoreMLDiffusionEngine: Sendable {
         if let unavailability { throw unavailability }
         guard let makeRunner else { throw OnDeviceImageGenError.unsupportedPlatform }
         let resources = resources
-        // Re-checked every call: iOS can purge Caches between runs.
+        // Re-checked every call: the files can be deleted between runs.
         guard model.isDownloaded(at: resources) else {
             throw OnDeviceImageGenError.modelNotDownloaded(sizeBytes: model.approximateDownloadBytes)
         }

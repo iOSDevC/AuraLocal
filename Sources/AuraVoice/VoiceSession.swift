@@ -113,14 +113,18 @@ public final class VoiceSession: NSObject, ObservableObject {
     /// Request microphone + speech recognition permissions.
     /// Call once on app launch before `startListening()`.
     public func requestPermissions() async -> Bool {
+        // @Sendable keeps the callbacks off the main actor: the frameworks call them on a background queue, and a
+        // main-actor closure there trips Swift 6's isolation check and crashes the app.
         let speechStatus = await withCheckedContinuation { cont in
-            SFSpeechRecognizer.requestAuthorization { cont.resume(returning: $0) }
+            SFSpeechRecognizer.requestAuthorization { @Sendable status in cont.resume(returning: status) }
         }
         guard speechStatus == .authorized else { return false }
 
         #if os(iOS)
         let granted = await withCheckedContinuation { cont in
-            AVAudioSession.sharedInstance().requestRecordPermission { cont.resume(returning: $0) }
+            AVAudioSession.sharedInstance().requestRecordPermission { @Sendable granted in
+                cont.resume(returning: granted)
+            }
         }
         return granted
         #else
@@ -199,25 +203,41 @@ public final class VoiceSession: NSObject, ObservableObject {
         let inputNode = audioEngine.inputNode
         let format    = inputNode.outputFormat(forBus: 0)
 
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            self?.recognitionRequest?.append(buffer)
-        }
+        Self.feed(request, from: inputNode, format: format)
 
         audioEngine.prepare()
         try audioEngine.start()
 
-        recognitionTask = speechRecognizer.recognitionTask(with: request) { [weak self] result, error in
-            guard let self else { return }
+        recognitionTask = Self.recognize(request, with: speechRecognizer) { [weak self] text, failed in
             Task { @MainActor in
-                if let result {
-                    self.transcript = result.bestTranscription.formattedString
+                guard let self else { return }
+                if let text {
+                    self.transcript = text
                     self.resetSilenceTimer()
                 }
-                if error != nil, !self.transcript.isEmpty {
+                if failed, !self.transcript.isEmpty {
                     self.finishRecording()
                     await self.runPipeline()
                 }
             }
+        }
+    }
+
+    // The audio tap runs on the render thread and recognition results arrive on a background queue. Closures made
+    // in these nonisolated helpers carry no main-actor isolation, which Swift 6 would assert on and crash.
+    private nonisolated static func feed(_ request: SFSpeechAudioBufferRecognitionRequest, from node: AVAudioInputNode,
+                                         format: AVAudioFormat) {
+        node.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            request.append(buffer)
+        }
+    }
+
+    private nonisolated static func recognize(_ request: SFSpeechAudioBufferRecognitionRequest,
+                                              with recognizer: SFSpeechRecognizer,
+                                              onUpdate: @escaping @Sendable (String?, Bool) -> Void)
+        -> SFSpeechRecognitionTask {
+        recognizer.recognitionTask(with: request) { result, error in
+            onUpdate(result?.bestTranscription.formattedString, error != nil)
         }
     }
 

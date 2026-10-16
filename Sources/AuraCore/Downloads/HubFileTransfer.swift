@@ -8,6 +8,15 @@ struct RemoteFile: Sendable, Equatable {
     let path: String
     /// LFS size for LFS files, plain size otherwise; `nil` when the listing had none.
     let size: Int64?
+    /// The LFS SHA-256 (`lfs.oid`); `nil` for a file kept in git or a listing without it.
+    var sha256: String? = nil
+}
+
+/// A file on Hugging Face as its `resolve` URL names it.
+struct HubFileReference: Sendable, Equatable {
+    let repoID: String
+    let revision: String
+    let path: String
 }
 
 /// Resumable Hugging Face file transfer shared by the GGUF and MLX download paths.
@@ -16,7 +25,8 @@ struct RemoteFile: Sendable, Equatable {
 /// app suspension and relaunch; the next call continues from its size. The partial records the ETag of the bytes
 /// it holds, and a chunk with another ETag restarts it from zero, so a file re-uploaded under the same name between
 /// cancel and resume is never spliced. The file is moved into place only when its size matches, so a failed or
-/// refused request never becomes a model file.
+/// refused request never becomes a model file. When the caller passes the published SHA-256, the finished partial is
+/// hashed first and a mismatch deletes it instead.
 struct HubFileTransfer: Sendable {
     static let chunkSize: Int64 = 32 * 1024 * 1024
     static let maxChunkAttempts = 6
@@ -83,7 +93,7 @@ struct HubFileTransfer: Sendable {
         }
         return try await treeEntries(at: url, repoID: repoID, path: "")
             .filter { $0.type == "file" && !$0.path.contains("/") }
-            .map { RemoteFile(path: $0.path, size: $0.largeFile?.size ?? $0.size) }
+            .map(\.listedFile)
     }
 
     /// Every file under `folder` of `repoID` at `revision`, recursively, with repo-relative paths. The paths come
@@ -94,11 +104,30 @@ struct HubFileTransfer: Sendable {
         }
         return try await treeEntries(at: url, repoID: repoID, path: folder)
             .filter { $0.type == "file" }
-            .map { RemoteFile(path: $0.path, size: $0.largeFile?.size ?? $0.size) }
+            .map(\.listedFile)
+    }
+
+    /// The SHA-256 Hugging Face publishes for the file `url` resolves to, from the paths-info API at the URL's
+    /// revision. `nil` for a URL outside Hugging Face, a file kept in git rather than LFS, or one the revision does
+    /// not list (the download then fails on its own). Errors throw like the listing's.
+    func publishedSHA256(of url: URL) async throws -> String? {
+        guard let file = Self.hubFile(at: url) else { return nil }
+        guard let endpoint = Self.pathsInfoURL(repoID: file.repoID, revision: file.revision) else {
+            throw ModelDownloadError.unsupported("Not a Hugging Face repository id: \(file.repoID)")
+        }
+        var request = auth.request(for: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["paths": [file.path]])
+        let listed = try await entries(for: request, repoID: file.repoID, path: file.path)
+        return listed.first { $0.path == file.path }?.listedFile.sha256
     }
 
     private func treeEntries(at url: URL, repoID: String, path: String) async throws -> [TreeEntry] {
-        let request = auth.request(for: url)
+        try await entries(for: auth.request(for: url), repoID: repoID, path: path)
+    }
+
+    private func entries(for request: URLRequest, repoID: String, path: String) async throws -> [TreeEntry] {
         let (data, response) = try await load(request, onBytes: nil)
         guard let http = response as? HTTPURLResponse else { throw ModelDownloadError.http(status: 0) }
         if let failure = ModelDownloadError(response: http, request: request, repoID: repoID, path: path) {
@@ -140,8 +169,11 @@ struct HubFileTransfer: Sendable {
     // MARK: Transfer
 
     /// Downloads `url` into `destination`, resuming from `<destination>.partial`. `progress` receives the
-    /// bytes of this file on disk so far. On cancellation the partial file is kept.
-    func fetch(_ url: URL, to destination: URL, expectedSize: Int64, repoID: String, path: String,
+    /// bytes of this file on disk so far. On cancellation the partial file is kept. With `expectedSHA256` the
+    /// finished partial is hashed before the move and recorded as verified; a mismatch deletes it and throws
+    /// ``ModelIntegrityError/checksumMismatch(path:expected:actual:)``.
+    func fetch(_ url: URL, to destination: URL, expectedSize: Int64, expectedSHA256: String? = nil,
+               repoID: String, path: String,
                progress: @escaping @Sendable (Int64) -> Void) async throws {
         let fileManager = FileManager.default
         let partial = Self.partialURL(for: destination)
@@ -175,9 +207,13 @@ struct HubFileTransfer: Sendable {
             Self.log.error("\(path, privacy: .public): \(finalSize) bytes, expected \(expectedSize)")
             throw ModelDownloadError.sizeMismatch(path: path, expected: expectedSize, actual: finalSize)
         }
+        if let expectedSHA256 {
+            try FileIntegrity.verify(partial, expectedSHA256: expectedSHA256, path: path)
+        }
         try? fileManager.removeItem(at: destination)
         try fileManager.moveItem(at: partial, to: destination)
-        Self.log.info("\(path, privacy: .public) complete · \(finalSize) bytes")
+        let verified = expectedSHA256 == nil ? "" : " · SHA-256 verified"
+        Self.log.info("\(path, privacy: .public) complete · \(finalSize) bytes\(verified, privacy: .public)")
     }
 
     private func appendChunks(from url: URL, to handle: FileHandle, partial: URL, offset start: Int64,
@@ -319,13 +355,40 @@ struct HubFileTransfer: Sendable {
     }
 
     static func treeURL(repoID: String, revision: String) -> URL? {
+        apiURL(repoID: repoID, endpoint: "tree", revision: revision)
+    }
+
+    static func pathsInfoURL(repoID: String, revision: String) -> URL? {
+        apiURL(repoID: repoID, endpoint: "paths-info", revision: revision)
+    }
+
+    /// The revision is one path segment, so a branch such as `refs/pr/1` is sent as `refs%2Fpr%2F1`.
+    private static func apiURL(repoID: String, endpoint: String, revision: String) -> URL? {
         let parts = repoID.split(separator: "/", omittingEmptySubsequences: false)
-        guard parts.count == 2, parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else { return nil }
+        guard parts.count == 2, parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
+              let encodedRepo = repoID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let encodedRevision = revision.addingPercentEncoding(withAllowedCharacters: segmentAllowed)
+        else { return nil }
         var components = URLComponents()
         components.scheme = "https"
         components.host = "huggingface.co"
-        components.path = "/api/models/\(repoID)/tree/\(revision)"
+        components.percentEncodedPath = "/api/models/\(encodedRepo)/\(endpoint)/\(encodedRevision)"
         return components.url
+    }
+
+    private static let segmentAllowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+
+    /// Repo, revision and path of a `https://huggingface.co/<org>/<repo>/resolve/<revision>/<path>` URL.
+    static func hubFile(at url: URL) -> HubFileReference? {
+        guard url.scheme?.lowercased() == "https", let host = url.host()?.lowercased(),
+              HuggingFaceRepo.isHuggingFaceHost(host) else { return nil }
+        // Split before decoding: a revision such as `refs%2Fpr%2F1` is one segment.
+        let segments = url.path(percentEncoded: true).split(separator: "/")
+            .map { $0.removingPercentEncoding ?? String($0) }
+        guard segments.count >= 5, segments[2] == "resolve",
+              segments.allSatisfy({ $0 != "." && $0 != ".." }) else { return nil }
+        return HubFileReference(repoID: "\(segments[0])/\(segments[1])", revision: segments[3],
+                                path: segments[4...].joined(separator: "/"))
     }
 
     /// The tree of `path` inside the repo; `recursive` adds `?recursive=true`. `nil` for an empty, absolute or
@@ -335,7 +398,8 @@ struct HubFileTransfer: Sendable {
         guard !path.isEmpty, segments.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }),
               let base = treeURL(repoID: repoID, revision: revision),
               var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
-        components.path += "/" + path
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
+        components.percentEncodedPath += "/" + encoded
         if recursive { components.queryItems = [URLQueryItem(name: "recursive", value: "true")] }
         return components.url
     }
@@ -354,30 +418,22 @@ extension HubFileTransfer {
     // The ETag rides on the partial as an extended attribute, so deleting or moving the partial takes it along.
 
     static func validator(of partial: URL) -> String? {
-        partial.withUnsafeFileSystemRepresentation { path -> String? in
-            guard let path else { return nil }
-            let length = getxattr(path, validatorAttribute, nil, 0, 0, 0)
-            guard length > 0 else { return nil }
-            var bytes = [UInt8](repeating: 0, count: length)
-            guard getxattr(path, validatorAttribute, &bytes, length, 0, 0) == length else { return nil }
-            return String(bytes: bytes, encoding: .utf8)
-        }
+        ExtendedAttributes.string(named: validatorAttribute, of: partial)
     }
 
     static func setValidator(_ etag: String, of partial: URL) {
-        let bytes = Array(etag.utf8)
-        partial.withUnsafeFileSystemRepresentation { path in
-            guard let path else { return }
-            if setxattr(path, validatorAttribute, bytes, bytes.count, 0, 0) != 0 {
-                log.error("could not record the ETag of \(partial.lastPathComponent, privacy: .public): errno \(errno)")
-            }
+        if !ExtendedAttributes.set(etag, name: validatorAttribute, on: partial) {
+            log.error("could not record the ETag of \(partial.lastPathComponent, privacy: .public): errno \(errno)")
         }
     }
 }
 
-/// One entry of the Hugging Face tree API.
+/// One entry of the Hugging Face tree and paths-info APIs.
 private struct TreeEntry: Decodable {
-    struct LargeFileInfo: Decodable { let size: Int64? }
+    struct LargeFileInfo: Decodable {
+        let size: Int64?
+        let oid: String?
+    }
     let type: String
     let path: String
     let size: Int64?
@@ -386,6 +442,10 @@ private struct TreeEntry: Decodable {
     enum CodingKeys: String, CodingKey {
         case type, path, size
         case largeFile = "lfs"
+    }
+
+    var listedFile: RemoteFile {
+        RemoteFile(path: path, size: largeFile?.size ?? size, sha256: FileIntegrity.normalizedSHA256(largeFile?.oid))
     }
 }
 

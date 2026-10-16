@@ -32,10 +32,10 @@ final class AuraEngine {
 
     // MARK: - Init
 
-    init(model: Model, temperature: Float? = nil, tools: [any LLMTool] = [],
+    init(model: Model, sampling: SamplingSettings? = nil, tools: [any LLMTool] = [],
          lifecycle: BackgroundLifecycle = .shared) {
         self.model = model
-        self.backend = BackendRouter.selectBackend(for: model, temperature: temperature, tools: tools)
+        self.backend = BackendRouter.selectBackend(for: model, sampling: sampling, tools: tools)
         self.appLifecycle = lifecycle
     }
 

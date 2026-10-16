@@ -193,6 +193,53 @@ final class RouteAndEscalateTests: XCTestCase {
         XCTAssertEqual(gate.offers.first?.unpricedRecordCount, 1)
     }
 
+    /// About 1,600 tokens; keepRatio 0.3 of a 2,048-token window minus 64 compresses it to 550.
+    private static let longContext = String(repeating: "Bananas are a yellow fruit grown in warm places. ", count: 130)
+
+    func testOfferIsPricedFromThePayloadSent() async throws {
+        try XCTSkipUnless(NetworkMonitor.shared.isOnline, "cloud routing needs a network path (R3)")
+        let ledger = CostLedger()
+        ledger.setPrice(TokenPrice(inputUSDPerMillion: 1000, outputUSDPerMillion: 0), provider: "test.fake")
+        let target = RemoteTarget(provider: FakeRemoteProvider(answer: "CLOUD"), modelID: "fake",
+                                  contextLength: 2048, origin: .cloud)
+        let gate = OfferRecordingGate(approves: false)
+        let question = "Which fruit is yellow? \(UUID().uuidString)"
+
+        do {
+            _ = try await HybridEscalator(ledger: ledger).routeAndEscalate(
+                policy: EscalationPolicy(mode: .askEachTime, allowCloud: true, costCapUSDPerSession: 1, keepRatio: 0.3),
+                context: Self.longContext, question: question,
+                localAnswer: "I'm not sure.", consent: gate, maxTokens: 64, targets: [target])
+            XCTFail("the gate declines, so routeAndEscalate must throw")
+        } catch AuraError.escalationDeclined {}
+
+        let offer = try XCTUnwrap(gate.offers.first)
+        let payload = try XCTUnwrap(offer.payload)
+        let rawTokens = ContextCompressor.estimateTokens(Self.longContext + question)
+        XCTAssertGreaterThan(rawTokens, 1000, "the uncompressed prompt alone would cost over the $1 cap")
+        XCTAssertLessThan(payload.estimatedInputTokens, 1000)
+        XCTAssertEqual(offer.reason, .lowConfidence, "the payload sent fits under the cap")
+        XCTAssertEqual(offer.projectedCostUSD,
+                       ledger.projectedCost(target: target, inputTokens: payload.estimatedInputTokens, maxOutput: 64))
+    }
+
+    func testSizeOverflowReadsTheUncompressedPrompt() async throws {
+        let target = RemoteTarget(provider: FakeRemoteProvider(answer: "LAN"), modelID: "fake",
+                                  contextLength: 2048, origin: .localNetwork(.llamaServer))
+        let gate = OfferRecordingGate(approves: false)
+        do {
+            _ = try await HybridEscalator(ledger: CostLedger()).routeAndEscalate(
+                policy: EscalationPolicy(mode: .askEachTime, keepRatio: 0.3),
+                context: Self.longContext, question: "Which fruit is yellow? \(UUID().uuidString)",
+                localContextWindow: 1024, consent: gate, maxTokens: 64, targets: [target])
+            XCTFail("the gate declines, so routeAndEscalate must throw")
+        } catch AuraError.escalationDeclined {}
+
+        let offer = try XCTUnwrap(gate.offers.first)
+        XCTAssertEqual(offer.reason, .sizeOverflow)
+        XCTAssertLessThan(try XCTUnwrap(offer.payload).estimatedInputTokens, 921, "the payload alone would fit")
+    }
+
     func testCloudCallFailingAfterOutputIsRecordedWithUnknownCost() async throws {
         let ledger = CostLedger()
         ledger.setPrice(TokenPrice(inputUSDPerMillion: 1, outputUSDPerMillion: 1), provider: "test.failing")

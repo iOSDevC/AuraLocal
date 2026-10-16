@@ -39,9 +39,9 @@ public enum ModelLoadState: Equatable {
 /// `ModelManager` is the recommended way to load models across your app.
 /// It provides four key guarantees:
 ///
-/// 1. **LRU cache** — keeps up to ``memoryBudget`` models in RAM,
+/// 1. **LRU cache** — keeps up to ``memoryBudget`` instances in RAM, one per model and sampling setting,
 ///    automatically evicting the least-recently-used when the budget is exceeded.
-/// 2. **In-flight deduplication** — concurrent requests for the same model
+/// 2. **In-flight deduplication** — concurrent requests for the same model and sampling
 ///    share a single download/load `Task`, avoiding redundant work.
 /// 3. **Memory-pressure handling** — listens for OS memory warnings
 ///    (`DispatchSource` + `UIApplication` notifications) and evicts models proactively.
@@ -70,11 +70,17 @@ public final class ModelManager: ObservableObject {
 
     // MARK: - Private storage
 
-    private var cache:    [Model: AuraLocal] = [:]
-    private var lruOrder: [Model] = []
+    /// One cache slot per model and sampling: a GGUF's sampler is fixed when its context is created.
+    private struct InstanceKey: Hashable {
+        let base: Model
+        let sampling: SamplingSettings
+    }
 
-    /// In-flight load tasks — deduplicates concurrent requests for the same model.
-    private var inFlight: [Model: Task<AuraLocal, Error>] = [:]
+    private var cache:    [InstanceKey: AuraLocal] = [:]
+    private var lruOrder: [InstanceKey] = []
+
+    /// In-flight load tasks — deduplicates concurrent requests for the same model and sampling.
+    private var inFlight: [InstanceKey: Task<AuraLocal, Error>] = [:]
 
     /// GGUF downloader instance (shared across downloads).
     public let ggufDownloader = GGUFModelDownloader()
@@ -134,45 +140,56 @@ public final class ModelManager: ObservableObject {
     // MARK: - Public API
 
     /// Load a model and return the instance.
-    /// Returns immediately from cache if already loaded.
-    /// Deduplicates concurrent loads — multiple callers requesting the same model
+    /// Returns immediately from cache if already loaded with the same sampling.
+    /// Deduplicates concurrent loads — multiple callers requesting the same model and sampling
     /// share a single in-flight load Task.
     ///
     /// For GGUF models, this automatically downloads the GGUF file from HuggingFace
     /// if not already present, then loads via the llama.cpp backend.
+    ///
+    /// `temperature` and `topP` hold for the instance's lifetime; `nil` keeps the backend default, and temperature
+    /// 0 is greedy. Each distinct setting is its own cached instance, a separate load of the model. `tools` need
+    /// a GGUF model. Both are checked before anything is downloaded and throw ``ModelConfigurationError``.
     public func load(
         _ model: Model,
         tools: [any LLMTool] = [],
+        temperature: Float? = nil,
+        topP: Float? = nil,
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> AuraLocal {
+        try BackendRouter.requireToolSupport(tools, for: model)
+        let sampling = try SamplingSettings.resolve(temperature: temperature, topP: topP, for: model)
+
         // Tool-enabled sessions are always freshly built and never cached/deduped — a function-calling
-        // instance must not be served from (or pollute) the plain shared cache keyed only by model.
+        // instance must not be served from (or pollute) the plain shared cache.
         guard tools.isEmpty else {
-            return try await performLoad(model, tools: tools, onProgress: onProgress)
+            return try await performLoad(model, sampling: sampling, tools: tools, onProgress: onProgress)
         }
+        let key = InstanceKey(base: model, sampling: sampling)
 
         // Return cached immediately
-        if let cached = cache[model] {
-            touch(model)
+        if let cached = cache[key] {
+            touch(key)
             return cached
         }
 
-        // Deduplicate: if this model is already loading, join the existing Task
-        if let existing = inFlight[model] {
+        // Deduplicate: if this model is already loading with this sampling, join the existing Task
+        if let existing = inFlight[key] {
             return try await existing.value
         }
 
         // Create a new load Task and register it
         let task = Task<AuraLocal, Error> { @MainActor [weak self] in
             guard let self else { throw AuraError.modelNotLoaded }
-            defer { self.inFlight[model] = nil }
-            return try await self.performLoad(model, onProgress: onProgress)
+            defer { self.inFlight[key] = nil }
+            return try await self.performLoad(model, sampling: sampling, onProgress: onProgress)
         }
-        inFlight[model] = task
+        inFlight[key] = task
         return try await task.value
     }
 
-    /// Current load state for a model.
+    /// Current load state for a model. While another sampling setting of a loaded model loads, this reports that
+    /// load's progress, and returns to `.ready` if it fails or is cancelled.
     public func state(for model: Model) -> ModelLoadState {
         states[model] ?? .idle
     }
@@ -183,20 +200,17 @@ public final class ModelManager: ObservableObject {
     /// `===` distinguishes the two). Use this from `AuraSession` teardown instead of a bare `unload()`.
     public func release(_ instance: AuraLocal) {
         instance.engine.unload()
-        if cache[instance.model] === instance {
-            cache[instance.model] = nil
-            lruOrder.removeAll { $0 == instance.model }
-            states[instance.model] = .idle
+        let key = InstanceKey(base: instance.model, sampling: instance.sampling)
+        if cache[key] === instance {
+            drop(key)
         }
     }
 
-    /// Evict a specific model from memory.
+    /// Evict a model from memory, at every sampling setting it is loaded with.
     public func evict(_ model: Model) {
-        if let instance = cache[model] {
-            instance.engine.unload()
+        for key in cache.keys where key.base == model {
+            evict(key)
         }
-        cache[model] = nil
-        lruOrder.removeAll { $0 == model }
         states[model] = .idle
     }
 
@@ -204,11 +218,11 @@ public final class ModelManager: ObservableObject {
     /// the URLSession transfer). No-op if already loaded or never started.
     public func cancelLoad(_ model: Model) {
         ggufDownloader.cancel()
-        if let task = inFlight[model] {
+        for (key, task) in inFlight where key.base == model {
             task.cancel()
-            inFlight[model] = nil
+            inFlight[key] = nil
         }
-        states[model] = .idle
+        settle(model, otherwise: .idle)
     }
 
     /// Whether the model download (if any) is currently paused.
@@ -231,14 +245,14 @@ public final class ModelManager: ObservableObject {
         for key in states.keys { states[key] = .idle }
     }
 
-    /// Whether the model is currently loaded and ready.
+    /// Whether the model is currently loaded and ready, at any sampling setting.
     public func isReady(_ model: Model) -> Bool {
-        cache[model] != nil
+        isLoaded(model)
     }
 
-    /// Whether the model is already loaded in memory.
+    /// Whether the model is already loaded in memory, at any sampling setting.
     public func isLoaded(_ model: Model) -> Bool {
-        cache[model] != nil
+        cache.keys.contains { $0.base == model }
     }
 
     /// The ``BackendKind`` that will be used for a model on this device.
@@ -250,6 +264,7 @@ public final class ModelManager: ObservableObject {
 
     private func performLoad(
         _ model: Model,
+        sampling: SamplingSettings,
         tools: [any LLMTool] = [],
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> AuraLocal {
@@ -258,11 +273,11 @@ public final class ModelManager: ObservableObject {
         // it's enforced, together with the models already resident.
         let residents = lruOrder.filter { cache[$0] != nil }
         guard let evictions = Self.evictionsBeforeLoading(
-            model, residents: residents, budget: memoryBudget, profile: .current(),
+            model, residents: residents.map(\.base), budget: memoryBudget, profile: .current(),
             residentsCountAgainstProfile: Self.profileIsMemoryLimit
         ) else {
             let msg = "\(model.displayName) needs more memory than this device has, even with streaming."
-            states[model] = .failed(msg)
+            settle(model, otherwise: .failed(msg))
             throw AuraError.modelTooLarge(msg)
         }
         for lru in residents.suffix(evictions).reversed() {
@@ -285,30 +300,51 @@ public final class ModelManager: ObservableObject {
 
             // Create AuraLocal instance — BackendRouter picks the right backend; `tools` (if any) enable
             // GGUF function-calling.
-            let instance = AuraLocal(model: model, tools: tools)
+            let instance = AuraLocal(model: model, sampling: sampling, tools: tools)
             try await instance.engine.load(onProgress: progress)
 
             // Only plain (tool-less) instances are cached; tool-enabled ones are caller-owned.
             if tools.isEmpty {
-                cache[model] = instance
-                touch(model)
+                let key = InstanceKey(base: model, sampling: sampling)
+                cache[key] = instance
+                touch(key)
             }
             states[model] = .ready
             return instance
         } catch is CancellationError {
-            states[model] = .idle   // user cancelled the download/load — not a failure
+            settle(model, otherwise: .idle)   // user cancelled the download/load — not a failure
             throw CancellationError()
         } catch {
-            states[model] = .failed(error.localizedDescription)
+            settle(model, otherwise: .failed(error.localizedDescription))
             throw error
         }
     }
 
+    /// A load that fails or is cancelled leaves the model `.ready` while another setting of it is still cached.
+    private func settle(_ model: Model, otherwise state: ModelLoadState) {
+        states[model] = isLoaded(model) ? .ready : state
+    }
+
     // MARK: - LRU
 
-    private func touch(_ model: Model) {
-        lruOrder.removeAll { $0 == model }
-        lruOrder.insert(model, at: 0)
+    private func touch(_ key: InstanceKey) {
+        lruOrder.removeAll { $0 == key }
+        lruOrder.insert(key, at: 0)
+    }
+
+    private func evict(_ key: InstanceKey) {
+        cache[key]?.engine.unload()
+        drop(key)
+    }
+
+    /// Forgets one cached instance without unloading it. The model stays `.ready` while another setting of it is
+    /// still cached.
+    private func drop(_ key: InstanceKey) {
+        cache[key] = nil
+        lruOrder.removeAll { $0 == key }
+        if !isLoaded(key.base) {
+            states[key.base] = .idle
+        }
     }
 
     // MARK: - Memory detection

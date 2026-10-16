@@ -31,9 +31,10 @@ Repos rated *Runs* or *Runs, with caveats* get a **Download** section in the det
 - Errors have their own message: a gated repo (HTTP 401/403 with `X-Error-Code: GatedRepo`, or a rejected token)
   offers **Add a token**, which opens the token form in place, and a link to the repo page, a missing file (404), a repo that is missing, renamed or private (an
   anonymous 401 without an error code; Hugging Face does not tell these apart), not enough space (`Needs X, Y free.`), a size mismatch or a network error (the partial file is kept).
-- Files land exactly where the backends read them: GGUF at `Library/Caches/models/<org>/<repo>/<file>.gguf`
-  (`Model.resolvedFileURL`), MLX at `Library/Caches/huggingface/hub/models--<org>--<repo>/snapshots/main/` with a
-  `.complete` marker written last. `ModelManager.shared.load(_:)` finds them without downloading again.
+- Files land exactly where the backends read them, under `ModelStorage.rootDirectory`
+  (`<Application Support>/AuraLocal/Models`, excluded from backup): GGUF at `<root>/models/<org>/<repo>/<file>.gguf`
+  (`Model.resolvedFileURL`), MLX at `<root>/huggingface/hub/models--<org>--<repo>/snapshots/main/` with a
+  `.complete` marker written last. Downloads an older build left in `Library/Caches` are still read from there. `ModelManager.shared.load(_:)` finds them without downloading again.
 - When a download finishes, the detail view offers **Try it**, and the model is registered
   (`ModelRegistry.register(_:)`), so AuraUI's Text and Vision pickers list it.
 
@@ -48,8 +49,8 @@ context menu; unloads the model first, forgets its record, unregisters it and re
 **Try it**. AuraCore's `DownloadRecords` keeps the sized `Model` for each download in `UserDefaults`
 (`dev.auralocal.downloadRecords`; records under this app's old `downloadRecords` key are copied once) so Try it
 can judge memory; files with neither a record nor a catalog entry show Try it and Resume disabled (size unknown):
-delete them, or resume them from their search result. Caches can be purged by
-iOS when storage is low.
+delete them, or resume them from their search result. A paused file whose finished copy is already on disk (an
+older build's, left in Caches) shows as **Leftover**; Delete removes only that partial.
 
 **Try it** loads the model with `ModelManager`, asks one short question (32 tokens max), shows the reply and the
 load/reply times, and always unloads it — also on cancel, on Done and on a memory warning. It is enabled only for

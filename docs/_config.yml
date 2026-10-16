@@ -20,7 +20,7 @@ search:
   button: false
 
 # Footer
-footer_content: "MIT License &copy; 2026 iOSDevC. Powered by <a href=\"https://github.com/just-the-docs/just-the-docs\">Just the Docs</a>."
+footer_content: "AGPL-3.0-or-later or commercial license &middot; &copy; 2026 iOSDevC. Powered by <a href=\"https://github.com/just-the-docs/just-the-docs\">Just the Docs</a>."
 back_to_top: true
 back_to_top_text: "Back to top"
 
@@ -62,6 +62,13 @@ social:
   name: iOSDevC
   links:
     - https://github.com/iOSDevC
+
+# Page image for jekyll-seo-tag (og:image, twitter:card summary_large_image)
+defaults:
+  - scope:
+      path: ""
+    values:
+      image: /media/logo.png
 
 # Exclude from processing
 exclude:

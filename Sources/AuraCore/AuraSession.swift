@@ -67,15 +67,25 @@ extension AuraLocal: AuraProfileEngine {
         self.conversationID = conversationID
         self.profile = profile
         self.makeEngine = makeEngine
-        self.validator = try profile.outputSchema.map(OutputSchemaValidator.init)   // before paying for a model load
+        // Both checks run before paying for a model load.
+        try AuraSession.requireSupport(for: profile)
+        self.validator = try profile.outputSchema.map(OutputSchemaValidator.init)
         self.engine = try await makeEngine(profile)
     }
 
-    /// The default factory: build a live GGUF engine via `ModelManager` for the profile's model + tools.
-    /// (Threading `profile.sampling.temperature` into the load is a follow-up — today `ModelManager.load` doesn't
-    /// take it, so the engine uses its default sampling.)
+    /// The default factory: load the profile's model through `ModelManager` with its tools and its sampling
+    /// temperature and top-p. `topK` and `contextOverride` are not applied.
     @MainActor public static func liveEngine(_ profile: AuraProfile) async throws -> any AuraProfileEngine {
-        try await ModelManager.shared.load(profile.model, tools: profile.tools)
+        try await ModelManager.shared.load(profile.model, tools: profile.tools,
+                                           temperature: profile.sampling.temperature, topP: profile.sampling.topP)
+    }
+
+    /// Tools on an MLX model and out-of-range sampling throw ``ModelConfigurationError`` here, before any engine is
+    /// built or torn down.
+    private static func requireSupport(for profile: AuraProfile) throws {
+        try BackendRouter.requireToolSupport(profile.tools, for: profile.model)
+        _ = try SamplingSettings.resolve(temperature: profile.sampling.temperature, topP: profile.sampling.topP,
+                                         for: profile.model)
     }
 
     /// Switch to a different profile, keeping `conversationID`. Order is deliberate: **cancel AND await** the
@@ -83,12 +93,14 @@ extension AuraLocal: AuraProfileEngine {
     /// mid-decode), then free the old model's RAM, then build the new engine. Streams and switches requested
     /// meanwhile queue behind the rebuild, so a stream started during a switch runs on the new profile.
     ///
-    /// A profile whose ``AuraProfile/outputSchema`` does not compile throws ``OutputSchemaError`` before anything
-    /// is cancelled or torn down, so the current profile stays usable. If building the new engine throws, the old
+    /// A profile whose ``AuraProfile/outputSchema`` does not compile throws ``OutputSchemaError``, and one with tools
+    /// on an MLX model or out-of-range sampling throws ``ModelConfigurationError``, before anything is cancelled or
+    /// torn down, so the current profile stays usable. If building the new engine throws, the old
     /// one is already torn down: streams fail with ``AuraError/modelNotLoaded`` until a retry (to any profile,
     /// the current one included) succeeds.
     public func switchProfile(to newProfile: AuraProfile) async throws {
         guard newProfile != profile || switchFailed || pendingSwitches > 0 else { return }
+        try Self.requireSupport(for: newProfile)
         let newValidator = try newProfile.outputSchema.map(OutputSchemaValidator.init)
         let prior = inFlight
         prior?.cancel()

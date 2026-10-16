@@ -11,11 +11,16 @@ struct DownloadedEntry: Identifiable {
     let isComplete: Bool
     /// `nil` when nothing on disk says which repo/file it is.
     let candidate: Model?
+    /// A paused GGUF's `.partial` file.
+    var partialFile: URL?
+    /// A paused partial whose finished file is already on disk (an older build's, left in Caches): nothing to
+    /// resume, and Delete removes only this partial, never the finished copy.
+    var isLeftover = false
 }
 
-/// Every model file under the AuraLocal caches, finished or paused, read from disk on each refresh so it survives a
-/// relaunch: Try it, Resume, Cancel and Delete, plus the keep-awake switch. Sets the title "Downloads" and brings
-/// no navigation container.
+/// Every model file in ``ModelStorage/rootDirectory`` (and in Caches, where older builds downloaded), finished or
+/// paused, read from disk on each refresh so it survives a relaunch: Try it, Resume, Cancel and Delete, plus the
+/// keep-awake switch. Sets the title "Downloads" and brings no navigation container.
 public struct DownloadedModelsList: View {
     @State private var entries: [DownloadedEntry] = []
     @State private var freeBytes: Int64?
@@ -69,8 +74,7 @@ public struct DownloadedModelsList: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             HStack {
-                Label(entry.isComplete ? "Complete" : "Paused",
-                      systemImage: entry.isComplete ? "checkmark.circle" : "pause.circle")
+                status(of: entry)
                 Text(ByteText.text(entry.sizeBytes))
                 Spacer()
                 actions(for: entry)
@@ -91,8 +95,14 @@ public struct DownloadedModelsList: View {
         .contextMenu { deleteButton(for: entry) }
     }
 
+    private func status(of entry: DownloadedEntry) -> some View {
+        if entry.isComplete { return Label("Complete", systemImage: "checkmark.circle") }
+        if entry.isLeftover { return Label("Leftover", systemImage: "doc.badge.ellipsis") }
+        return Label("Paused", systemImage: "pause.circle")
+    }
+
     @ViewBuilder private func actions(for entry: DownloadedEntry) -> some View {
-        if let candidate = entry.candidate {
+        if let candidate = entry.candidate, !entry.isLeftover {
             if entry.isComplete {
                 Button("Try it") { trial = candidate }
                     .disabled(tryItBlocker(entry) != nil)
@@ -115,7 +125,7 @@ public struct DownloadedModelsList: View {
         VStack(alignment: .leading, spacing: 4) {
             let total = entries.map(\.sizeBytes).reduce(0, +)
             Text("On disk: \(ByteText.text(total))" + (freeBytes.map { " · \(ByteText.text($0)) free" } ?? ""))
-            Text("Stored in Caches: iOS may remove models when storage is low.")
+            Text("Stored in Application Support and excluded from backups.")
         }
     }
 
@@ -128,6 +138,9 @@ public struct DownloadedModelsList: View {
     /// Why Try it or Resume is off for this entry.
     private func blockerText(_ entry: DownloadedEntry) -> String? {
         if let blocker = tryItBlocker(entry) { return blocker.explanation }
+        if entry.isLeftover {
+            return "A finished copy is already on disk; Delete removes only this unfinished file."
+        }
         guard !entry.isComplete, let candidate = entry.candidate, isUnsized(candidate) else { return nil }
         return "Resume needs the size from a search result; resume it from Search or delete it."
     }
@@ -142,7 +155,11 @@ public struct DownloadedModelsList: View {
     private func delete(_ entry: DownloadedEntry) {
         guard let candidate = entry.candidate else { return }
         do {
-            try center.delete(candidate)
+            if entry.isLeftover, let partial = entry.partialFile {
+                try center.deleteLeftover(partial, of: candidate)
+            } else {
+                try center.delete(candidate)
+            }
             notice = "Deleted \(entry.title), freed \(ByteText.text(entry.sizeBytes))."
         } catch {
             notice = "Could not delete \(entry.title): \(error.localizedDescription)"
@@ -152,10 +169,11 @@ public struct DownloadedModelsList: View {
     private func refresh() {
         freeBytes = ModelDownloads.availableDiskBytes()
         let finished = DownloadedModels.scan().map(Self.finishedEntry)
-        let modelsRoot = DownloadedModels.modelsDirectory.standardizedFileURL.path + "/"
-        let paused = DownloadedModels.partialFiles()
-            .filter { $0.standardizedFileURL.path.hasPrefix(modelsRoot) }
-            .compactMap { Self.partialEntry($0, modelsRoot: modelsRoot) }
+        let modelsRoots = DownloadedModels.modelsDirectories.map { $0.standardizedFileURL.path + "/" }
+        let paused = DownloadedModels.partialFiles().compactMap { partial in
+            modelsRoots.first { partial.standardizedFileURL.path.hasPrefix($0) }
+                .flatMap { Self.partialEntry(partial, modelsRoot: $0) }
+        }
         let snapshots = DownloadedModels.scanSnapshots().map(Self.snapshotEntry)
         entries = (finished + paused + snapshots)
             .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
@@ -174,9 +192,10 @@ public struct DownloadedModelsList: View {
         let repoID = "\(relative[0])/\(relative[1])"
         let filename = partial.deletingPathExtension().lastPathComponent
         let size = (try? partial.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 } ?? 0
+        let candidate = ggufModel(repoID: repoID, filename: filename)
         return DownloadedEntry(id: partial.path, title: "\(relative[1]) · \(filename)", formatLabel: "GGUF",
-                               detail: filename, sizeBytes: Int64(size), isComplete: false,
-                               candidate: ggufModel(repoID: repoID, filename: filename))
+                               detail: filename, sizeBytes: Int64(size), isComplete: false, candidate: candidate,
+                               partialFile: partial, isLeftover: candidate?.isDownloaded == true)
     }
 
     private static func snapshotEntry(_ snapshot: DownloadedSnapshot) -> DownloadedEntry {

@@ -17,6 +17,8 @@ public struct OpenAICompatibleProvider: RemoteLLMProvider {
     private let baseURL: URL
     private let apiKey: String?
     private let streaming: Bool
+    /// The streaming path's session; tests swap in one with a stub `URLProtocol`.
+    var makeSession: @Sendable () -> URLSession = { SSELineStream.makeSession() }
 
     public init(
         id: String,
@@ -62,7 +64,7 @@ public struct OpenAICompatibleProvider: RemoteLLMProvider {
             let task = Task {
                 do {
                     let urlRequest = try makeRequest(request)
-                    let session = SSELineStream.makeSession()
+                    let session = makeSession()
                     defer { session.invalidateAndCancel() }
                     for try await line in SSELineStream.lines(for: urlRequest, session: session) {
                         if Task.isCancelled { break }

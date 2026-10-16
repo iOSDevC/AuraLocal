@@ -29,6 +29,9 @@ final class UIConsentGate: ObservableObject, ConsentGate {
         let cost: Decimal?
         /// Why it was offered, with the session's spend and cap; nil when the caller passed only a cost.
         let offer: EscalationOffer?
+
+        /// The exact request sent on approval, when the offer carries it.
+        var payload: EscalationPayload? { offer?.payload }
     }
 
     @Published var pending: Request?
