@@ -65,8 +65,8 @@ final class VisionDocumentToolTests: XCTestCase {
             "\($0.kind.rawValue) '\($0.text)' \(String(describing: $0.amount)) \(String(describing: $0.boundingBox))"
         }
         let amounts = document.amounts
-        let total = try XCTUnwrap(amounts.first { $0.amount == Decimal(string: "12.75") }, "matches: \(matches)")
-        XCTAssertTrue(total.text.contains("12.75"), "matches: \(matches); text: \(document.text)")
+        let totalAmount = try XCTUnwrap(amounts.first { $0.amount == Decimal(string: "12.75") }, "matches: \(matches)")
+        XCTAssertTrue(totalAmount.text.contains("12.75"), "matches: \(matches); text: \(document.text)")
         XCTAssertTrue(amounts.allSatisfy { $0.currency?.isEmpty == false }, "currencies: \(amounts.map(\.currency))")
         // A span Vision gives no range for has empty text; every other span comes from the document's text.
         XCTAssertTrue(document.detectedData.allSatisfy { $0.text.isEmpty || document.text.contains($0.text) },
