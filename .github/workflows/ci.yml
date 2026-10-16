@@ -68,7 +68,13 @@ jobs:
         # "Failed to load the default metallib".
         run: swift build --build-tests --force-resolved-versions --build-system swiftbuild
       - name: Test
+        id: test
+        # Vision OCR and Spanish sentiment fail on macOS 27 (#2); the step reports without blocking until then.
+        continue-on-error: ${{ matrix.xcode == '27.0' }}
         run: swift test --skip-build --build-system swiftbuild
+      - name: Report non-blocking test failures
+        if: steps.test.outcome == 'failure'
+        run: echo "::warning::Tests failed on Xcode ${{ matrix.xcode }} and do not block this run; see issue #2."
 
   ios:
     name: AuraExample for iOS (Xcode ${{ matrix.xcode }})
@@ -162,7 +168,13 @@ jobs:
       - name: Build
         run: swift build --build-tests --build-system swiftbuild
       - name: Test
+        id: test
+        # See the test job: macOS 27 failures (#2) report without blocking.
+        continue-on-error: ${{ matrix.xcode == '27.0' }}
         run: swift test --skip-build --build-system swiftbuild
+      - name: Report non-blocking test failures
+        if: steps.test.outcome == 'failure'
+        run: echo "::warning::Tests failed on Xcode ${{ matrix.xcode }} and do not block this run; see issue #2."
 
   canary-ios:
     name: Canary, fresh resolve of AuraExample for iOS (Xcode ${{ matrix.xcode }})
