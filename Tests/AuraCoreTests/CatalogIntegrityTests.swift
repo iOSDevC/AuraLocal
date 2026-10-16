@@ -30,11 +30,34 @@ final class CatalogIntegrityTests: XCTestCase {
         let mlx = models.filter { $0.format == .mlx }
         #if canImport(MLXLLM)
         XCTAssertGreaterThan(mlx.count, 0, "MLX is linked, so MLX models must be offered")
-        XCTAssertEqual(Model.mlxModels.count, mlx.count)
+        XCTAssertEqual(Model.mlxModels.count, mlx.filter { !$0.isUncensored }.count)
         #else
         XCTAssertEqual(mlx.count, 0, "no MLX backend linked — unrunnable entries must stay hidden")
         #endif
         XCTAssertGreaterThan(models.filter { $0.format == .gguf }.count, 0)
+    }
+
+    /// Uncensored models are in the registry but only `uncensoredModels` lists them; the pickers and the hardware
+    /// recommendations read the other collections.
+    func testUncensoredModelsAreListedOnlyOnRequest() {
+        let uncensored = Model.uncensoredModels
+        XCTAssertFalse(uncensored.isEmpty, "the bundled catalog has uncensored entries")
+        XCTAssertTrue(uncensored.allSatisfy(\.isUncensored))
+        XCTAssertTrue(Set(uncensored).isSubset(of: Set(Model.allModels)))
+
+        let listed: [String: [Model]] = [
+            "listedModels": Model.listedModels, "textModels": Model.textModels, "visionModels": Model.visionModels,
+            "specializedModels": Model.specializedModels, "ggufModels": Model.ggufModels,
+            "mlxModels": Model.mlxModels, "runnableModels": Model.runnableModels,
+            "compatibleModels()": HardwareAnalyzer.compatibleModels().map(\.model),
+        ]
+        for (name, models) in listed {
+            XCTAssertFalse(models.contains(where: \.isUncensored), "\(name) lists an uncensored model")
+        }
+        for domain in Model.Domain.allCases {
+            XCTAssertFalse(Model.models(in: domain).contains(where: \.isUncensored), domain.rawValue)
+        }
+        XCTAssertEqual(Model.listedModels.count + uncensored.count, Model.allModels.count)
     }
 
     /// AppState sizes its memory budget from these two; both were the 4.7 GB fallback.

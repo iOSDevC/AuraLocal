@@ -229,7 +229,7 @@ public enum CompatibilityEvaluator {
     static func sizingModel(format: ModelFormat, bytes: Int64, layers: Int?, kvHeads: Int?, headDim: Int?,
                             kvLayers: KVCacheLayout? = nil, experts: ExpertRouting? = nil) -> Model {
         Model(id: "sizing", repoID: "sizing", displayName: "sizing", category: .text, domain: nil, docTags: false,
-              format: format, approximateSizeMB: megabytes(bytes), isUncensored: false, ggufFilename: nil,
+              format: format, approximateSizeMB: megabytes(bytes), isUncensored: false, license: nil, ggufFilename: nil,
               defaultDocumentPrompt: nil, numLayers: layers ?? 0, kvHeads: kvHeads ?? 0, headDim: headDim ?? 0,
               kvLayers: kvLayers, experts: experts, maxContextLength: nil, downloadURL: nil, localFileURL: nil)
     }
@@ -370,6 +370,7 @@ public enum CompatibilityEvaluator {
         guard let category, let listing = input.listing else { return nil }
         let context = input.trainedContext.flatMap { $0 < CatalogEntry.contextCeiling ? $0 : nil }
         let uncensored = CatalogEntry.looksUncensored(repoID: listing.repoID, tags: listing.tags)
+        let license = CatalogEntry.catalogLicense(id: listing.licenseID, name: listing.licenseName)
         switch input.weightFormat {
         case .mlx:
             guard let weightsBytes else { return nil }
@@ -382,7 +383,7 @@ public enum CompatibilityEvaluator {
                 modelCategory: category, weightFormat: .mlx, approximateSizeMB: megabytes(weightsBytes),
                 isUncensored: uncensored, ggufFilename: nil, numLayers: input.layerCount ?? 0,
                 kvHeads: input.kvHeadCount ?? 0, headDim: input.headWidth ?? 0, maxContextLength: context,
-                kvLayers: layout, experts: input.moeRouting)
+                kvLayers: layout, experts: input.moeRouting, license: license)
         case .gguf:
             guard let pick = QuantFit.recommended(in: quantFits) else { return nil }
             return CatalogEntry(
@@ -392,7 +393,7 @@ public enum CompatibilityEvaluator {
                 modelCategory: .text, weightFormat: .gguf, approximateSizeMB: megabytes(pick.option.totalBytes),
                 isUncensored: uncensored, ggufFilename: pick.option.firstPath, numLayers: input.layerCount ?? 0,
                 kvHeads: input.kvHeadCount ?? 0, headDim: input.headWidth ?? 0, maxContextLength: context,
-                kvLayers: input.kvLayout)
+                kvLayers: input.kvLayout, license: license)
         default:
             return nil
         }

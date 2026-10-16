@@ -26,7 +26,9 @@ struct VoiceTab: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
-                        ForEach(Model.textModels, id: \.self) { m in
+                        // textModels leaves uncensored models out; a downloaded one is still offered.
+                        let uncensored = Model.uncensoredModels.filter { $0.category == .text && $0.isDownloaded }
+                        ForEach(Model.textModels + uncensored, id: \.self) { m in
                             Button {
                                 Task { await vm.load(model: m) }
                             } label: {

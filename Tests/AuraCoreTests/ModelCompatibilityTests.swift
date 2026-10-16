@@ -459,6 +459,7 @@ extension ModelCompatibilityTests {
           "format": "mlx",
           "approximateSizeMB": 580,
           "isUncensored": false,
+          "license": "apache-2.0",
           "ggufFilename": null,
           "defaultDocumentPrompt": null,
           "numLayers": 24,
@@ -471,7 +472,45 @@ extension ModelCompatibilityTests {
         XCTAssertEqual(model.repoID, "mlx-community/MiniCPM5-1B-4bit")
         XCTAssertEqual(model.format, .mlx)
         XCTAssertEqual(model.maxContextLength, 4096)
+        XCTAssertEqual(model.license, "apache-2.0")
         XCTAssertTrue(entry.jsonText(indent: 4).hasPrefix("    {\n      \"id\""))
+    }
+
+    func testEntryLicenseComesFromTheModelCard() throws {
+        XCTAssertEqual(CatalogEntry.catalogLicense(id: "apache-2.0", name: nil), "apache-2.0")
+        XCTAssertEqual(CatalogEntry.catalogLicense(id: "other", name: "lfm1.0"), "lfm1.0")
+        XCTAssertEqual(CatalogEntry.catalogLicense(id: "other", name: nil), "other")
+        XCTAssertNil(CatalogEntry.catalogLicense(id: nil, name: "lfm1.0"))
+
+        var custom = Fixture.mlx("o/custom-4bit", config: Fixture.config(type: "llama"), weightMap: nil)
+        custom.listing = HFRepoInfo(repoID: "o/custom-4bit", files: custom.listing?.files ?? [], tags: ["mlx"],
+                                    pipelineTag: "text-generation", libraryName: "mlx",
+                                    licenseID: "other", licenseName: "lfm1.0")
+        let entry = try XCTUnwrap(CompatibilityEvaluator.evaluate(custom, on: mac).suggestedEntry)
+        XCTAssertEqual(entry.license, "lfm1.0")
+        XCTAssertTrue(entry.jsonText().contains(#""isUncensored": false,\#n  "license": "lfm1.0",\#n  "ggufFilename""#))
+
+        var unlicensed = custom
+        unlicensed.listing = HFRepoInfo(repoID: "o/custom-4bit", files: custom.listing?.files ?? [], tags: ["mlx"],
+                                        pipelineTag: "text-generation", libraryName: "mlx")
+        let bare = try XCTUnwrap(CompatibilityEvaluator.evaluate(unlicensed, on: mac).suggestedEntry)
+        XCTAssertNil(bare.license)
+        XCTAssertFalse(bare.jsonText().contains("license"))
+        XCTAssertNil(bare.decodedModel()?.license)
+    }
+
+    func testOnlyApacheAndMITCountAsPermissive() throws {
+        func model(license: String?) throws -> Model {
+            try XCTUnwrap(CatalogEntry(id: "l", repoID: "o/l", displayName: "l", modelCategory: .text,
+                                       weightFormat: .mlx, approximateSizeMB: 1, isUncensored: false,
+                                       ggufFilename: nil, numLayers: 1, kvHeads: 0, headDim: 0,
+                                       maxContextLength: nil, license: license).decodedModel())
+        }
+        XCTAssertTrue(try model(license: "apache-2.0").hasPermissiveLicense)
+        XCTAssertTrue(try model(license: "MIT").hasPermissiveLicense)
+        for license in ["llama3.2", "gemma", "lfm1.0", "cc-by-nc-4.0", "other", nil] as [String?] {
+            XCTAssertFalse(try model(license: license).hasPermissiveLicense, license ?? "nil")
+        }
     }
 
     func testEntryNamesDropFormatSuffixesAndEscapeQuotes() {

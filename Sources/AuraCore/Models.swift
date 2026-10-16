@@ -135,6 +135,11 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
     /// Whether this model is an uncensored or abliterated variant.
     public let isUncensored: Bool
 
+    /// The weights' license as the Hugging Face model card states it: `cardData.license` (`apache-2.0`, `mit`,
+    /// `llama3.2`, `gemma`…), or `cardData.license_name` when that is `other`. `nil` = not recorded. Absent in JSON
+    /// decodes as `nil`. See ``hasPermissiveLicense``.
+    public let license: String?
+
     /// The GGUF filename to download (nil for MLX models).
     public let ggufFilename: String?
 
@@ -229,6 +234,15 @@ public struct Model: Sendable, Identifiable, Codable, CustomStringConvertible {
     /// Whether this model is recommended for macOS only (too large for typical iOS devices).
     public var isMacOSRecommended: Bool {
         approximateSizeMB >= 15_000
+    }
+
+    /// The licenses ``hasPermissiveLicense`` accepts, lowercased.
+    public static let permissiveLicenses: Set<String> = ["apache-2.0", "mit"]
+
+    /// Whether ``license`` is Apache-2.0 or MIT. `false` when the license is not recorded, so an app that offers
+    /// only permissively licensed models by filtering on this leaves unknown ones out.
+    public var hasPermissiveLicense: Bool {
+        license.map { Self.permissiveLicenses.contains($0.lowercased()) } ?? false
     }
 
     public var description: String { id }
@@ -355,7 +369,7 @@ public extension Model {
     private static func custom(id: String, repoID: String, displayName: String, filename: String,
                                downloadURL: URL?, localFileURL: URL?) -> Model {
         Model(id: id, repoID: repoID, displayName: displayName, category: .text, domain: nil, docTags: false,
-              format: .gguf, approximateSizeMB: 0, isUncensored: false, ggufFilename: filename,
+              format: .gguf, approximateSizeMB: 0, isUncensored: false, license: nil, ggufFilename: filename,
               defaultDocumentPrompt: nil, numLayers: 0, kvHeads: 0, headDim: 0, kvLayers: nil, experts: nil,
               maxContextLength: nil, downloadURL: downloadURL, localFileURL: localFileURL)
     }
@@ -486,7 +500,7 @@ public extension Model {
 
 public extension Model {
 
-    /// All registered models (replaces `CaseIterable.allCases`).
+    /// All registered models, uncensored ones included (replaces `CaseIterable.allCases`).
     static var allModels: [Model] {
         ModelRegistry.shared.models
     }
@@ -496,37 +510,43 @@ public extension Model {
         allModels
     }
 
-    /// All text-generation models, downloaded first.
+    /// The models the collections below draw from: every registered model except the uncensored ones, which only
+    /// ``uncensoredModels`` lists.
+    static var listedModels: [Model] {
+        allModels.filter { !$0.isUncensored }
+    }
+
+    /// Text-generation models, downloaded first.
     static var textModels: [Model] {
-        allModels
+        listedModels
             .filter { $0.category == .text }
             .sorted { $0.isDownloaded && !$1.isDownloaded }
     }
 
-    /// All general-purpose vision models, downloaded first.
+    /// General-purpose vision models, downloaded first.
     static var visionModels: [Model] {
-        allModels
+        listedModels
             .filter { $0.category == .vision }
             .sorted { $0.isDownloaded && !$1.isDownloaded }
     }
 
-    /// All OCR / document-specialized vision models, downloaded first.
+    /// OCR / document-specialized vision models, downloaded first.
     static var specializedModels: [Model] {
-        allModels
+        listedModels
             .filter { $0.category == .visionSpecialized }
             .sorted { $0.isDownloaded && !$1.isDownloaded }
     }
 
-    /// All GGUF-format models (require llama.cpp backend), downloaded first.
+    /// GGUF-format models (require llama.cpp backend), downloaded first.
     static var ggufModels: [Model] {
-        allModels
+        listedModels
             .filter { $0.format == .gguf }
             .sorted { $0.isDownloaded && !$1.isDownloaded }
     }
 
-    /// All MLX-format models, downloaded first.
+    /// MLX-format models, downloaded first.
     static var mlxModels: [Model] {
-        allModels
+        listedModels
             .filter { $0.format == .mlx }
             .sorted { $0.isDownloaded && !$1.isDownloaded }
     }
@@ -534,7 +554,7 @@ public extension Model {
     /// Models runnable on the current device, filtered by hardware compatibility.
     static var runnableModels: [Model] {
         let profile = HardwareProfile.current()
-        return allModels.filter { model in
+        return listedModels.filter { model in
             let assessment = HardwareAnalyzer.assess(model, profile: profile)
             return assessment.fitLevel.isRunnable
         }
@@ -547,9 +567,9 @@ public extension Model {
             .sorted { $0.isDownloaded && !$1.isDownloaded }
     }
 
-    /// All models tagged with `domain`, downloaded first.
+    /// Models tagged with `domain`, downloaded first.
     static func models(in domain: Domain) -> [Model] {
-        allModels
+        listedModels
             .filter { $0.domain == domain }
             .sorted { $0.isDownloaded && !$1.isDownloaded }
     }

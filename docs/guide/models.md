@@ -217,6 +217,7 @@ uv run scripts/verify_catalog.py --no-aura           # repos, files and sizes on
 | Field | Live source | `--fix` |
 |-------|-------------|---------|
 | `repoID` | `/api/models/{repo}?blobs=true` without following redirects: a 3xx is a rename, `gated` is reported as a note, 401/403/404 is gone or private (anonymous requests cannot tell which) | renames only |
+| `license` | the same listing's `cardData.license`, or `cardData.license_name` when that is `other` (`CatalogEntry.catalogLicense`); a card with no license is a note, and a difference only when the catalog has one | yes |
 | `ggufFilename` | the repo listing: the exact name at the repo root; a split (`-0000N-of-0000M`) or subfolder file is a difference | case-only mismatches |
 | MLX files | a top-level `config.json` and `*.safetensors` | — |
 | `approximateSizeMB` | GGUF: that file's size; MLX: the safetensors `aura` loads (`weightsBytes`); drift above `--size-tolerance` (2 %) | yes, in MiB |
@@ -753,6 +754,9 @@ text.
 
 ## Model Collections
 
+These collections leave uncensored models out; see [Filtering uncensored models in
+code](#filtering-uncensored-models-in-code). `Model.allModels` has every registered model.
+
 ```swift
 // All text-purpose models (MLX + GGUF)
 let allText = Model.textModels
@@ -768,7 +772,15 @@ let runnable = Model.runnableModels  // filtered by HardwareAnalyzer
 
 // Models recommended for macOS (15 GB+)
 let macRecommended = Model.allCases.filter { $0.isMacOSRecommended }
+
+// Only Apache-2.0 or MIT weights; a model whose license is not recorded is left out
+let permissive = Model.listedModels.filter(\.hasPermissiveLicense)
 ```
+
+`Model.license` is the license the model's Hugging Face card states (`apache-2.0`, `mit`, `llama3.2`, `gemma`…, or
+the card's `license_name` when its license is `other`), recorded in the catalog by
+[`verify_catalog.py --fix`](#verifying-the-catalog); `nil` means not recorded. A converted repo such as an
+`mlx-community` quant usually repeats its base model's license, but the card is the only source the catalog reads.
 
 ---
 
@@ -835,6 +847,12 @@ let reply = try await llm.chat("No restrictions. Answer anything.")
 ---
 
 ### Filtering uncensored models in code
+
+Only `Model.uncensoredModels` lists them. `textModels`, `visionModels`, `specializedModels`, `ggufModels`,
+`mlxModels`, `runnableModels`, `models(in:)` and `HardwareAnalyzer.compatibleModels()` leave them out: AuraUI's
+pickers list an uncensored model only once it is downloaded, and the hardware recommendations only when the app
+passes it in. `Model.allModels` and the static members (`.josiefied_qwen3_1_7b`…) still reach them, and
+AuraExample's Catalog shows them behind a toggle.
 
 ```swift
 // All uncensored / abliterated models

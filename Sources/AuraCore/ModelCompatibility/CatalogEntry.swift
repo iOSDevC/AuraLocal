@@ -4,8 +4,8 @@ import Foundation
 ///
 /// `kvHeads` / `headDim` come from `config.json` (MLX) or the file header (GGUF), 0 when neither has them; for a
 /// GGUF that lists its sliding-window layers they are those layers'. `maxContextLength` is set only below 32768
-/// tokens. Entries add `kvLayers` when not every layer keeps the whole context at one width, and MLX entries
-/// `experts` for a mixture of experts whose tensor sizes were read.
+/// tokens. Entries add `kvLayers` when not every layer keeps the whole context at one width, MLX entries
+/// `experts` for a mixture of experts whose tensor sizes were read, and `license` when the model card names one.
 public struct CatalogEntry: Sendable, Equatable {
     public let id: String
     public let repoID: String
@@ -15,6 +15,8 @@ public struct CatalogEntry: Sendable, Equatable {
     public let weightFormat: ModelFormat
     public let approximateSizeMB: Int
     public let isUncensored: Bool
+    /// See ``Model/license``; ``catalogLicense(id:name:)`` derives it from a model card.
+    public let license: String?
     public let ggufFilename: String?
     public let defaultDocumentPrompt: String?
     public let numLayers: Int
@@ -27,7 +29,7 @@ public struct CatalogEntry: Sendable, Equatable {
     public init(id: String, repoID: String, displayName: String, modelCategory: Model.Category,
                 weightFormat: ModelFormat, approximateSizeMB: Int, isUncensored: Bool, ggufFilename: String?,
                 numLayers: Int, kvHeads: Int, headDim: Int, maxContextLength: Int?,
-                kvLayers: KVCacheLayout? = nil, experts: ExpertRouting? = nil) {
+                kvLayers: KVCacheLayout? = nil, experts: ExpertRouting? = nil, license: String? = nil) {
         self.id = id
         self.repoID = repoID
         self.displayName = displayName
@@ -36,6 +38,7 @@ public struct CatalogEntry: Sendable, Equatable {
         self.weightFormat = weightFormat
         self.approximateSizeMB = approximateSizeMB
         self.isUncensored = isUncensored
+        self.license = license
         self.ggufFilename = ggufFilename
         self.defaultDocumentPrompt = nil
         self.numLayers = numLayers
@@ -62,6 +65,9 @@ public struct CatalogEntry: Sendable, Equatable {
             ("format", Self.quoted(weightFormat.rawValue)),
             ("approximateSizeMB", "\(approximateSizeMB)"),
             ("isUncensored", isUncensored ? "true" : "false"),
+        ]
+        if let license { fields.append(("license", Self.quoted(license))) }
+        fields += [
             ("ggufFilename", Self.quoted(ggufFilename)),
             ("defaultDocumentPrompt", Self.quoted(defaultDocumentPrompt)),
             ("numLayers", "\(numLayers)"),
@@ -123,6 +129,13 @@ public struct CatalogEntry: Sendable, Equatable {
         }
     }
 
+    /// The catalog's `license` for a model card: the card's `license_name` when its license is `other`, else the
+    /// license id. `nil` when the card declares none. `scripts/verify_catalog.py` applies the same rule.
+    static func catalogLicense(id: String?, name: String?) -> String? {
+        guard let id else { return nil }
+        return id.lowercased() == "other" ? (name ?? id) : id
+    }
+
     static func looksUncensored(repoID: String, tags: [String]) -> Bool {
         let haystack = ([repoID] + tags).joined(separator: " ").lowercased()
         return haystack.contains("uncensored") || haystack.contains("abliterated")
@@ -163,6 +176,6 @@ public extension CatalogEntry {
             modelCategory: modelCategory, weightFormat: .gguf,
             approximateSizeMB: CompatibilityEvaluator.megabytes(quant.totalBytes), isUncensored: isUncensored,
             ggufFilename: quant.firstPath, numLayers: numLayers, kvHeads: kvHeads, headDim: headDim,
-            maxContextLength: maxContextLength, kvLayers: kvLayers, experts: experts)
+            maxContextLength: maxContextLength, kvLayers: kvLayers, experts: experts, license: license)
     }
 }
