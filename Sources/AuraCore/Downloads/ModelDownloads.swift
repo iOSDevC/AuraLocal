@@ -179,13 +179,8 @@ public enum ModelDownloads {
     static func snapshotFiles(repoID: String, patterns: [String], revision: String = snapshotFolder,
                               transfer: HubFileTransfer) async throws -> [PlannedFile] {
         let listed = try await transfer.listTopLevelFiles(repoID: repoID, revision: revision)
-        let matching = listed.filter { file in
-            !file.path.hasPrefix(".") && patterns.contains { matches(file.path, pattern: $0) }
-        }
-        let wantsWeights = patterns.contains("*.safetensors")
-        if matching.isEmpty || (wantsWeights && !hasWeightsAndConfig(matching.map(\.path))) {
-            throw ModelDownloadError.incompleteRepo(repoID: repoID)
-        }
+        let matching = listed.filter { isSnapshotFile($0.path, patterns: patterns) }
+        try requireLoadable(matching.map(\.path), patterns: patterns, repoID: repoID)
         var planned: [PlannedFile] = []
         for file in matching {
             planned.append(try await sized(file, repoID: repoID, revision: revision, transfer: transfer))
@@ -207,6 +202,19 @@ public enum ModelDownloads {
 
     static func hasWeightsAndConfig(_ paths: [String]) -> Bool {
         paths.contains { $0.lowercased().hasSuffix(".safetensors") } && paths.contains("config.json")
+    }
+
+    /// A top-level entry a snapshot fetches: not hidden (`.gitattributes`) and matching one of `patterns`.
+    static func isSnapshotFile(_ path: String, patterns: [String]) -> Bool {
+        !path.hasPrefix(".") && patterns.contains { matches(path, pattern: $0) }
+    }
+
+    /// Throws ``ModelDownloadError/incompleteRepo(repoID:)`` when nothing matched, or when a weights download
+    /// (`patterns` include `*.safetensors`) would miss the weights or `config.json`.
+    static func requireLoadable(_ paths: [String], patterns: [String], repoID: String) throws {
+        if paths.isEmpty || (patterns.contains("*.safetensors") && !hasWeightsAndConfig(paths)) {
+            throw ModelDownloadError.incompleteRepo(repoID: repoID)
+        }
     }
 
     /// `*.ext` globs as mlx-swift-lm passes them; anything else must match the name exactly.

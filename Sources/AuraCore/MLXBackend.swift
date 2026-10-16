@@ -406,7 +406,10 @@ struct AuraHFDownloader: Downloader {
                 case largeFile = "lfs"
             }
         }
-        let entries = try JSONDecoder().decode([F].self, from: data).filter { $0.type == "file" }
+        let entries = try JSONDecoder().decode([F].self, from: data).filter { entry in
+            guard entry.type == "file", let path = entry.path else { return false }
+            return ModelDownloads.isSnapshotFile(path, patterns: patterns)
+        }
         let files = entries.compactMap(\.path)
         var checksums: [String: String] = [:]
         for entry in entries {
@@ -414,10 +417,8 @@ struct AuraHFDownloader: Downloader {
                 checksums[path] = sha256
             }
         }
-        guard !files.isEmpty else {
-            throw AuraError.invalidResponse("Hugging Face snapshot contains no files")
-        }
-        Self.log.info("repo has \(files.count) files: \(files.joined(separator: ", "), privacy: .public)")
+        try ModelDownloads.requireLoadable(files, patterns: patterns, repoID: id)
+        Self.log.info("fetching \(files.count) files: \(files.joined(separator: ", "), privacy: .public)")
 
         try Task.checkCancellation()
 
@@ -504,6 +505,12 @@ struct AuraHFDownloader: Downloader {
         }
 
         try Task.checkCancellation()
+        // A tokenizer-only call (mlx-swift-lm's `tokenizerDownloadPatterns`) fetches no weights,
+        // so it must not mark the snapshot loadable.
+        guard files.contains(where: { $0.lowercased().hasSuffix(".safetensors") }) else {
+            Self.log.info("no weights requested — \(aggregated / 1_000_000) MB · no marker")
+            return dir
+        }
         try Data().write(to: completionMarker, options: .atomic)
         Self.log.info("snapshot complete — \(aggregated / 1_000_000) MB · marker written")
         return dir

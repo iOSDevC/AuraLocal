@@ -421,7 +421,7 @@ decides it. Any blocker means **Won't run**.
 | `mlx.model-type` | top-level `model_type` is in neither `LLMTypeRegistry` (54 types) nor `VLMTypeRegistry` (17) | the factories dispatch on the top-level key; `text_config.model_type` does not count |
 | `mlx.weight-prefixes` | a `qwen3_5` / `qwen3_5_moe` tensor outside `language_model`, `model`, `lm_head`, `vision_tower`, `mtp` — or, for vision weights whose safetensors `__metadata__.format` is `mlx`, outside `language_model` and `vision_tower` | the pinned `sanitize` maps only those (the VLM one returns MLX-format weights unchanged); anything else fails `update(parameters:verify: [.all])` |
 | `mlx.towers` | a type registered only as an LLM (e.g. `gemma3n`) whose weights hold vision or audio towers (`vision_tower`, `audio_tower`, `embed_vision`, `embed_audio`, `multi_modal_projector`…) | its pinned text model has no such modules and no LLM-only sanitize drops them |
-| `mlx.extra-safetensors` | a top-level `*.safetensors` missing from the weight map, or a map that points at some missing files; a map that references **none** of the shipped files is only a caveat (stale index) | AuraLocal's downloader fetches every top-level file and `loadWeights` merges every `*.safetensors` without reading the index, so a stale index is replaced by the shipped files' headers |
+| `mlx.extra-safetensors` | a top-level `*.safetensors` missing from the weight map, or a map that points at some missing files; a map that references **none** of the shipped files is only a caveat (stale index) | AuraLocal's downloaders fetch every top-level `*.safetensors` and `loadWeights` merges every one without reading the index, so a stale index is replaced by the shipped files' headers |
 | `mlx.rope` | a rope type `RoPEUtils.initializeRope` does not implement, or a `longrope` without its three fields | `initializeRope` calls `fatalError` — the app crashes |
 | `mlx.category` | a VLM-only type without vision tensors | vision needs a registered VLM type **and** vision weights; otherwise the model loads as text |
 | `gguf.architecture` | `general.architecture` not in b8851's `LLM_ARCH_NAMES`, added later (`qwen4exp` → b10660), or an encoder / diffusion architecture | llama.cpp rejects unknown architectures |
@@ -619,7 +619,8 @@ try ModelDownloads.delete(model)                                // file + .parti
   Core ML Stable Diffusion this way
   (see [Image generation]({{ '/guide/imagegen' | relative_url }})).
 - **What MLX fetches**: top-level `*.safetensors`, `*.json` and `*.jinja` files of `main` only (mlx-swift-lm's
-  patterns). Weights in a subfolder, or no `config.json`, throw `ModelDownloadError.incompleteRepo`.
+  patterns), here and on the MLX load path; hidden files, READMEs, images and other weight formats (`.bin`,
+  `.gguf`…) are skipped. Weights in a subfolder, or no `config.json`, throw `ModelDownloadError.incompleteRepo`.
 - **What GGUF fetches**: one single-file quant at the top level of the repo. Split (`-00001-of-0000N`) and
   subfolder quants throw `ModelDownloadError.unsupported`.
 - **Resume**: each file is fetched in 32 MB `Range` chunks into `<file>.partial`, which survives a cancel, a

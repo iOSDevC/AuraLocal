@@ -293,6 +293,43 @@ struct AuraHFDownloaderTests {
         #expect(fixture.requests.isEmpty)
     }
 
+    @Test("Only non-hidden top-level files matching the requested patterns are sized and fetched")
+    func fetchesOnlyMatchingFiles() async throws {
+        let fixture = try SnapshotDownloadFixture(maximumRangeRequests: 3, handler: { request in
+            DownloadResponse.listing(DownloadResponse.mixedRepo, request)
+        })
+        _ = try await fixture.download(patterns: ModelDownloads.mlxFilePatterns)
+        #expect(fixture.requestedFiles == ["model.safetensors", "config.json", "chat_template.jinja"])
+        #expect(!FileManager.default.fileExists(atPath: fixture.snapshotURL.appending(path: "README.md").path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.snapshotURL.appending(path: "pytorch_model.bin").path))
+        #expect(fixture.hasCompletionMarker)
+    }
+
+    @Test("A tokenizer-only call fetches no weights and never marks the snapshot complete")
+    func tokenizerPatternsLeaveSnapshotIncomplete() async throws {
+        let fixture = try SnapshotDownloadFixture(maximumRangeRequests: 2, handler: { request in
+            DownloadResponse.listing(DownloadResponse.mixedRepo, request)
+        })
+        _ = try await fixture.download(patterns: ["*.json", "*.jinja"])
+        #expect(fixture.requestedFiles == ["config.json", "chat_template.jinja"])
+        #expect(!fixture.hasCompletionMarker)
+    }
+
+    @Test("A listing without safetensors weights or config.json fails before any file request", arguments: [
+        ["README.md", "pytorch_model.bin", "model.gguf", "config.json"],
+        ["README.md", "model.safetensors"]
+    ])
+    func rejectsUnloadableListing(paths: [String]) async throws {
+        let fixture = try SnapshotDownloadFixture(handler: { request in
+            DownloadResponse.listing(paths, request)
+        })
+        await #expect(throws: ModelDownloadError.self) {
+            _ = try await fixture.download(patterns: ModelDownloads.mlxFilePatterns)
+        }
+        #expect(fixture.requestedFiles.isEmpty)
+        #expect(!fixture.hasCompletionMarker)
+    }
+
     @Test("Insufficient free space fails before downloading model bytes")
     func rejectsInsufficientDiskSpace() async throws {
         let fixture = try SnapshotDownloadFixture(availableDiskCapacity: { _ in 4 })
@@ -340,6 +377,20 @@ private struct DownloadResponse: Sendable {
         if request.url?.path.contains("/tree/") == true {
             let tree = "[{\"path\":\"model.safetensors\",\"type\":\"file\",\"lfs\":{\"oid\":\"\(sha256)\"}}]"
             return .init(status: 200, data: Data(tree.utf8))
+        }
+        return standard(request)
+    }
+
+    /// What a converted repo often ships besides the MLX files, including a hidden file that matches `*.json`.
+    static let mixedRepo = [
+        "README.md", ".gitattributes", ".eval_results.json", "model.safetensors", "config.json",
+        "chat_template.jinja", "pytorch_model.bin", "model.gguf", "model.onnx", "preview.png"
+    ]
+
+    static func listing(_ paths: [String], _ request: URLRequest) -> Self {
+        if request.url?.path.contains("/tree/") == true {
+            let entries = paths.map { "{\"path\":\"\($0)\",\"type\":\"file\"}" }.joined(separator: ",")
+            return .init(status: 200, data: Data("[\(entries)]".utf8))
         }
         return standard(request)
     }
@@ -403,10 +454,15 @@ private final class SnapshotDownloadFixture: @unchecked Sendable {
     var hasCompletionMarker: Bool { FileManager.default.fileExists(atPath: markerURL.path) }
     var requests: [URLRequest] { lock.withLock { recordedRequests } }
     var rangeRequests: Int { requests.filter { $0.value(forHTTPHeaderField: "Range") != nil }.count }
+    /// Repo files the downloader sized (HEAD) or fetched (Range), by name.
+    var requestedFiles: Set<String> {
+        Set(requests.filter { $0.url?.path.contains("/resolve/") == true }.compactMap { $0.url?.lastPathComponent })
+    }
 
     func download(
         useLatest: Bool = false,
         fallbackDirectories: [URL] = [],
+        patterns: [String] = ["*"],
         progressHandler: @escaping @Sendable (Progress) -> Void = { _ in }
     ) async throws -> URL {
         try await AuraHFDownloader(
@@ -416,7 +472,7 @@ private final class SnapshotDownloadFixture: @unchecked Sendable {
             waitBeforeRetry: { _ in },
             availableDiskCapacity: availableDiskCapacity
         ).download(
-            id: repoID, revision: nil, matching: ["*"], useLatest: useLatest,
+            id: repoID, revision: nil, matching: patterns, useLatest: useLatest,
             progressHandler: progressHandler
         )
     }
