@@ -1,0 +1,195 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays 06:17 UTC: the canary jobs below.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # The live suites skip themselves unless these name a model, a bundle or a running server. The runners have
+  # none of them, and the tests must never reach a real provider.
+  AURA_GGUF_TEST_MODEL: ""
+  AURA_LIVE_PROVIDER_TESTS: "0"
+  AURA_LIVE_IMAGEGEN: "0"
+
+jobs:
+  test:
+    name: macOS tests (Xcode ${{ matrix.xcode }})
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            xcode: "26.6"
+          - runner: xcode-27
+            xcode: "27.0"
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Metal toolchain
+        # Xcode 26+ ships it as a separate component and runner images do not always include it. SwiftPM's
+        # newer build system compiles mlx-swift's Metal shaders, so swift build needs it too.
+        run: |
+          if ! xcrun -sdk macosx metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+      - name: Resolve from Package.resolved
+        # Fails when Package.swift and the committed lockfile disagree.
+        run: swift package resolve --force-resolved-versions
+      - name: Build
+        run: swift build --build-tests --force-resolved-versions
+      - name: Test
+        run: swift test --skip-build
+
+  ios:
+    name: AuraExample for iOS (Xcode ${{ matrix.xcode }})
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        include:
+          - runner: macos-26
+            xcode: "26.6"
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Metal toolchain
+        # Xcode 26+ ships it as a separate component and runner images do not always include it.
+        run: |
+          if ! xcrun -sdk iphoneos metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+      - name: Build
+        run: |
+          xcodebuild build \
+            -project Sources/AuraExample/AuraExample.xcodeproj \
+            -scheme AuraExample \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .build/xcode \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipMacroValidation -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Privacy manifests are bundled
+        run: |
+          products=.build/xcode/Build/Products/Debug-iphoneos
+          for manifest in \
+            AuraExample.app/PrivacyInfo.xcprivacy \
+            AuraExample.app/AuraLocal_AuraCore.bundle/PrivacyInfo.xcprivacy \
+            AuraExample.app/AuraLocal_AuraImageGen.bundle/PrivacyInfo.xcprivacy; do
+            plutil -lint "$products/$manifest"
+          done
+
+  # Integrators get no lockfile from us: SwiftPM honours only the root package's Package.resolved. These jobs
+  # resolve from scratch, as a new integrator would, so upstream releases that break them show up here first.
+  canary:
+    name: Canary, fresh resolve on macOS (Xcode ${{ matrix.xcode }})
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            xcode: "26.6"
+          - runner: xcode-27
+            xcode: "27.0"
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Metal toolchain
+        # Xcode 26+ ships it as a separate component and runner images do not always include it. SwiftPM's
+        # newer build system compiles mlx-swift's Metal shaders, so swift build needs it too.
+        run: |
+          if ! xcrun -sdk macosx metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+      - name: Resolve without a lockfile
+        run: |
+          rm Package.resolved
+          swift package resolve
+      - name: Report pins that differ from the lockfile
+        run: |
+          git show HEAD:Package.resolved > "$RUNNER_TEMP/committed.resolved"
+          python3 - "$RUNNER_TEMP/committed.resolved" Package.resolved >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, sys
+          def pins(path):
+              with open(path) as f:
+                  return {p["identity"]: p["state"].get("version") or p["state"]["revision"][:7]
+                          for p in json.load(f)["pins"]}
+          old, new = pins(sys.argv[1]), pins(sys.argv[2])
+          print("| Package | Lockfile | Fresh resolve |\n|---|---|---|")
+          for name in sorted(old.keys() | new.keys()):
+              mark = "" if old.get(name) == new.get(name) else " **changed**"
+              print(f"| {name} | {old.get(name, '-')} | {new.get(name, '-')}{mark} |")
+          PY
+      - name: Build
+        run: swift build --build-tests
+      - name: Test
+        run: swift test --skip-build
+
+  canary-ios:
+    name: Canary, fresh resolve of AuraExample for iOS (Xcode ${{ matrix.xcode }})
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        include:
+          - runner: xcode-27
+            xcode: "27.0"
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Metal toolchain
+        run: |
+          if ! xcrun -sdk iphoneos metal --version >/dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain
+          fi
+      - name: Build without a lockfile
+        # iOS-only breakage (e.g. mlx-swift 0.31.5, #436) never shows up in a macOS build.
+        run: |
+          rm Sources/AuraExample/AuraExample.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          xcodebuild build \
+            -project Sources/AuraExample/AuraExample.xcodeproj \
+            -scheme AuraExample \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath .build/xcode \
+            -skipMacroValidation -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO
