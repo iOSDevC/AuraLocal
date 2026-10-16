@@ -73,6 +73,10 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 - `VisionDocumentTool` (`system.vision.document`, iOS 26 / macOS 26): Vision's `RecognizeDocumentsRequest` with
   paragraphs, tables and lines with boxes, and the money amounts (as `Decimal` plus currency), dates, contacts and
   links Data Detection finds; `aura ml document <image>` prints them.
+- `aura receipt extract|eval`: receipt fields (merchant, date, total, tax, currency) read from a photo by a
+  rule-based baseline and, with `--model`, by a local model at temperature 0 under a JSON Schema. Model values are
+  checked against the OCR text, and `eval` scores both against a labelled CSV with pass/fail thresholds. The
+  deterministic part lives in the `ReceiptSpike` target, which is not a library product.
 - `Model.license`, the license the model's Hugging Face card states, and `Model.hasPermissiveLicense` (Apache-2.0
   or MIT; an unrecorded license is not permissive). The catalog's `license` key is checked and written by
   `scripts/verify_catalog.py`, and `aura models check --entry` fills it in. 46 of the 53 entries record one; the
