@@ -7,13 +7,15 @@ import ReceiptSpike
 extension AuraCLI {
 
     static let receiptUsage = """
-        usage: aura receipt extract <image>... [--model <id | .gguf path>] [--lang es-MX]...
-               aura receipt eval <labels.csv> [--images <dir>] [--model <id | .gguf path>] [--lang es-MX]...
+        usage: aura receipt extract <image>... [--model <id | .gguf path | URL>] [--lang es-MX]...
+               aura receipt eval <labels.csv> [--images <dir>] [--model <id | .gguf path | URL>] [--lang es-MX]...
                                  [--min-total 0.9] [--min-date 0.9] [--min-merchant 0.8] [--min-tax 0.8]
                                  [--report <out.json>]
 
-        Labels CSV: a header naming file, merchant, date (YYYY-MM-DD), total and optionally tax and currency;
-        an empty cell means the receipt does not show the field. --images defaults to the CSV's folder.
+        --model takes a catalog id, an https or file URL to a .gguf, or any other argument ending in .gguf as a
+        path. Labels CSV: a header naming file, merchant, date (YYYY-MM-DD), total and optionally tax and
+        currency; an empty cell means the receipt does not show the field. --images defaults to the CSV's
+        folder. Currency is extracted and reported but not scored, gated or anchored.
         eval exits 1 when the model (or, without --model, the baseline) misses a --min-* threshold.
         """
 
@@ -194,13 +196,15 @@ final class ReceiptReader {
         }
     }
 
-    /// A catalog id (`qwen35_2b_text`), or a `.gguf` path or URL for the spike's GGUF fallback.
+    /// A catalog id (`qwen35_2b_text`), an https or file URL to a `.gguf`, or any other argument ending in `.gguf`
+    /// as a path to one.
     static func model(for argument: String) throws -> Model {
         if let model = ModelRegistry.shared.model(id: argument) { return model }
-        let source = argument.hasPrefix("/") || argument.hasPrefix(".")
-            ? URL(fileURLWithPath: argument).absoluteString : argument
+        let lowered = argument.lowercased()
+        let isURL = ["http://", "https://", "file://"].contains { lowered.hasPrefix($0) }
+        let source = lowered.hasSuffix(".gguf") && !isURL ? URL(fileURLWithPath: argument).absoluteString : argument
         guard let model = Model.fromURL(source) else {
-            throw CLIUsageError("\(argument) is neither a catalog model id nor a .gguf path or URL.")
+            throw CLIUsageError("\(argument) is neither a catalog model id nor a .gguf path or https URL.")
         }
         return model
     }

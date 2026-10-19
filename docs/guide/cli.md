@@ -174,7 +174,8 @@ whole top-level quant.
 ## Receipt fields (`aura receipt`)
 
 A harness for measuring how well a local model reads receipts. `VisionDocumentTool` reads the image, and the
-fields (merchant, date, total, tax, currency) are filled two ways from the same text:
+fields (merchant, date, total, tax, currency) are filled two ways from the same text. Currency is extracted and
+reported, but it is not scored, gated or checked against the receipt:
 
 - **By rule (the baseline):** the last amount on the last line that names a total and is not a subtotal or tax,
   the first line that names a tax, the first detected date, and the document title or first plain line as the
@@ -182,12 +183,12 @@ fields (merchant, date, total, tax, currency) are filled two ways from the same 
 - **By a model (`--model`):** temperature 0, a JSON Schema the reply must follow, and the OCR text plus the
   amounts and dates Data Detection found as the only input.
 
-Each model field is then checked against the receipt: whether its value is printed there ("anchored"). An app can
-send an unanchored field to review instead of trusting it.
+Each model field but currency is then checked against the receipt: whether its value is printed there
+("anchored"). An app can send an unanchored field to review instead of trusting it.
 
 ```
-aura receipt extract <image>... [--model <id | .gguf path>] [--lang es-MX]...
-aura receipt eval <labels.csv> [--images <dir>] [--model <id | .gguf path>] [--lang es-MX]...
+aura receipt extract <image>... [--model <id | .gguf path | URL>] [--lang es-MX]...
+aura receipt eval <labels.csv> [--images <dir>] [--model <id | .gguf path | URL>] [--lang es-MX]...
                   [--min-total 0.9] [--min-date 0.9] [--min-merchant 0.8] [--min-tax 0.8] [--report <out.json>]
 ```
 
@@ -204,8 +205,11 @@ cafe.heic,"Coffee Bar, Inc.",2026-02-14,8.75,,USD
 `--min-*` thresholds, decided before the run, it ends with `gate: PASS`, or `gate: FAIL` and exit status 1. The model
 is gated, or the baseline when there is no `--model`. Totals and taxes compare by value and dates exactly. Merchants
 compare by letters and digits, and either name may contain the other ("OXXO" matches "OXXO Tienda 123").
-`--report` writes every receipt's fields and results as JSON. `--model` takes a catalog id (`qwen35_2b_text`,
-`qwen3_4b`) or a local or Hugging Face `.gguf`, and the model is loaded once for the whole run.
+`--report` writes every receipt's fields and results as JSON.
+
+`--model` takes a catalog id (`qwen35_2b_text`, `qwen3_4b`), an `https` URL to a `.gguf` (Hugging Face or direct),
+or a local `.gguf`: any argument ending in `.gguf` that is not an `http(s)` or `file` URL is read as a path,
+relative to the current directory unless absolute. The model is loaded once for the whole run.
 
 ## Homebrew
 
