@@ -28,7 +28,7 @@ public enum ReceiptHeuristic {
         let tax = lines.first { ReceiptText.containsWords($0, taxWords) }.flatMap(lastAmount(on:))
         let amounts = document.amounts
         let currency = amounts.first { total != nil && $0.amount == total }?.currency ?? amounts.first?.currency
-        let date = document.detectedData.first { $0.kind == .date }?.date.map { ReceiptText.isoDate($0, in: timeZone) }
+        let date = document.detections.first { $0.kind == .date }?.startDate.map { ReceiptText.isoDate($0, in: timeZone) }
         return ReceiptFields(merchant: merchant(in: document, lines: lines), date: date, total: total, tax: tax,
                              currency: currency)
     }
@@ -53,7 +53,7 @@ public enum ReceiptHeuristic {
         if let title = document.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
             return title
         }
-        let dates = document.detectedData.filter { $0.kind == .date && !$0.text.isEmpty }.map(\.text)
+        let dates = document.detections.filter { $0.kind == .date && !$0.text.isEmpty }.map(\.text)
         return lines.first { line in
             line.contains(where: \.isLetter) && ReceiptText.numbers(in: line).allSatisfy { !$0.hasFraction }
                 && !ReceiptText.containsWords(line, totalWords + subtotalWords + taxWords + dateWords)

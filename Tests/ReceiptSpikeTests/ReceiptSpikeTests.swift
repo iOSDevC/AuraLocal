@@ -18,7 +18,7 @@ final class ReceiptSpikeTests: XCTestCase {
         VisionDocumentTool.Document(
             text: lines.joined(separator: "\n"), title: title,
             lines: lines.map { VisionOCRTool.RecognizedLine(text: $0, confidence: 1, boundingBox: .zero) },
-            detectedData: detected)
+            detections: detected)
     }
 
     /// A Mexican supermarket receipt as Vision would read it.
@@ -26,7 +26,7 @@ final class ReceiptSpikeTests: XCTestCase {
         "SUPERMERCADO LA PLAZA", "Fecha: 03/03/2026 14:05", "Leche entera 1L   25.50", "Pan dulce x 2   12.00",
         "SUBTOTAL   37.50", "IVA 16%   6.00", "TOTAL   $43.50", "Gracias por su compra",
     ], detected: [
-        .init(kind: .date, text: "03/03/2026 14:05", date: day(2026, 3, 3)),
+        .init(kind: .date, text: "03/03/2026 14:05", startDate: day(2026, 3, 3)),
         .init(kind: .moneyAmount, text: "$43.50", amount: Decimal(string: "43.50"), currency: "MXN"),
     ])
 

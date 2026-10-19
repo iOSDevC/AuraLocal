@@ -33,13 +33,13 @@ final class VisionDocumentToolTests: XCTestCase {
     }
 
     func testAmountsKeepOnlyMoneyMatches() {
-        func match(_ kind: VisionDocumentTool.DetectedData.Kind) -> VisionDocumentTool.DetectedData {
+        func match(_ kind: VisionDocumentTool.DetectedData.DataKind) -> VisionDocumentTool.DetectedData {
             .init(kind: kind, text: "x", boundingBox: nil, amount: kind == .moneyAmount ? 1 : nil,
-                  currency: kind == .moneyAmount ? "USD" : nil, date: nil)
+                  currency: kind == .moneyAmount ? "USD" : nil, startDate: nil)
         }
         let document = VisionDocumentTool.Document(
             text: "", title: nil, paragraphs: [], lines: [], tables: [],
-            detectedData: [match(.date), match(.moneyAmount), match(.phoneNumber)])
+            detections: [match(.date), match(.moneyAmount), match(.phoneNumber)])
         XCTAssertEqual(document.amounts.map(\.kind), [.moneyAmount])
     }
 
@@ -61,7 +61,7 @@ final class VisionDocumentToolTests: XCTestCase {
         let latte = try XCTUnwrap(document.lines.first { $0.text.localizedCaseInsensitiveContains("latte") })
         XCTAssertGreaterThan(latte.boundingBox.midY, total.boundingBox.midY, "bottom-left origin")
 
-        let matches = document.detectedData.map {
+        let matches = document.detections.map {
             "\($0.kind.rawValue) '\($0.text)' \(String(describing: $0.amount)) \(String(describing: $0.boundingBox))"
         }
         let amounts = document.amounts
@@ -69,11 +69,11 @@ final class VisionDocumentToolTests: XCTestCase {
         XCTAssertTrue(totalAmount.text.contains("12.75"), "matches: \(matches); text: \(document.text)")
         XCTAssertTrue(amounts.allSatisfy { $0.currency?.isEmpty == false }, "currencies: \(amounts.map(\.currency))")
         // A span Vision gives no range for has empty text; every other span comes from the document's text.
-        XCTAssertTrue(document.detectedData.allSatisfy { $0.text.isEmpty || document.text.contains($0.text) },
+        XCTAssertTrue(document.detections.allSatisfy { $0.text.isEmpty || document.text.contains($0.text) },
                       "matches: \(matches); text: \(document.text)")
 
-        let date = try XCTUnwrap(document.detectedData.first { $0.kind == .date }?.date,
-                                 "matches: \(document.detectedData.map { "\($0.kind): \($0.text)" })")
+        let date = try XCTUnwrap(document.detections.first { $0.kind == .date }?.startDate,
+                                 "matches: \(document.detections.map { "\($0.kind): \($0.text)" })")
         let day = Calendar.current.dateComponents([.year, .month, .day], from: date)
         XCTAssertEqual([day.year, day.month, day.day], [2026, 3, 3])
     }
@@ -98,7 +98,7 @@ final class VisionDocumentToolTests: XCTestCase {
         }
         let image = try XCTUnwrap(VisionFixtures.blankImage())
         let documents = try await VisionDocumentTool().readDocuments(in: image)
-        XCTAssertTrue(documents.allSatisfy { $0.text.isEmpty && $0.detectedData.isEmpty },
+        XCTAssertTrue(documents.allSatisfy { $0.text.isEmpty && $0.detections.isEmpty },
                       "documents: \(documents.map(\.text))")
     }
 

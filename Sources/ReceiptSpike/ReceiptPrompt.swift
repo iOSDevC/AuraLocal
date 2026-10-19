@@ -48,8 +48,8 @@ public enum ReceiptPrompt {
         if !amounts.isEmpty {
             sections.append("Amounts found in the text: " + amounts.joined(separator: ", "))
         }
-        let dates = document.detectedData.compactMap { match -> String? in
-            guard match.kind == .date, let date = match.date else { return nil }
+        let dates = document.detections.compactMap { match -> String? in
+            guard match.kind == .date, let date = match.startDate else { return nil }
             let day = ReceiptText.isoDate(date, in: timeZone)
             return match.text.isEmpty ? day : "\(match.text) (\(day))"
         }
@@ -99,7 +99,7 @@ public struct ReceiptAnchors: Sendable, Equatable {
     }
 
     static func dateAnchored(_ iso: String, in document: VisionDocumentTool.Document, timeZone: TimeZone) -> Bool {
-        let detected = document.detectedData.compactMap { $0.kind == .date ? $0.date : nil }
+        let detected = document.detections.compactMap { $0.kind == .date ? $0.startDate : nil }
         if detected.contains(where: { ReceiptText.isoDate($0, in: timeZone) == iso }) { return true }
         let parts = iso.split(separator: "-").map(String.init)
         guard parts.count == 3, let month = Int(parts[1]), let day = Int(parts[2]) else { return false }

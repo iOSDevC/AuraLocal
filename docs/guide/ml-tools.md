@@ -232,7 +232,7 @@ and its date as a `Date`. The returned `Document` has these fields:
 - `text`, `title` and `paragraphs`, each paragraph with its box.
 - `lines`, the same `RecognizedLine` values `VisionOCRTool.recognizeLines` returns.
 - `tables`, with each cell's text, its row and column ranges and its box. `textRows` gives just the grid.
-- `detectedData`: money amounts, dates, email addresses, phone numbers, postal addresses, links, flight numbers,
+- `detections`: money amounts, dates, email addresses, phone numbers, postal addresses, links, flight numbers,
   tracking numbers, payment identifiers and measurements, each with the matched text and its box. `amounts`
   keeps only the money.
 

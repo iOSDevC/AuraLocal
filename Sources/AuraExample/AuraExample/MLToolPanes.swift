@@ -202,7 +202,7 @@ struct MLImageToolsView: View {
                 }
                 Section("Document — VisionDocumentTool, amounts in purple") {
                     MLOutcomeView(outcome: analysis.documents) { documents in
-                        let matches = documents.flatMap(\.detectedData)
+                        let matches = documents.flatMap(\.detections)
                             .filter { $0.kind == .moneyAmount || $0.kind == .date }
                         let tables = documents.flatMap(\.tables)
                         if documents.allSatisfy({ $0.text.isEmpty }) {
@@ -233,7 +233,7 @@ struct MLImageToolsView: View {
         if let amount = match.amount {
             return "\(amount) \(match.currency ?? "")"
         }
-        return match.date?.formatted(date: .abbreviated, time: .omitted) ?? match.kind.rawValue
+        return match.startDate?.formatted(date: .abbreviated, time: .omitted) ?? match.kind.rawValue
     }
 
     private func load(_ data: Data?) {

@@ -85,10 +85,10 @@ extension AuraCLI {
                 print("table \(number + 1)    \(box(table.boundingBox))")
                 for row in table.textRows { print("  " + row.map(oneLine).joined(separator: " | ")) }
             }
-            for match in document.detectedData {
+            for match in document.detections {
                 var value = ""
                 if let amount = match.amount { value = "\(amount) \(match.currency ?? "")  " }
-                if let date = match.date { value = "\(date.formatted(.iso8601))  " }
+                if let date = match.startDate { value = "\(date.formatted(.iso8601))  " }
                 let kind = match.kind.rawValue.padding(toLength: 22, withPad: " ", startingAt: 0)
                 print("\(kind) \(value)\(match.boundingBox.map(box) ?? "no box")  \(oneLine(match.text))")
             }
