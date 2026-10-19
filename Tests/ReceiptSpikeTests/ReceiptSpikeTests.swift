@@ -171,4 +171,13 @@ final class ReceiptSpikeTests: XCTestCase {
         XCTAssertEqual(card.failures(against: [.total: 0.9, .date: 0.9, .merchant: 0.5]), [.date])
         XCTAssertEqual(ReceiptScorecard().accuracy(.total), 0)
     }
+
+    func testAMissFailsEveryFieldEvenOneTheReceiptDoesNotShow() {
+        var card = ReceiptScorecard()
+        XCTAssertEqual(card.addMiss(), [.merchant: false, .date: false, .total: false, .tax: false])
+        card.add(ReceiptFields(merchant: "OXXO"), label: ReceiptFields(merchant: "OXXO"))
+        XCTAssertEqual(card.receipts, 2)
+        XCTAssertEqual(card.accuracy(.merchant), 0.5)
+        XCTAssertEqual(card.accuracy(.tax), 0.5)
+    }
 }

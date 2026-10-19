@@ -145,6 +145,14 @@ public struct ReceiptScorecard: Sendable, Equatable {
         return result
     }
 
+    /// Count a receipt nothing was read from (its image or the model failed): every field misses, including one
+    /// the receipt does not show.
+    @discardableResult
+    public mutating func addMiss() -> [ReceiptField: Bool] {
+        receipts += 1
+        return Dictionary(uniqueKeysWithValues: ReceiptField.allCases.map { ($0, false) })
+    }
+
     /// 0…1; 0 before any receipt.
     public func accuracy(_ field: ReceiptField) -> Double {
         receipts == 0 ? 0 : Double(correct[field, default: 0]) / Double(receipts)

@@ -16,7 +16,9 @@ extension AuraCLI {
         path. Labels CSV: a header naming file, merchant, date (YYYY-MM-DD), total and optionally tax and
         currency; an empty cell means the receipt does not show the field. --images defaults to the CSV's
         folder. Currency is extracted and reported but not scored, gated or anchored.
-        eval exits 1 when the model (or, without --model, the baseline) misses a --min-* threshold.
+        eval exits 1 when the model (or, without --model, the baseline) misses a --min-* threshold, and 2 when
+        the run cannot finish or a receipt image cannot be read. A model error on one receipt counts as a miss
+        on every model field and the run goes on.
         """
 
     static func runReceipt(_ args: [String]) async throws {
@@ -24,7 +26,14 @@ extension AuraCLI {
         let rest = Array(args.dropFirst())
         switch subcommand {
         case "extract": try await runReceiptExtract(rest)
-        case "eval": try await runReceiptEval(rest)
+        case "eval":
+            do {
+                try await runReceiptEval(rest)
+            } catch {
+                // Exit status 1 is the gate's FAIL.
+                err("Error: \(error.localizedDescription)\n")
+                exit(2)
+            }
         case "help", "-h", "--help": print(receiptUsage)
         default: throw CLIUsageError(receiptUsage)
         }
@@ -68,22 +77,14 @@ extension AuraCLI {
         var baseline = ReceiptScorecard()
         var model = ReceiptScorecard()
         var rows: [[String: Any]] = []
+        var unreadImages = 0
+        var modelErrors = 0
         for (index, label) in labels.enumerated() {
-            let result = try await reader.read(folder.appendingPathComponent(label.file))
-            let baselineHits = baseline.add(result.baseline, label: label.fields)
-            var row: [String: Any] = ["file": label.file, "label": json(label.fields),
-                                      "baseline": json(result.baseline), "baselineCorrect": json(baselineHits)]
-            var line = "[\(index + 1)/\(labels.count)] \(label.file)  baseline \(marks(baselineHits))"
-            if let read = result.model {
-                let hits = model.add(read.fields, label: label.fields)
-                row["model"] = json(read.fields)
-                row["modelCorrect"] = json(hits)
-                row["anchors"] = json(read.anchors)
-                row["seconds"] = read.seconds
-                line += "  model \(marks(hits))  \(seconds(read.seconds))"
-            }
-            print(line)
-            rows.append(row)
+            let scored = await score(label, in: folder, reader: reader, baseline: &baseline, model: &model)
+            print("[\(index + 1)/\(labels.count)] \(label.file)  \(scored.line)")
+            rows.append(scored.row)
+            if scored.imageUnread { unreadImages += 1 }
+            if scored.modelFailed { modelErrors += 1 }
         }
 
         print("\nfield     baseline   model      threshold")
@@ -99,7 +100,7 @@ extension AuraCLI {
 
         if let reportPath = parsed.value("--report") {
             var summary: [String: Any] = [
-                "receipts": labels.count,
+                "receipts": labels.count, "unreadImages": unreadImages,
                 "thresholds": Dictionary(uniqueKeysWithValues: thresholds.map { ($0.key.rawValue, $0.value) }),
                 "baselineAccuracy": accuracies(baseline), "failedFields": failures.map(\.rawValue),
                 "receiptsDetail": rows,
@@ -107,16 +108,75 @@ extension AuraCLI {
             if reader.hasModel {
                 summary["model"] = parsed.value("--model")
                 summary["modelAccuracy"] = accuracies(model)
+                summary["modelErrors"] = modelErrors
             }
             let data = try JSONSerialization.data(withJSONObject: summary, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: URL(fileURLWithPath: reportPath))
         }
-        guard !thresholds.isEmpty else { return }
-        if failures.isEmpty {
-            print("\ngate: PASS (\(reader.hasModel ? "model" : "baseline"))")
-        } else {
-            print("\ngate: FAIL — \(failures.map(\.rawValue).joined(separator: ", ")) below threshold")
-            exit(1)
+        if modelErrors > 0 {
+            err("\n\(modelErrors) of \(labels.count) receipts got no model fields and count as misses.\n")
+        }
+        if !thresholds.isEmpty {
+            print(failures.isEmpty
+                  ? "\ngate: PASS (\(reader.hasModel ? "model" : "baseline"))"
+                  : "\ngate: FAIL — \(failures.map(\.rawValue).joined(separator: ", ")) below threshold")
+        }
+        if unreadImages > 0 {
+            err("\n\(unreadImages) of \(labels.count) receipt images could not be read; they count as misses.\n")
+            exit(2)
+        }
+        if !failures.isEmpty { exit(1) }
+    }
+
+    private struct ScoredReceipt {
+        let row: [String: Any]
+        let line: String
+        let imageUnread: Bool
+        let modelFailed: Bool
+    }
+
+    /// Scores one receipt without throwing: an image that cannot be read misses every field for both scorecards,
+    /// and a model error misses every model field.
+    private static func score(_ label: ReceiptLabel, in folder: URL, reader: ReceiptReader,
+                              baseline: inout ReceiptScorecard, model: inout ReceiptScorecard) async -> ScoredReceipt {
+        var row: [String: Any] = ["file": label.file, "label": json(label.fields)]
+        let document: VisionDocumentTool.Document
+        do {
+            document = try await reader.readDocument(at: folder.appendingPathComponent(label.file))
+        } catch {
+            let misses = baseline.addMiss()
+            row["error"] = error.localizedDescription
+            row["baselineCorrect"] = json(misses)
+            var line = "baseline \(marks(misses))"
+            if reader.hasModel {
+                row["modelCorrect"] = json(model.addMiss())
+                line += "  model \(marks(misses))"
+            }
+            return ScoredReceipt(row: row, line: line + "  image not read: \(error.localizedDescription)",
+                                 imageUnread: true, modelFailed: false)
+        }
+        let predicted = ReceiptHeuristic.extract(from: document)
+        let baselineHits = baseline.add(predicted, label: label.fields)
+        row["baseline"] = json(predicted)
+        row["baselineCorrect"] = json(baselineHits)
+        let line = "baseline \(marks(baselineHits))"
+        do {
+            guard let read = try await reader.readModel(on: document) else {
+                return ScoredReceipt(row: row, line: line, imageUnread: false, modelFailed: false)
+            }
+            let hits = model.add(read.fields, label: label.fields)
+            row["model"] = json(read.fields)
+            row["modelCorrect"] = json(hits)
+            row["anchors"] = json(read.anchors)
+            row["seconds"] = read.seconds
+            return ScoredReceipt(row: row, line: line + "  model \(marks(hits))  \(seconds(read.seconds))",
+                                 imageUnread: false, modelFailed: false)
+        } catch {
+            let misses = model.addMiss()
+            row["modelError"] = error.localizedDescription
+            row["modelCorrect"] = json(misses)
+            let failure = "  model \(marks(misses))  error: \(error.localizedDescription)"
+            return ScoredReceipt(row: row, line: line + failure, imageUnread: false, modelFailed: true)
         }
     }
 
@@ -210,16 +270,23 @@ final class ReceiptReader {
     }
 
     func read(_ image: URL) async throws -> Reading {
-        let document = try await Self.document(in: try Data(contentsOf: image), languages: languages)
-        let baseline = ReceiptHeuristic.extract(from: document)
-        guard let session else { return Reading(baseline: baseline, model: nil) }
+        let document = try await readDocument(at: image)
+        return Reading(baseline: ReceiptHeuristic.extract(from: document), model: try await readModel(on: document))
+    }
+
+    func readDocument(at image: URL) async throws -> VisionDocumentTool.Document {
+        try await Self.document(in: try Data(contentsOf: image), languages: languages)
+    }
+
+    /// `nil` without `--model`.
+    func readModel(on document: VisionDocumentTool.Document) async throws -> ModelRead? {
+        guard let session else { return nil }
         let start = Date()
         var reply = ""
         for try await chunk in session.stream(ReceiptPrompt.prompt(for: document)) { reply += chunk }
         let fields = try ReceiptFields.decode(reply)
-        return Reading(baseline: baseline, model: ModelRead(
-            fields: fields, anchors: ReceiptAnchors.check(fields, in: document),
-            seconds: Date().timeIntervalSince(start)))
+        return ModelRead(fields: fields, anchors: ReceiptAnchors.check(fields, in: document),
+                         seconds: Date().timeIntervalSince(start))
     }
 
     /// The document with the most text; an image with none reads as an empty document.

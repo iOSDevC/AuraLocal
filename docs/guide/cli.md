@@ -207,6 +207,11 @@ is gated, or the baseline when there is no `--model`. Totals and taxes compare b
 compare by letters and digits, and either name may contain the other ("OXXO" matches "OXXO Tienda 123").
 `--report` writes every receipt's fields and results as JSON.
 
+A model error on one receipt (a reply that breaks the schema, a failed generation) is recorded in that receipt's
+row and counts as a miss on every model field; the run goes on. A receipt image that cannot be read counts as a
+miss on every field for the baseline and the model, and the run still finishes, but then exits with status 2, as it
+does when it cannot run at all (a bad CSV, a model that does not load). Status 1 always means a failed gate.
+
 `--model` takes a catalog id (`qwen35_2b_text`, `qwen3_4b`), an `https` URL to a `.gguf` (Hugging Face or direct),
 or a local `.gguf`: any argument ending in `.gguf` that is not an `http(s)` or `file` URL is read as a path,
 relative to the current directory unless absolute. The model is loaded once for the whole run.
