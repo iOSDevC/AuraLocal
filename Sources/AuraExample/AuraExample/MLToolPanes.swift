@@ -121,9 +121,7 @@ private nonisolated struct ImageAnalysis: Sendable {
         (barcodes.output ?? []).map { MLBox(rect: $0.boundingBox, tint: .blue) }
             + (faces.output ?? []).map { MLBox(rect: $0.boundingBox, tint: .green) }
             + (lines.output ?? []).map { MLBox(rect: $0.boundingBox, tint: .orange) }
-            + (documents.output ?? []).flatMap(\.amounts).compactMap { amount in
-                amount.boundingBox.map { MLBox(rect: $0, tint: .purple) }
-            }
+            + (documents.output ?? []).flatMap(\.amounts).map { MLBox(rect: $0.boundingBox, tint: .purple) }
     }
 }
 

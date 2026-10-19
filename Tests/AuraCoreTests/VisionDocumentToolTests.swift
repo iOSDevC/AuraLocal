@@ -10,6 +10,10 @@ final class VisionDocumentToolTests: XCTestCase {
         ("CAFE AURA", 450), ("Latte $4.50", 340), ("Total $12.75", 230), ("March 3, 2026", 120)
     ]
 
+    private static let receiptEndingInTheTotal: [(String, CGFloat)] = [
+        ("CAFE AURA", 450), ("March 3, 2026", 340), ("Latte $4.50", 230), ("Total $12.75", 120)
+    ]
+
     // MARK: - Identity / availability
 
     func testDocumentToolHasAFixedIDAndVisionCategory() {
@@ -34,7 +38,7 @@ final class VisionDocumentToolTests: XCTestCase {
 
     func testAmountsKeepOnlyMoneyMatches() {
         func match(_ kind: VisionDocumentTool.DetectedData.DataKind) -> VisionDocumentTool.DetectedData {
-            .init(kind: kind, text: "x", boundingBox: nil, amount: kind == .moneyAmount ? 1 : nil,
+            .init(kind: kind, text: "x", amount: kind == .moneyAmount ? 1 : nil,
                   currency: kind == .moneyAmount ? "USD" : nil, startDate: nil)
         }
         let document = VisionDocumentTool.Document(
@@ -68,14 +72,39 @@ final class VisionDocumentToolTests: XCTestCase {
         let totalAmount = try XCTUnwrap(amounts.first { $0.amount == Decimal(string: "12.75") }, "matches: \(matches)")
         XCTAssertTrue(totalAmount.text.contains("12.75"), "matches: \(matches); text: \(document.text)")
         XCTAssertTrue(amounts.allSatisfy { $0.currency?.isEmpty == false }, "currencies: \(amounts.map(\.currency))")
-        // A span Vision gives no range for has empty text; every other span comes from the document's text.
-        XCTAssertTrue(document.detections.allSatisfy { $0.text.isEmpty || document.text.contains($0.text) },
+        // The date ends the text, so Vision gives it no range and its text comes from the words in its box.
+        XCTAssertTrue(document.detections.allSatisfy { !$0.text.isEmpty && document.text.contains($0.text) },
                       "matches: \(matches); text: \(document.text)")
+        XCTAssertTrue(document.detections.allSatisfy { VisionFixtures.isNormalized($0.boundingBox) },
+                      "matches: \(matches)")
 
         let date = try XCTUnwrap(document.detections.first { $0.kind == .date }?.startDate,
                                  "matches: \(document.detections.map { "\($0.kind): \($0.text)" })")
         let day = Calendar.current.dateComponents([.year, .month, .day], from: date)
         XCTAssertEqual([day.year, day.month, day.day], [2026, 3, 3])
+    }
+
+    func testAnAmountEndingTheTextKeepsItsTextAndBox() async throws {
+        guard #available(iOS 26.0, macOS 26.0, visionOS 26.0, *) else {
+            throw XCTSkip("RecognizeDocumentsRequest needs iOS 26 / macOS 26.")
+        }
+        let image = try XCTUnwrap(VisionFixtures.renderLines(Self.receiptEndingInTheTotal, height: 540))
+        let documents = try await VisionDocumentTool().readDocuments(in: image)
+        let document = try XCTUnwrap(documents.first { $0.text.localizedCaseInsensitiveContains("total") },
+                                     "documents: \(documents.map(\.text))")
+        XCTAssertTrue(document.text.hasSuffix("12.75"), "text: \(document.text)")
+
+        let matches = document.detections.map {
+            "\($0.kind.rawValue) '\($0.text)' \(String(describing: $0.amount)) \($0.boundingBox)"
+        }
+        let totalAmount = try XCTUnwrap(document.amounts.first { $0.amount == Decimal(string: "12.75") },
+                                        "matches: \(matches)")
+        XCTAssertTrue(totalAmount.text.contains("12.75"), "matches: \(matches)")
+        XCTAssertTrue(VisionFixtures.isNormalized(totalAmount.boundingBox), "matches: \(matches)")
+        let totalLine = try XCTUnwrap(document.lines.first { $0.text.localizedCaseInsensitiveContains("total") })
+        let latteLine = try XCTUnwrap(document.lines.first { $0.text.localizedCaseInsensitiveContains("latte") })
+        XCTAssertTrue(totalLine.boundingBox.intersects(totalAmount.boundingBox), "matches: \(matches)")
+        XCTAssertFalse(latteLine.boundingBox.intersects(totalAmount.boundingBox), "matches: \(matches)")
     }
 
     func testReceiptFromDataHonoursEXIFOrientation() async throws {

@@ -229,12 +229,14 @@ $ aura ml ocr-lines receipt.png
 lines, and passes the text through Data Detection, so a receipt's total arrives as a `Decimal` with its currency
 and its date as a `Date`. The returned `Document` has these fields:
 
-- `text`, `title` and `paragraphs`, each paragraph with its box.
-- `lines`, the same `RecognizedLine` values `VisionOCRTool.recognizeLines` returns.
+- `text`, Vision's transcript: paragraphs separated by newlines, the lines of a paragraph joined by spaces.
+- `title` and `paragraphs`, each paragraph with its box.
+- `lines`, the recognized lines with their boxes, as the `RecognizedLine` type `VisionOCRTool` uses.
 - `tables`, with each cell's text, its row and column ranges and its box. `textRows` gives just the grid.
 - `detections`: money amounts, dates, email addresses, phone numbers, postal addresses, links, flight numbers,
   tracking numbers, payment identifiers and measurements, each with the matched text and its box. `amounts`
-  keeps only the money.
+  keeps only the money. Vision gives no text range for a match that ends the transcript (often a receipt's
+  total), so that match's text is the recognized words inside its box.
 
 Before iOS 26 / macOS 26 `availability()` reports the tool unavailable and the reading methods do not exist, so
 gate the call with `#available` and fall back to `VisionOCRTool`. `languages` works as in `VisionOCRTool`.
@@ -257,8 +259,8 @@ if #available(iOS 26, macOS 26, *) {
 }
 ```
 
-`aura ml document <image> [--lang es-ES]...` prints one line per paragraph, table row and detected value, each
-with its box.
+`aura ml document <image> [--lang es-ES]...` prints the title, then one line with its box for each paragraph,
+table and detected value. A table's rows follow it as cell text, without boxes.
 
 Data Detection decides which spans are amounts or dates. It does not decide which amount is the total, so an app
 still picks the right one, for example by the label on the same line. It has been run only on rendered test

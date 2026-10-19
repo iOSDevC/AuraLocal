@@ -30,11 +30,12 @@ public struct VisionDocumentTool: SystemTool {
 
     /// One document Vision found in the image. Boxes are normalized 0…1 with Vision's bottom-left origin.
     public struct Document: Sendable, Equatable {
-        /// Every recognized line, in reading order, joined by newlines.
+        /// Vision's transcript: paragraphs in Vision's order separated by newlines, the lines of a paragraph joined
+        /// by spaces.
         public let text: String
         public let title: String?
         public let paragraphs: [Paragraph]
-        /// The same lines ``VisionOCRTool/recognizeLines(in:languages:accurate:)`` returns, with their boxes.
+        /// The recognized lines with their boxes, as ``VisionOCRTool/RecognizedLine`` values.
         public let lines: [VisionOCRTool.RecognizedLine]
         public let tables: [Table]
         /// Matches found in ``text``, in document order.
@@ -102,10 +103,10 @@ public struct VisionDocumentTool: SystemTool {
         }
 
         public let kind: DataKind
-        /// The matched span of ``Document/text``; empty when Vision gives no range for the match.
+        /// The matched span of ``Document/text``. Vision gives no range for a match that ends the text; then it is
+        /// the recognized words inside ``boundingBox`` joined by spaces, or empty if Vision returned no words.
         public let text: String
-        /// `nil` when Vision gives no region for the span.
-        public let boundingBox: CGRect?
+        public let boundingBox: CGRect
         /// ``DataKind/moneyAmount`` only.
         public let amount: Decimal?
         /// ISO 4217 code (`USD`, `MXN`…), ``DataKind/moneyAmount`` only.
@@ -113,7 +114,7 @@ public struct VisionDocumentTool: SystemTool {
         /// The start of a ``DataKind/date`` match.
         public let startDate: Date?
 
-        public init(kind: DataKind, text: String, boundingBox: CGRect? = nil, amount: Decimal? = nil,
+        public init(kind: DataKind, text: String, boundingBox: CGRect = .zero, amount: Decimal? = nil,
                     currency: String? = nil, startDate: Date? = nil) {
             self.kind = kind
             self.text = text
@@ -175,7 +176,7 @@ public extension VisionDocumentTool {
             },
             lines: container.text.lines.compactMap(line(from:)),
             tables: container.tables.map(table(from:)),
-            detections: container.text.detectedData.compactMap { detection(from: $0.match, in: container.text) })
+            detections: container.text.detectedData.compactMap { detection(from: $0, in: container.text) })
     }
 
     private static func line(from observation: RecognizedTextObservation) -> VisionOCRTool.RecognizedLine? {
@@ -196,21 +197,16 @@ public extension VisionDocumentTool {
     }
 
     private static func detection(
-        from match: DataDetector.Match, in text: DocumentObservation.Container.Text
+        from detected: DocumentObservation.Container.DataDetectorMatch, in text: DocumentObservation.Container.Text
     ) -> DetectedData? {
-        let transcript = text.transcript
-        var span = ""
-        var box: CGRect?
-        if let range = match.range, range.lowerBound >= transcript.startIndex, range.upperBound <= transcript.endIndex {
-            span = String(transcript[range])
-            box = text.boundingRegion(for: range)?.boundingBox.cgRect
-        }
+        let box = detected.boundingRegion.boundingBox.cgRect
+        let span = matchedText(of: detected.match, inside: box, in: text)
         func found(_ kind: DetectedData.DataKind, amount: Decimal? = nil, currency: String? = nil,
                    startDate: Date? = nil) -> DetectedData {
             DetectedData(kind: kind, text: span, boundingBox: box, amount: amount, currency: currency,
                          startDate: startDate)
         }
-        switch match.details {
+        switch detected.match.details {
         case .moneyAmount(let money): return found(.moneyAmount, amount: money.amount, currency: money.currency.identifier)
         case .calendarEvent(let event): return found(.date, startDate: event.startDate)
         case .emailAddress: return found(.emailAddress)
@@ -223,6 +219,27 @@ public extension VisionDocumentTool {
         case .measurement: return found(.measurement)
         @unknown default: return nil
         }
+    }
+
+    /// The match's range of the transcript, else the words mostly inside its box: Vision gives a match that ends
+    /// the transcript no range.
+    private static func matchedText(
+        of match: DataDetector.Match, inside box: CGRect, in text: DocumentObservation.Container.Text
+    ) -> String {
+        let transcript = text.transcript
+        if let range = match.range, range.lowerBound >= transcript.startIndex, range.upperBound <= transcript.endIndex {
+            return String(transcript[range])
+        }
+        return (text.words ?? [])
+            .filter { isMostlyInside($0.boundingBox.cgRect, box) }
+            .compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: " ")
+    }
+
+    /// At least half of `word` lies in `box`, so a neighbouring word that only touches the box is left out.
+    private static func isMostlyInside(_ word: CGRect, _ box: CGRect) -> Bool {
+        let overlap = word.intersection(box)
+        return !overlap.isNull && overlap.width * overlap.height * 2 >= word.width * word.height
     }
 }
 #endif
