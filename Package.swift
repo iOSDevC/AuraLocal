@@ -145,10 +145,6 @@ let package = Package(
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
-        // MARK: - CLI
-        // `aura` — a headless integration harness that drives the hybrid + tools
-        // features (provider detection, local-first `aura ask` escalation, native OCR).
-        // Cxx interop is required because it links AuraCore (llama.cpp).
         // MARK: - Recibo spike (not a product)
         // The deterministic half of the Recibo spike: the rule-based baseline, the prompt, the OCR anchors and the
         // scoring that `aura receipt` drives. Recibo itself lives in its own repository.
@@ -159,6 +155,10 @@ let package = Package(
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
+        // MARK: - CLI
+        // `aura` — a headless integration harness that drives the hybrid + tools
+        // features (provider detection, local-first `aura ask` escalation, native OCR).
+        // Cxx interop is required because it links AuraCore (llama.cpp).
         .executableTarget(
             name: "aura",
             dependencies: ["AuraCore", "AuraImageGen", "ReceiptSpike"],
