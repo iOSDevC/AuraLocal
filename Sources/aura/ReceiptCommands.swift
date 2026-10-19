@@ -34,8 +34,9 @@ extension AuraCLI {
         let parsed = try CLIArguments(args, options: ["--model", "--lang"])
         guard !parsed.positionals.isEmpty else { throw CLIUsageError(receiptUsage) }
         let reader = try await ReceiptReader(modelArgument: parsed.value("--model"), languages: parsed.values("--lang"))
-        for path in parsed.positionals {
-            let result = try await reader.read(URL(fileURLWithPath: path))
+        let images = parsed.positionals.map { URL(fileURLWithPath: $0) }
+        for (path, image) in zip(parsed.positionals, images) {
+            let result = try await reader.read(image)
             if parsed.positionals.count > 1 { print("== \(path)") }
             print("baseline  \(describe(result.baseline))")
             if let model = result.model {

@@ -54,7 +54,7 @@ enum ReceiptText {
                 plain.append(token[index])
             }
         }
-        guard let value = Decimal(string: plain, locale: Locale(identifier: "en_US_POSIX")) else { return nil }
+        guard let value = Decimal(string: plain, locale: posix) else { return nil }
         return ReceiptNumber(value: value, hasFraction: point != nil)
     }
 
@@ -65,6 +65,9 @@ enum ReceiptText {
         let day = calendar.dateComponents([.year, .month, .day], from: date)
         return String(format: "%04ld-%02ld-%02ld", day.year ?? 0, day.month ?? 0, day.day ?? 0)
     }
+
+    /// Parses the dot-decimal strings the spike builds and the labels CSV uses, whatever the user's locale.
+    static let posix = Locale(identifier: "en_US_POSIX")
 
     /// Thousands-grouped numbers first, so "1,234.50" is one token, not "1,23" and "4.50".
     private static let numberPattern = try! NSRegularExpression(

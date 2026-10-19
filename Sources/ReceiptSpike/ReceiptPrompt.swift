@@ -107,17 +107,18 @@ public struct ReceiptAnchors: Sendable, Equatable {
         let shortYear = String(year.suffix(2))
         let days = Set([parts[2], String(day)])
         let months = Set([parts[1], String(month)])
+        let years = [year, shortYear]
         var spellings: [String] = []
         for separator in ["/", "-", "."] {
             for dd in days {
                 for mm in months {
-                    for yy in [year, shortYear] {
-                        spellings.append([dd, mm, yy].joined(separator: separator))
-                        spellings.append([mm, dd, yy].joined(separator: separator))
+                    for yy in years {
+                        spellings.append(dd + separator + mm + separator + yy)
+                        spellings.append(mm + separator + dd + separator + yy)
                     }
                 }
             }
-            spellings.append([year, parts[1], parts[2]].joined(separator: separator))
+            spellings.append(year + separator + parts[1] + separator + parts[2])
         }
         let text = document.text
         return spellings.contains { spelling in

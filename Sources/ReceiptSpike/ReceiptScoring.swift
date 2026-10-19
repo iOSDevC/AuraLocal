@@ -38,34 +38,45 @@ public enum ReceiptLabels {
             guard let index = header.firstIndex(of: name) else { throw ReceiptLabelError.missingColumn(name) }
             return index
         }
-        let file = try column("file"), merchant = try column("merchant"), date = try column("date")
-        let total = try column("total")
-        let tax = header.firstIndex(of: "tax"), currency = header.firstIndex(of: "currency")
+        let columns = LabelColumns(
+            file: try column("file"), merchant: try column("merchant"), date: try column("date"),
+            total: try column("total"), tax: header.firstIndex(of: "tax"), currency: header.firstIndex(of: "currency"))
 
         var labels: [ReceiptLabel] = []
         for (offset, row) in rows.enumerated() where !row.allSatisfy({ $0.trimmingCharacters(in: .whitespaces).isEmpty }) {
-            let line = offset + 2
-            func cell(_ index: Int?) -> String? {
-                guard let index, index < row.count else { return nil }
-                let value = row[index].trimmingCharacters(in: .whitespaces)
-                return value.isEmpty ? nil : value
-            }
-            func amount(_ index: Int?, _ name: String) throws -> Decimal? {
-                guard let raw = cell(index) else { return nil }
-                guard let value = Decimal(string: raw, locale: Locale(identifier: "en_US_POSIX")),
-                      raw.allSatisfy({ $0.isNumber || $0 == "." }) else {
-                    throw ReceiptLabelError.badValue(line: line, column: name, value: raw)
-                }
-                return value
-            }
-            guard let name = cell(file) else { throw ReceiptLabelError.badValue(line: line, column: "file", value: "") }
-            let day = cell(date)
-            if let day, !isISODate(day) { throw ReceiptLabelError.badValue(line: line, column: "date", value: day) }
-            labels.append(ReceiptLabel(file: name, fields: ReceiptFields(
-                merchant: cell(merchant), date: day, total: try amount(total, "total"), tax: try amount(tax, "tax"),
-                currency: cell(currency)?.uppercased())))
+            labels.append(try label(from: row, line: offset + 2, columns: columns))
         }
         return labels
+    }
+
+    /// Where each field sits in the header; `tax` and `currency` are optional columns.
+    private struct LabelColumns {
+        let file: Int, merchant: Int, date: Int, total: Int
+        let tax: Int?, currency: Int?
+    }
+
+    private static func label(from row: [String], line: Int, columns: LabelColumns) throws -> ReceiptLabel {
+        func cell(_ index: Int?) -> String? {
+            guard let index, index < row.count else { return nil }
+            let value = row[index].trimmingCharacters(in: .whitespaces)
+            return value.isEmpty ? nil : value
+        }
+        func amount(_ index: Int?, _ name: String) throws -> Decimal? {
+            guard let raw = cell(index) else { return nil }
+            guard let value = Decimal(string: raw, locale: ReceiptText.posix),
+                  raw.allSatisfy({ $0.isNumber || $0 == "." }) else {
+                throw ReceiptLabelError.badValue(line: line, column: name, value: raw)
+            }
+            return value
+        }
+        guard let name = cell(columns.file) else {
+            throw ReceiptLabelError.badValue(line: line, column: "file", value: "")
+        }
+        let day = cell(columns.date)
+        if let day, !isISODate(day) { throw ReceiptLabelError.badValue(line: line, column: "date", value: day) }
+        return ReceiptLabel(file: name, fields: ReceiptFields(
+            merchant: cell(columns.merchant), date: day, total: try amount(columns.total, "total"),
+            tax: try amount(columns.tax, "tax"), currency: cell(columns.currency)?.uppercased()))
     }
 
     static func isISODate(_ text: String) -> Bool {
