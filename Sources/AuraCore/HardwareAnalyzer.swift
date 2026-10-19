@@ -416,9 +416,8 @@ public enum HardwareAnalyzer {
     /// Analyze `models` (by default ``Model/listedModels``, which leaves uncensored ones out) against the current
     /// device hardware.
     ///
-    /// Results are sorted: best fit first, `.tooLarge` models last.
-    /// Within the same fit level, downloaded models appear first,
-    /// then sorted by memory utilization (most efficient first).
+    /// Results are sorted with `.tooLarge` models last; otherwise downloaded models first, then better fit, then
+    /// lower memory utilization.
     public static func compatibleModels(
         from models: [Model] = Model.listedModels,
         profile: HardwareProfile = .current()
@@ -445,7 +444,8 @@ public enum HardwareAnalyzer {
             }
     }
 
-    /// Analyze all models of a specific purpose.
+    /// Analyze the listed models of a specific purpose (``Model/textModels``, ``Model/visionModels`` or
+    /// ``Model/specializedModels``), so uncensored ones are left out.
     public static func compatibleModels(
         purpose: Model.Purpose,
         profile: HardwareProfile = .current()

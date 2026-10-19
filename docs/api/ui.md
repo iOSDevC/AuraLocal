@@ -105,7 +105,7 @@ ModelSection(
     title: "Text",
     icon: "text.bubble",
     color: .green,
-    models: Model.textModels
+    models: Model.textModels  // leaves uncensored models out; Model.uncensoredModels lists them
 ) { model in
     // handle the model's "Test" tap
 }

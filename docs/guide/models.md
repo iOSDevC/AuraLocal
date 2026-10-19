@@ -276,7 +276,7 @@ print(result.fitLevel.isRunnable)  // true/false
 print(result.model.estimatedRuntimeMemoryGB)   // ~5 GB full-load (monolithic)
 print(result.model.estimatedStreamingMemoryGB) // ~0.65 GB in layer-streaming mode
 
-// Every catalog model: .tooLarge last, then downloaded first, then best fit
+// Every listed model (uncensored ones only if passed in from:): .tooLarge last, then downloaded first, then best fit
 let compatible = HardwareAnalyzer.compatibleModels().filter { $0.fitLevel.isRunnable }
 for c in compatible {
     print("\(c.model.displayName): \(c.fitLevel.label)")
@@ -721,6 +721,8 @@ the downloaded bytes before the file is moved into place:
 
 A model built from a search result (`CatalogEntry.decodedModel()`) is not in the catalog, so the pickers
 (`Model.textModels`, `Model.visionModels`, `Model.ggufModels`) list it only after `ModelRegistry.shared.register(_:)`.
+An uncensored one is listed only by `Model.allModels` and `Model.uncensoredModels` even then, not by those
+collections.
 `DownloadRecords` keeps the sized `Model` in `UserDefaults` (key `dev.auralocal.downloadRecords`) so it can be
 registered again at launch:
 

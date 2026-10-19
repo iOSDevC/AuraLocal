@@ -25,9 +25,9 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   A custom backend must implement it; one that cannot enforce the constraint throws
   `GenerationConstraintError.unsupportedBackend`.
 - `Model.textModels`, `.visionModels`, `.specializedModels`, `.ggufModels`, `.mlxModels`, `.runnableModels`,
-  `Model.models(in:)` and `HardwareAnalyzer.compatibleModels()` leave uncensored models out, so AuraUI's pickers
-  list one only once it is downloaded. `Model.uncensoredModels` lists them, `Model.allModels` still has every model,
-  and AuraExample's Catalog shows them behind a toggle.
+  `Model.models(in:)`, `HardwareAnalyzer.compatibleModels()` and `HardwareAnalyzer.compatibleModels(purpose:)`
+  leave uncensored models out, so AuraUI's pickers list one only once it is downloaded. `Model.uncensoredModels`
+  lists them, `Model.allModels` still has every model, and AuraExample's Catalog shows them behind a toggle.
 - `Model.gemma4_1b`, `.gemma4_4b`, `.granite4_compact`, `.lfm25_3_2b`, `.ministral_3b` and `.graniteVision_3_3`
   are `@available(*, unavailable)`, with the reason in the message: none of them ever downloaded a loadable model.
 - Tools on an MLX model throw `ModelConfigurationError.toolsUnsupported(.mlx)` from `ModelManager.load` and

@@ -706,7 +706,7 @@ case .tooLarge:          break  // cannot run on this device even with streaming
 
 print(result.fitLevel.isRunnable) // true for all except .tooLarge
 
-// Get all compatible models sorted by fit level (best first)
+// Listed models (uncensored ones only if passed in from:): .tooLarge last, then downloaded first, then best fit
 let compatible = HardwareAnalyzer.compatibleModels()
 
 // Custom profile (for UI preview or device picker)
