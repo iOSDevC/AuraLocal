@@ -316,6 +316,61 @@ final class OutputSchemaGrammarTests: XCTestCase {
             """#)
     }
 
+    // MARK: Base rules
+
+    private static let base = GBNFRegex(OutputSchemaGrammar.baseRules)
+
+    func testNumbersHaveNoDigitCap() throws {
+        let digits = "123456789012345678"
+        XCTAssertTrue(try Self.base.admits("jinteger", "-" + digits))
+        XCTAssertTrue(try Self.base.admits("jnonneg-integer", digits))
+        XCTAssertTrue(try Self.base.admits("jpos-integer", digits))
+        XCTAssertTrue(try Self.base.admits("jnumber", "-" + digits + "." + digits + "e+1000"))
+        XCTAssertTrue(try Self.base.admits("jnonneg-number", "0." + digits + "E-1000"))
+        XCTAssertFalse(try Self.base.admits("jpos-integer", "0"))
+        XCTAssertFalse(try Self.base.admits("jnonneg-integer", "-1"))
+        XCTAssertFalse(try Self.base.admits("jinteger", "01"))
+        XCTAssertFalse(try Self.base.admits("jnumber", "1."))
+    }
+
+    func testStringEscapesAreOneScalarThatParses() throws {
+        let jchar = try Self.base.regex(for: "jchar")
+        let units = [0x0000, 0x001F, 0x0041, 0x7FFF, 0xCFFF, 0xD000, 0xD7FF, 0xD800, 0xDBFF, 0xDC00, 0xDFFF, 0xE000,
+                     0xFFFF]
+        let escapes = units.flatMap(Self.unicodeEscapes)
+        for escape in escapes {
+            XCTAssertEqual(escape.wholeMatch(of: jchar) != nil, Self.isOneScalarString(escape), escape)
+        }
+        XCTAssertEqual(escapes.filter { $0.wholeMatch(of: jchar) != nil }.count, 2 * 9, "surrogates are excluded")
+
+        let schema = #"{"type":"string","minLength":2,"maxLength":5}"#
+        let bounded = try GBNFRegex(XCTUnwrap(grammar(schema)))
+        let validator = try OutputSchemaValidator(.json(schema))
+        let samples = [#""\uD83D\uDE00""#, #""😀""#, #""\uD800x""#, #""😀😀""#, #""a\u00e9""#, #""abcdef""#]
+        let admitted = try samples.filter { try bounded.admits("root", $0) }
+        XCTAssertEqual(admitted, [#""😀😀""#, #""a\u00e9""#])
+        XCTAssertEqual(admitted.flatMap(validator.validate), [], "what the grammar admits here validates")
+    }
+
+    func testFreeFormObjectsCanRepeatAMemberName() throws {
+        let schema = #"{"type":"object","additionalProperties":{"type":"integer"}}"#
+        let map = try GBNFRegex(XCTUnwrap(grammar(schema)))
+        XCTAssertTrue(try map.admits("root", #"{"a":1,"a":2}"#))
+        XCTAssertFalse(try OutputSchemaValidator(.json(schema)).validate(#"{"a":1,"a":2}"#).isEmpty,
+                       "validation rejects the duplicate")
+    }
+
+    private static func unicodeEscapes(_ unit: Int) -> [String] {
+        let hex = String(unit, radix: 16, uppercase: true)
+        let padded = String(repeating: "0", count: 4 - hex.count) + hex
+        return [#"\u"# + padded, #"\u"# + padded.lowercased()]
+    }
+
+    private static func isOneScalarString(_ escape: String) -> Bool {
+        guard case .string(let text)? = JSONValue.parse("\"" + escape + "\"") else { return false }
+        return text.unicodeScalars.count == 1
+    }
+
     // MARK: Well-formedness
 
     private static let corpus = [
@@ -369,6 +424,79 @@ final class OutputSchemaGrammarTests: XCTestCase {
         let bounds = scans.flatMap(\.repetitionBounds)
         XCTAssertTrue(bounds.allSatisfy { $0 <= OutputSchemaGrammar.maxBoundedRepetition }, "\(bounds): \(schema)")
         XCTAssertTrue(scans.allSatisfy(\.isBalanced), "unbalanced literal, class or group: \(schema)")
+    }
+}
+
+/// Inlines non-recursive GBNF rules into a regular expression over Unicode scalars, to test what a rule admits.
+private struct GBNFRegex {
+    private struct UnsupportedRule: Error {
+        let name: String
+    }
+
+    private static let metacharacters = Set(#"\.^$|?*+()[]{}"#)
+    private let bodies: [String: String]
+
+    init(_ grammar: String) {
+        let lines = grammar.split(separator: "\n").compactMap(GBNFLine.init)
+        bodies = Dictionary(lines.map { ($0.name, $0.body) }) { first, _ in first }
+    }
+
+    func admits(_ rule: String, _ text: String) throws -> Bool {
+        text.wholeMatch(of: try regex(for: rule)) != nil
+    }
+
+    func regex(for rule: String) throws -> Regex<AnyRegexOutput> {
+        try Regex(pattern(for: rule, visiting: [])).matchingSemantics(.unicodeScalar)
+    }
+
+    private func pattern(for rule: String, visiting: Set<String>) throws -> String {
+        guard let body = bodies[rule], !visiting.contains(rule) else { throw UnsupportedRule(name: rule) }
+        let characters = Array(body)
+        var index = 0
+        var translated = ""
+        while index < characters.count {
+            let (piece, next) = try token(in: characters, at: index, visiting: visiting.union([rule]))
+            translated += piece
+            index = next
+        }
+        return translated
+    }
+
+    private func token(in characters: [Character], at start: Int, visiting: Set<String>) throws -> (String, Int) {
+        let character = characters[start]
+        switch character {
+            case " ": return ("", start + 1)
+            case "(": return ("(?:", start + 1)
+            case "\"":
+                let end = Self.closing("\"", in: characters, after: start)
+                return (Self.literalPattern(characters[(start + 1)..<end]), end + 1)
+            case "[":
+                let end = Self.closing("]", in: characters, after: start)
+                return (String(characters[start...end]), end + 1)
+            case "{":
+                let end = Self.closing("}", in: characters, after: start)
+                return (String(characters[start...end]), end + 1)
+            case _ where GBNFScan.isWordCharacter(character):
+                let end = characters[start...].firstIndex { !GBNFScan.isWordCharacter($0) } ?? characters.count
+                let inlined = try pattern(for: String(characters[start..<end]), visiting: visiting)
+                return ("(?:" + inlined + ")", end)
+            default: return (String(character), start + 1)
+        }
+    }
+
+    private static func closing(_ closer: Character, in characters: [Character], after start: Int) -> Int {
+        var index = start + 1
+        while characters[index] != closer { index += characters[index] == "\\" ? 2 : 1 }
+        return index
+    }
+
+    /// GBNF literal escapes (`\\`, `\"`, `\n`, `\xHH`) read the same in a regex; other metacharacters get one.
+    private static func literalPattern(_ characters: ArraySlice<Character>) -> String {
+        characters.reduce(into: (text: "", escaping: false)) { state, character in
+            let escapes = !state.escaping && character != "\\" && metacharacters.contains(character)
+            state.text += escapes ? "\\\(character)" : "\(character)"
+            state.escaping = !state.escaping && character == "\\"
+        }.text
     }
 }
 

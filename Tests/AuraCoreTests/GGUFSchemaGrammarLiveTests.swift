@@ -19,6 +19,8 @@ final class GGUFSchemaGrammarLiveTests: XCTestCase {
         let prompt: String
         /// Every keyword is enforced by the grammar, so a reply that is not cut must validate.
         let enforced: Bool
+        /// Text the reply must contain, copied from the prompt.
+        var copied: String?
     }
 
     private static let corpus = [
@@ -57,6 +59,10 @@ final class GGUFSchemaGrammarLiveTests: XCTestCase {
               "currency":{"type":["string","null"],"minLength":3,"maxLength":3}}}
             """#, prompt: "Receipt text, line by line:\nSUPERMERCADO LA PLAZA\n03/03/2026\nIVA 6.00\nTOTAL $43.50 MXN"
                 + "\n\nReturn the JSON object for this receipt.", enforced: true),
+        // A digit cap in the grammar would cut this 18-digit id and the shorter value would still validate.
+        Case(name: "long-integer",
+             schema: #"{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}"#,
+             prompt: "Order 123456789012345678 shipped today.", enforced: true, copied: "123456789012345678"),
         Case(name: "unenforced-maximum", schema: #"""
             {"type":"object","required":["score"],"properties":{"score":{"type":"integer","minimum":0,"maximum":10}}}
             """#, prompt: "Rate the movie Casablanca from 0 to 10.", enforced: false),
@@ -100,6 +106,9 @@ final class GGUFSchemaGrammarLiveTests: XCTestCase {
         }
         guard JSONValue.parse(reply) != nil else {
             return XCTFail("\(entry.name): not JSON: \(reply.debugDescription)")
+        }
+        if let copied = entry.copied {
+            XCTAssertTrue(reply.contains(copied), "\(entry.name): \(copied) cut: \(reply.debugDescription)")
         }
         let violations = validator.validate(reply)
         if entry.enforced {

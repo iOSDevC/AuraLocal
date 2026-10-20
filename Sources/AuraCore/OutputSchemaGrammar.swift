@@ -2,12 +2,8 @@ import Foundation
 
 // MARK: - OutputSchemaGrammar
 
-/// Turns a compiled ``OutputSchemaValidator`` schema into a llama.cpp GBNF grammar. Every text it admits is strict
-/// JSON, narrowed by the keywords GBNF can express: `type`, `properties`, `required`, `additionalProperties`,
-/// `items`, `enum`, `const`, item and length bounds up to ``maxBoundedRepetition``, the sign of `minimum` and
-/// `exclusiveMinimum`, and `anyOf`/`oneOf` as alternatives. Other bounds, `oneOf` exclusivity and `allOf` are left
-/// to validation. Objects carry only their declared properties: required ones in `required` order, then optional
-/// ones by name.
+/// A llama.cpp GBNF grammar for a compiled schema: JSON syntax narrowed by what GBNF can express, the rest left to
+/// validation. A free-form object can repeat a member name, which validation rejects.
 enum OutputSchemaGrammar {
     static let rootRule = "root"
     /// Larger item and length bounds are not expressed; validation covers them.
@@ -18,17 +14,18 @@ enum OutputSchemaGrammar {
     static let maxRules = 512
     static let maxGrammarBytes = 65_536
 
-    /// JSON itself. llama.cpp rule names cannot contain `_`.
+    /// JSON itself. Digits are unbounded so a long number is not cut short; `\u` escapes exclude surrogates, so each
+    /// `jchar` is one Unicode scalar. llama.cpp rule names cannot contain `_`.
     static let baseRules = #"""
         ws ::= | " " | "\n" [ \t]{0,20}
-        jchar ::= [^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})
+        jchar ::= [^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" ([0-9a-cA-CefEF] [0-9a-fA-F]{3} | [dD] [0-7] [0-9a-fA-F]{2}))
         jstring ::= "\"" jchar* "\"" ws
-        jint ::= "0" | [1-9] [0-9]{0,15}
-        jfrac ::= "." [0-9]{1,16}
-        jexp ::= [eE] [-+]? [0-9]{1,3}
+        jint ::= "0" | [1-9] [0-9]*
+        jfrac ::= "." [0-9]+
+        jexp ::= [eE] [-+]? [0-9]+
         jinteger ::= "-"? jint ws
         jnonneg-integer ::= jint ws
-        jpos-integer ::= [1-9] [0-9]{0,15} ws
+        jpos-integer ::= [1-9] [0-9]* ws
         jnumber ::= "-"? jint jfrac? jexp? ws
         jnonneg-number ::= jint jfrac? jexp? ws
         jboolean ::= ("true" | "false") ws
