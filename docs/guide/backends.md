@@ -34,7 +34,7 @@ output as well (see
 [Generation Stats]({{ '/api/core' | relative_url }}#generation-stats)).
 
 {: .warning }
-> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:temperature:topP:onProgress:)`, `AuraProfile.tools`) run only on the GGUF backends; with an MLX model `ModelManager.load` and `AuraSession` throw `ModelConfigurationError.toolsUnsupported(.mlx)` before loading anything. The llama.cpp backends are text-only (an `image:` argument is ignored). Both families pass a multi-turn history with its roles; the llama.cpp backends render it with the GGUF's own chat template (see [Multi-turn conversations](#multi-turn-conversations-gguf)). A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `AuraSession` enforces `AuraProfile.outputSchema` on every backend by validating each reply and re-prompting; on `LlamaCppBackend`, for a profile without tools, it also decodes each reply under a grammar built from the schema (see [Schema grammars](#schema-grammars)); other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). `AuraSession` loads the model with `AuraProfile.sampling`'s `temperature` and `topP` and uses its `maxTokens` per turn; `topK` and `contextOverride` are not applied (see [Sampling](#sampling-temperature-and-top-p)).
+> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:temperature:topP:onProgress:)`, `AuraProfile.tools`) run on the GGUF backends and on MLX text models; with an MLX vision or document model `ModelManager.load` and `AuraSession` throw `ModelConfigurationError.toolsUnsupported(.mlx)` before loading anything. The llama.cpp backends are text-only (an `image:` argument is ignored). Both families pass a multi-turn history with its roles; the llama.cpp backends render it with the GGUF's own chat template (see [Multi-turn conversations](#multi-turn-conversations-gguf)). A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `AuraSession` enforces `AuraProfile.outputSchema` on every backend by validating each reply and re-prompting; on `LlamaCppBackend`, for a profile without tools, it also decodes each reply under a grammar built from the schema (see [Schema grammars](#schema-grammars)); other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). `AuraSession` loads the model with `AuraProfile.sampling`'s `temperature` and `topP` and uses its `maxTokens` per turn; `topK` and `contextOverride` are not applied (see [Sampling](#sampling-temperature-and-top-p)).
 
 `BackendKind` also declares `.remote` and `.hybrid`, but no AuraCore API returns them; remote inference goes through `HybridEscalator` (see [Hybrid inference]({{ '/guide/hybrid' | relative_url }})).
 
@@ -54,8 +54,8 @@ The routing logic:
 
 ```
 model.format == .mlx
-    → MLXBackend  (device or Mac)
-    → UnavailableBackend with tools
+    → MLXBackend  (device or Mac; with tools, text models only)
+    → UnavailableBackend for a vision or document model with tools
       (load throws ModelConfigurationError.toolsUnsupported(.mlx); the public paths throw it first)
     → UnavailableBackend on the iOS Simulator
       (load throws "MLX models can't run on the iOS Simulator")
@@ -129,12 +129,64 @@ Used for all `.mlx` format models, from Granite Docling 258M up to Ornith 1.5 35
 - GPU cache scaled by model weight size (~1/12 of the weights), clamped to 128 MB – 512 MB
 - KV cache bounded by `HardwareAnalyzer.recommendedContextWindow(for:)` (`maxKVSize`). Past it MLX overwrites the oldest tokens without an error, which `AuraLocal.lastContextOverflow` reports. Qwen 3.5 text models, Gemma 3 and 4, and LFM2 build their own caches and ignore the bound (see [Memory]({{ '/guide/memory' | relative_url }}#mlx-kv-window))
 - 20–45 tokens/second for ≤4B models on iPhone 15 Pro / M-series Mac
-- No tool calling yet: `ModelManager.load` and `AuraSession` throw `ModelConfigurationError.toolsUnsupported(.mlx)`
-  when given tools. The pinned mlx-swift-lm (3.31.3) already takes tool specs (`UserInput`'s `tools:`) and streams
-  `Generation.toolCall` from per-family parsers, so the next step is an MLX call → execute → resume loop like the
-  GGUF tool engine's.
+- Text models run tool calls with the same loop as the GGUF backends; vision and document models with tools throw
+  `ModelConfigurationError.toolsUnsupported(.mlx)` from `ModelManager.load` and `AuraSession` (see
+  [Prompt cache and tool rounds](#prompt-cache-and-tool-rounds-mlx))
+- A text model keeps the KV cache of its last generation and prefills only the part of the next prompt it does
+  not hold (see [Prompt cache and tool rounds](#prompt-cache-and-tool-rounds-mlx))
 
 **When it's used:** Any model case without `_gguf` suffix — Qwen3, Llama 3.2, Gemma 3, Phi-3.5, SmolVLM, FastVLM, Granite Docling.
+
+### Prompt cache and tool rounds (MLX)
+
+- **Prompt cache:** a text model's generation keeps its KV cache and the exact tokens it holds: the prompt and every
+  sampled token, the stop token included. The next prompt is compared with them token by token; the cache is
+  trimmed to the longest prefix the two share, leaving at least one prompt token, and only the rest is prefilled.
+  A prompt that shares nothing, a cache a layer cannot trim (the recurrent layers of Qwen 3.5, a sliding-window
+  layer of Gemma 3 once the conversation outgrows its window) and a prompt at or past `maxKVSize` get a new cache
+  and a full prefill. Vision and document models, and a call with an image, always prefill in full. There is no
+  public switch.
+- **What it saves:** over an 8-turn greedy conversation with Qwen3 0.6B 4-bit on an M1 Pro (four `swift test`
+  runs), 7 prompts reused the cache, 86% of prompt tokens were not prefilled again, and prefill took 0.46–0.61 s in
+  all against 1.44–1.80 s without the cache (the 8th turn, 494 tokens: 53 ms against 321 ms in the first run). A
+  template that rewrites earlier assistant turns stops the reuse where it rewrites them: Qwen3 drops the `<think>`
+  block of earlier replies, so each turn prefills the previous reply and the new user turn again.
+- **Same tokens, not always the same text:** when every reused token was prefilled (as between Qwen3 turns,
+  whose template drops the earlier reply's think block), a hit leaves the cache as a full prefill split at the
+  same token would, and the reply matches that bit for bit. Reused reply tokens (tool rounds, or templates that
+  keep the reply verbatim) keep the K/V their decode steps wrote. fp16 results also depend on how a prompt is
+  split into batches, so a greedy reply can drift from an unsplit full prefill after a few dozen tokens: in that
+  conversation 4 of 8 replies differed, as many as changing only the prefill chunk size, with no reuse, changed.
+- **Memory and stats:** the cache stays allocated between generations, as large as the conversation's KV;
+  `unload()`, and so an eviction, frees it. On a hit `lastGenerationStats.promptTime` covers only the tokens
+  prefilled while `promptTokens` counts the whole prompt, so `prefillTokensPerSecond` is not a prefill speed. To
+  time a full prefill, evict the model (`ModelManager.shared.evict(_:)`) and load it again.
+- **With tools:** a text model loaded with tools runs the loop described for GGUF below and in
+  [Tool calling]({{ '/api/core' | relative_url }}#tool-calling-gguf-and-mlx): `toolLoop` rounds (default 1),
+  `ToolEvent`, `lastToolTurn`, `{"error": …}` results, sorted-keys JSON output, and one `maxTokens` for every reply
+  of the turn, in which every generated token counts, call text included.
+  - **Parsing:** mlx-swift-lm's parser for the format it infers from the model's `config.json` (`model_type`), or
+    JSON in `<tool_call>` tags when it infers none. A model that writes another format gets no calls and its call
+    text streams as text. With tagged formats (JSON in `<tool_call>`, xmlFunction, gemma…) a call whose text
+    does not parse is dropped, neither run nor shown. With Llama 3's untagged format (Llama 3.2 1B and 3B,
+    Cogito v1 3B in the catalog), a `{…}` that does not parse streams as text, and text after a `{` that never
+    closes is lost at the end of the reply. Every call in a reply runs, the same tool twice included.
+  - **What the model sees:** the tools go to the chat template as `tools`, with no instructions of AuraLocal's, so
+    a model whose template ignores `tools` never learns about them. A round goes back as an assistant turn with
+    `tool_calls` and a `tool` turn per result (with `tool_call_id` and `name`); when the template throws on that,
+    every round of the turn goes as one assistant turn of `<tool_call>` and `<tool_response>` text. Each reply
+    renders the whole conversation, and the prompt cache prefills only what it does not hold: in the live test the
+    reply after a round reused 149 of its 200 prompt tokens. Checked on Qwen3 0.6B 4-bit only.
+  - **Cancelling** while a tool runs cancels its task and throws `CancellationError`; cancelling during a reply
+    cuts it, and the turn returns the text so far. Cancelled before a reply starts, also while it waits for
+    another generation on the same weights, the turn throws `CancellationError` without decoding that reply.
+    Nothing keeps decoding afterwards.
+- **Shared weights:** with a cached instance of the same model, `ModelManager.load(_:tools:)` runs the tool instance
+  on its weights instead of loading a second copy. The two generate one at a time, and the weights stay in memory
+  until both are released.
+- **Cancelling:** a call cancelled before it starts, or while it waits for another generation on the same
+  weights, throws `CancellationError` without prefilling or touching the prompt cache, tools or not. Cancelled
+  during a reply, it cuts the reply and returns the text so far.
 
 ---
 
@@ -199,7 +251,7 @@ aborted; the fix it needs upstream is prepared as `contrib/localllmclient/0004`.
   rounds as before); those last calls do not run and are reported as `ToolEvent.roundLimitReached` and in
   `lastToolTurn.skipped`. Every round shares the turn's `maxTokens` and prefills the whole conversation again, so
   each round costs a full prefill (see
-  [Tool calling]({{ '/api/core' | relative_url }}#tool-calling-gguf)).
+  [Tool calling]({{ '/api/core' | relative_url }}#tool-calling-gguf-and-mlx)).
   - **Errors:** a tool that throws, arguments that do not decode and an unknown tool name reach the model as
     `{"error": "…"}` and the turn goes on. `ToolLoopOptions(toolErrors: .failTurn)` makes the turn throw instead:
     the tool's own error, LocalLLMClient's `ToolError.argumentDecodingFailed`, or `LLMError.invalidParameter`.

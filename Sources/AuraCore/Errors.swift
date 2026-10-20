@@ -49,7 +49,8 @@ public enum AuraError: LocalizedError {
 /// A load option the model's backend cannot honour, or a sampling value out of range. Thrown before anything is
 /// downloaded or loaded.
 public enum ModelConfigurationError: LocalizedError, Equatable, Sendable {
-    /// Tools were passed for a backend without a tool-calling loop. MLX has none yet; tools need a GGUF model.
+    /// Tools were passed for a model whose backend runs no tool-calling loop for it: an MLX vision or document
+    /// model, or an MLX model on the iOS Simulator. GGUF models and MLX text models run tools.
     case toolsUnsupported(BackendKind)
     /// A temperature that is negative, infinite or NaN.
     case invalidTemperature(Float)
@@ -59,8 +60,8 @@ public enum ModelConfigurationError: LocalizedError, Equatable, Sendable {
     public var errorDescription: String? {
         switch self {
             case .toolsUnsupported(let kind):
-                return "The \(kind.rawValue) backend cannot call tools. Load a GGUF model to use tools, "
-                    + "or pass none."
+                return "The \(kind.rawValue) backend cannot call tools with this model. Tools run on GGUF models "
+                    + "and on MLX text models; load one of those, or pass none."
             case .invalidTemperature(let value):
                 return "Temperature must be a finite number of at least 0 (0 is greedy); got \(value)."
             case .invalidTopP(let value):

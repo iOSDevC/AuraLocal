@@ -321,8 +321,9 @@ Two optional `models.json` objects refine the estimate. Entries without them kee
   briefly holds `slidingWindow + 511` tokens; no `slidingPrefillStep` means the runtime prefills the whole prompt in
   one pass and the layer holds all of it until the first decoded token. That is the case for `gemma3`,
   `gemma3_text` and `gemma3n` (their `prepare` does not chunk) and for the sliding-window VLMs (Gemma 3, Gemma 4,
-  Mistral 3), so their peak equals every layer keeping the whole context. `MLXBackend` re-prefills the whole
-  conversation every turn, so every turn reaches it.
+  Mistral 3), so their peak equals every layer keeping the whole context. `MLXBackend` prefills only what its prompt cache
+  does not hold, but a sliding layer cannot be trimmed once it has wrapped, so from then on every turn prefills the
+  whole conversation and reaches that peak.
 - **`experts`** (`ExpertRouting`) holds the MiB a decoded token reads: the non-expert tensors plus
   `expertsPerToken / routedExperts` of the expert tensors (`.experts.`, `switch_mlp`, Granite's
   `input_linear` / `output_linear`). Shared experts count as non-expert; vision towers and `mtp` heads are left out.

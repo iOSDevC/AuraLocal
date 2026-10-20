@@ -10,8 +10,8 @@ public struct GenerationStats: Sendable, Hashable {
 
     /// Where the counts and durations come from.
     public enum Provenance: String, Sendable, Hashable, CaseIterable {
-        /// The inference runtime's own counters (MLX `GenerateResult`): exact prompt and output token counts and
-        /// the runtime's prefill duration. Decode is timed by AuraLocal from the first token callback to the last.
+        /// MLX's exact prompt and output token counts. AuraLocal times prefill (up to the first sampled token) and
+        /// decode (first generated token to last) around mlx-swift-lm's token iterator.
         case runtime
         /// AuraLocal's monotonic clock around the token stream. Output tokens are counted one per streamed piece,
         /// which llama.cpp emits once per sampled token; the prompt count is estimated (UTF-8 bytes ÷ 4 of the
@@ -71,7 +71,8 @@ public struct GenerationStats: Sendable, Hashable {
         return Double(generatedTokens - 1) / decodeTime
     }
 
-    /// ``promptTokens`` divided by ``promptTime``. Estimated unless ``source`` is ``Provenance/runtime``.
+    /// ``promptTokens`` divided by ``promptTime``. Estimated unless ``source`` is ``Provenance/runtime``. On an MLX
+    /// prompt-cache hit ``promptTime`` covers only the prefilled tokens, so this overstates prefill speed.
     public var prefillTokensPerSecond: Double? {
         guard promptTokens > 0, promptTime > 0 else { return nil }
         return Double(promptTokens) / promptTime

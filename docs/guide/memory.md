@@ -163,6 +163,9 @@ generation `AuraLocal.lastContextOverflow` says how many tokens no longer fit. E
 (`kvHeads == 0`) get the fallback window: 8192 or 4096 on a Mac, 2048 or 1024 on iOS.
 Architectures that build their own caches, such as Qwen 3.5 text models, Gemma 3 and 4, and LFM2, ignore
 the window: their cache still grows with the conversation, and `lastContextOverflow` stays `nil`.
+A text model keeps its last generation's KV cache between calls, so the next prompt prefills only what is new
+(see [Prompt cache]({{ '/guide/backends' | relative_url }}#prompt-cache-and-tool-rounds-mlx)): that memory stays in
+use until `unload()` or an eviction.
 
 ---
 

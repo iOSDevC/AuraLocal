@@ -20,8 +20,12 @@ struct ModelCapabilitiesTests {
         #expect(try Self.model(category: "text", format: "gguf").capabilities == [.text, .tools])
     }
 
-    @Test func mlxTextModelHasNoToolLoop() throws {
+    @Test func mlxTextModelCallsToolsWhereMLXRuns() throws {
+        #if canImport(MLXLLM) && !targetEnvironment(simulator)
+        #expect(try Self.model(category: "text", format: "mlx").capabilities == [.text, .tools])
+        #else
         #expect(try Self.model(category: "text", format: "mlx").capabilities == [.text])
+        #endif
     }
 
     @Test func visionModelChatsAndTakesImages() throws {
@@ -46,13 +50,20 @@ struct ModelCapabilitiesTests {
     }
 
     @Test func toolsMatchTheRouterRule() throws {
-        let mlx = try Self.model(category: "text", format: "mlx")
-        #expect(throws: ModelConfigurationError.toolsUnsupported(.mlx)) {
-            try BackendRouter.requireToolSupport([CapsTool()], for: mlx)
+        let tools: [any LLMTool] = [CapsTool()]
+        for category in ["vision", "visionSpecialized"] {
+            let mlx = try Self.model(category: category, format: "mlx", documentPrompt: "Read it.")
+            #expect(!mlx.capabilities.contains(.tools))
+            #expect(throws: ModelConfigurationError.toolsUnsupported(.mlx)) {
+                try BackendRouter.requireToolSupport(tools, for: mlx)
+            }
         }
-        let gguf = try Self.model(category: "text", format: "gguf")
-        #expect(gguf.capabilities.contains(.tools))
-        try BackendRouter.requireToolSupport([CapsTool()], for: gguf)
+        for format in ["gguf", "mlx"] {
+            let model = try Self.model(category: "text", format: format)
+            let runs = model.capabilities.contains(.tools)
+            #expect(runs == ((try? BackendRouter.requireToolSupport(tools, for: model)) != nil))
+        }
+        #expect(try Self.model(category: "text", format: "gguf").capabilities.contains(.tools))
     }
 
     @Test func catalogDocumentModelsExtract() {

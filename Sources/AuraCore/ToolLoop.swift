@@ -8,7 +8,7 @@ import LocalLLMClientCore
 /// for no tools, at a cut reply (`maxTokens`, shared by every round of the turn, or cancellation), or at a reply
 /// that asks for tools after `maxToolRounds` rounds have run; those last calls are reported as skipped, not run.
 ///
-/// Read when a turn starts, so a change applies from the next turn. GGUF models only.
+/// Read when a turn starts, so a change applies from the next turn. GGUF models and MLX text models.
 public struct ToolLoopOptions: Sendable, Equatable {
     /// One round: as many as ran before `ToolLoopOptions` existed.
     public static let defaultMaxToolRounds = 1

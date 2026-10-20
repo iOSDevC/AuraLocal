@@ -141,9 +141,6 @@ struct ModelEvalView: View {
                         if let tps = stats.decodeTokensPerSecond {
                             metric("Decode", String(format: "%@%.1f tok/s", stats.source == .estimated ? "≈" : "", tps))
                         }
-                        if stats.source == .runtime, let prefill = stats.prefillTokensPerSecond {
-                            metric("Prefill", String(format: "%.0f tok/s", prefill))
-                        }
                         metric("Tokens", "\(stats.source == .runtime ? "" : "≈")\(stats.promptTokens) → \(stats.generatedTokens)")
                     }
                     metric("Total", String(format: "%.1fs", result.wrappedValue.elapsed))

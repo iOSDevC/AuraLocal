@@ -17,8 +17,8 @@ public enum ModelFormat: String, Sendable, Codable {
 /// and the device's hardware profile.
 ///
 /// Routing logic:
-/// - **MLX format** → ``MLXBackend``; with tools, a backend whose load throws
-///   ``ModelConfigurationError/toolsUnsupported(_:)``
+/// - **MLX format** → ``MLXBackend``; with tools, only for a text model: a vision or document model gets a backend
+///   whose load throws ``ModelConfigurationError/toolsUnsupported(_:)``
 /// - **GGUF format + fits in RAM** → ``LlamaCppBackend`` (standard full-load)
 /// - **GGUF format + too large** → ``LayerStreamingBackend`` (layer-by-layer)
 ///
@@ -38,7 +38,7 @@ public enum BackendRouter {
         case .mlx:
             // Public paths throw this before building an engine; refusing here too keeps an internal caller from
             // loading weights that would ignore the tools.
-            guard tools.isEmpty else {
+            guard tools.isEmpty || runsToolLoop(for: model) else {
                 return UnavailableBackend(failure: ModelConfigurationError.toolsUnsupported(.mlx))
             }
             #if targetEnvironment(simulator)
@@ -48,7 +48,7 @@ public enum BackendRouter {
                 "MLX models can't run on the iOS Simulator (no Metal GPU). Use a GGUF model here, "
                 + "or run on a device.")
             #elseif canImport(MLXLLM)
-            return MLXBackend(model: model, sampling: sampling)
+            return MLXBackend(model: model, sampling: sampling, tools: tools)
             #else
             return UnavailableBackend(
                 "This is an MLX model, but the MLX backend isn't linked. Add the MLX products or "
@@ -79,16 +79,26 @@ public enum BackendRouter {
         }
     }
 
-    /// Throws ``ModelConfigurationError/toolsUnsupported(_:)`` when `model`'s backend has no tool-calling loop:
-    /// only the llama.cpp backends run one.
+    /// Throws ``ModelConfigurationError/toolsUnsupported(_:)`` when `model`'s backend has no tool-calling loop for
+    /// it: an MLX vision or document model, or any MLX model where MLX cannot run.
     nonisolated static func requireToolSupport(_ tools: [any LLMTool], for model: Model) throws {
         guard !tools.isEmpty, !runsToolLoop(for: model) else { return }
         throw ModelConfigurationError.toolsUnsupported(.mlx)
     }
 
-    /// Whether `model`'s backend runs a tool-calling loop, reported as ``ModelCapabilities/tools``.
+    /// Whether `model`'s backend runs a tool-calling loop, reported as ``ModelCapabilities/tools``: the llama.cpp
+    /// backends for every GGUF model, ``MLXBackend`` for text models.
     nonisolated static func runsToolLoop(for model: Model) -> Bool {
-        model.format == .gguf
+        switch model.format {
+        case .gguf:
+            return true
+        case .mlx:
+            #if canImport(MLXLLM) && !targetEnvironment(simulator)
+            return model.category == .text
+            #else
+            return false
+            #endif
+        }
     }
 
     /// Whether `model`'s backend passes an image to it, reported as ``ModelCapabilities/vision``. The llama.cpp
@@ -116,8 +126,8 @@ public enum BackendRouter {
 // MARK: - UnavailableBackend
 
 /// A no-op ``InferenceBackend`` for a model this configuration cannot run: MLX on the simulator or without the
-/// mlx-swift products, or MLX asked for tools. It never loads and every call throws `failure`, so the model fails
-/// clearly instead of crashing the router or answering without its tools.
+/// mlx-swift products, or an MLX vision or document model asked for tools. It never loads and every call throws
+/// `failure`, so the model fails clearly instead of crashing the router or answering without its tools.
 @MainActor
 final class UnavailableBackend: InferenceBackend {
     let failure: any Error

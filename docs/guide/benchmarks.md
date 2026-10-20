@@ -180,7 +180,8 @@ if let stats = llm.lastGenerationStats {
 }
 ```
 
-`lastGenerationStats` reports MLX's token counts and prefill time as the runtime gives them, and times decode from the
-first token to the last on every backend; on llama.cpp, prompt tokens are estimated, and with tools registered the
-generated count is estimated from text length too (`source == .estimated`). See
+`lastGenerationStats` reports MLX's exact token counts, and times prefill and decode (from the first token to the
+last) on every backend; on llama.cpp, prompt tokens are estimated, and with tools registered the generated count is
+estimated from text length too (`source == .estimated`). A second prompt on the same MLX text model reuses the KV
+cache of the first and prefills only what it does not share, so time a full prefill on a newly loaded model. See
 [Generation Stats]({{ '/api/core' | relative_url }}#generation-stats).

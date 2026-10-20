@@ -2,9 +2,10 @@
 // `import AuraCore`. A tool is a type conforming to `LLMTool` — a `name`, a `description`, an `Arguments`
 // type (`Decodable & ToolSchemaGeneratable`, i.e. it declares an `argumentsSchema`), and an async
 // `call(arguments:) -> ToolOutput`. Pass tools to `ModelManager.load(_:tools:)` (or an `AuraProfile`) with a GGUF
-// model, and the llama.cpp backend runs it with automatic tool-calling: the model decides when to invoke a tool,
-// `call(arguments:)` executes it, and the result is fed back for up to `ToolLoopOptions.maxToolRounds` rounds per
-// turn (default 1; set it on `AuraLocal.toolLoop` or `AuraProfile.toolLoop`).
+// model or an MLX text model, and the backend runs it with automatic tool-calling: the model decides when to
+// invoke a tool, `call(arguments:)` executes it, and the result is fed back for up to
+// `ToolLoopOptions.maxToolRounds` rounds per turn (default 1; set it on `AuraLocal.toolLoop` or
+// `AuraProfile.toolLoop`).
 //
 // Example (no macro needed):
 //

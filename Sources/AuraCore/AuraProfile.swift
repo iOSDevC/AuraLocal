@@ -24,8 +24,8 @@ public struct AuraProfile: Sendable, Identifiable {
     /// Model + backend hint — `model.format` drives backend selection.
     public var model: Model
     public var sampling: SamplingParams
-    /// Empty ⇒ plain chat; non-empty ⇒ agentic (function-calling). Tools need a GGUF model: with an MLX model
-    /// ``AuraSession`` throws ``ModelConfigurationError/toolsUnsupported(_:)``.
+    /// Empty ⇒ plain chat; non-empty ⇒ agentic (function-calling). Tools need a GGUF model or an MLX text model:
+    /// with an MLX vision or document model ``AuraSession`` throws ``ModelConfigurationError/toolsUnsupported(_:)``.
     public var tools: [any LLMTool]
     /// Optional JSON Schema every reply must conform to. ``AuraSession`` compiles it when the profile is applied
     /// and validates each reply, re-prompting on violations; see ``OutputSchema``.

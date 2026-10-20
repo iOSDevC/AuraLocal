@@ -123,7 +123,7 @@ The backends differ in what they honour:
 
 | | MLX | GGUF (llama.cpp) |
 |---|---|---|
-| Tools (`ModelManager.load(_:tools:)`, `AuraProfile.tools`) | Throws `ModelConfigurationError.toolsUnsupported(.mlx)` before loading | Runs the tool-calling loop (`toolLoop.maxToolRounds` rounds per turn, default 1) |
+| Tools (`ModelManager.load(_:tools:)`, `AuraProfile.tools`) | Text models run the tool-calling loop (`toolLoop.maxToolRounds` rounds per turn, default 1); vision and document models throw `ModelConfigurationError.toolsUnsupported(.mlx)` before loading | Runs the tool-calling loop (`toolLoop.maxToolRounds` rounds per turn, default 1) |
 | `temperature` / `topP` | Fixed per instance | Fixed per instance (the sampler is built with the context); each setting is its own cached instance |
 | `constraint:` (JSON / GBNF) | Throws `GenerationConstraintError.unsupportedBackend` | Enforced when loaded in full; layer-streaming throws |
 | Images | Vision models | Ignored (text only) |

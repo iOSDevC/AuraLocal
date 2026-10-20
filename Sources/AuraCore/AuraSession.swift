@@ -111,8 +111,8 @@ extension AuraLocal: ConstrainedProfileEngine {
                                            temperature: profile.sampling.temperature, topP: profile.sampling.topP)
     }
 
-    /// Tools on an MLX model and out-of-range sampling throw ``ModelConfigurationError`` here, before any engine is
-    /// built or torn down.
+    /// Tools on an MLX vision or document model and out-of-range sampling throw ``ModelConfigurationError`` here,
+    /// before any engine is built or torn down.
     private static func requireSupport(for profile: AuraProfile) throws {
         try BackendRouter.requireToolSupport(profile.tools, for: profile.model)
         _ = try SamplingSettings.resolve(temperature: profile.sampling.temperature, topP: profile.sampling.topP,
@@ -125,8 +125,8 @@ extension AuraLocal: ConstrainedProfileEngine {
     /// meanwhile queue behind the rebuild, so a stream started during a switch runs on the new profile.
     ///
     /// A profile whose ``AuraProfile/outputSchema`` does not compile throws ``OutputSchemaError``, and one with tools
-    /// on an MLX model or out-of-range sampling throws ``ModelConfigurationError``, before anything is cancelled or
-    /// torn down, so the current profile stays usable. If building the new engine throws, the old
+    /// on an MLX vision or document model or out-of-range sampling throws ``ModelConfigurationError``, before anything
+    /// is cancelled or torn down, so the current profile stays usable. If building the new engine throws, the old
     /// one is already torn down: streams fail with ``AuraError/modelNotLoaded`` until a retry (to any profile,
     /// the current one included) succeeds.
     ///

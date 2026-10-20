@@ -55,7 +55,7 @@ public final class AuraLocal {
         set { engine.deviceGuard = newValue }
     }
 
-    /// How a GGUF instance loaded with tools runs the calls the model makes: at most
+    /// How an instance loaded with tools (a GGUF model or an MLX text model) runs the calls the model makes: at most
     /// ``ToolLoopOptions/maxToolRounds`` rounds per turn (default 1), and tool errors reported to the model. Read when
     /// a turn starts; no effect on an instance loaded without tools.
     public var toolLoop: ToolLoopOptions {
@@ -85,8 +85,9 @@ public final class AuraLocal {
     // MARK: - Init
 
     /// Internal init — creates an instance with backend auto-selected by ``BackendRouter``. `tools` (when
-    /// non-empty) enables GGUF function-calling; with an MLX model the backend's load throws
-    /// ``ModelConfigurationError/toolsUnsupported(_:)``. `nil` sampling takes the backend defaults.
+    /// non-empty) enables function-calling on a GGUF model or an MLX text model; with an MLX vision or document model
+    /// the backend's load throws ``ModelConfigurationError/toolsUnsupported(_:)``. `nil` sampling takes the backend
+    /// defaults.
     /// Use ``ModelManager/load(_:tools:temperature:topP:onProgress:)`` or the factories (``text``, ``vision``…).
     init(model: Model, sampling: SamplingSettings? = nil, tools: [any LLMTool] = []) {
         let settings = sampling ?? .defaults(for: model)
@@ -95,7 +96,7 @@ public final class AuraLocal {
         self.engine = AuraEngine(model: model, sampling: settings, tools: tools)
     }
 
-    /// An instance around a prepared engine (tests).
+    /// An instance around a prepared engine (tests, and MLX tool instances sharing loaded weights).
     init(engine: AuraEngine, sampling: SamplingSettings? = nil) {
         self.model = engine.model
         self.sampling = sampling ?? .defaults(for: engine.model)

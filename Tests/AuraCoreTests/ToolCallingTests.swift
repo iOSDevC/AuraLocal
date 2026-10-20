@@ -125,6 +125,35 @@ final class ToolCallingTests: XCTestCase {
         XCTAssertNil(engine.lastToolTurn)
     }
 
+    #if canImport(MLXLLM) && !targetEnvironment(simulator)
+    func testToolLoopSettingsReachTheMLXBackend() throws {
+        let mlx = try XCTUnwrap(ModelRegistry.shared.models.first { $0.format == .mlx && $0.category == .text })
+        let aura = AuraLocal(model: mlx, tools: [TapTool()])
+        let backend = try XCTUnwrap(aura.engine.backend as? MLXBackend)
+        XCTAssertEqual(backend.registeredToolNames, ["tap"])
+        XCTAssertEqual(backend.toolLoop, .default)
+        var received: [ToolEvent] = []
+        aura.toolLoop = ToolLoopOptions(maxToolRounds: 2, toolErrors: .failTurn)
+        aura.onToolEvent = { received.append($0) }
+
+        XCTAssertEqual(backend.toolLoop, ToolLoopOptions(maxToolRounds: 2, toolErrors: .failTurn))
+        backend.onToolEvent?(.roundLimitReached(skipped: []))
+        XCTAssertEqual(received, [.roundLimitReached(skipped: [])])
+        XCTAssertNil(aura.lastToolTurn, "no turn has run")
+    }
+
+    func testAnMLXBackendNotYetLoadedThrowsBeforeAnyToolRuns() async throws {
+        let mlx = try XCTUnwrap(ModelRegistry.shared.models.first { $0.format == .mlx && $0.category == .text })
+        let backend = MLXBackend(model: mlx, tools: [TapTool()])
+        do {
+            _ = try await backend.generate(prompt: "tap", systemPrompt: nil, maxTokens: 8) { _ in }
+            XCTFail("an unloaded backend generated")
+        } catch AuraError.modelNotLoaded {}
+        XCTAssertNil(backend.lastToolTurn)
+        XCTAssertNil(backend.sharingWeights(sampling: .defaults(for: mlx), tools: []), "no weights to share")
+    }
+    #endif
+
     func testDefaultsKeepOneRoundAndReportErrorsToTheModel() {
         XCTAssertEqual(ToolLoopOptions.default.maxToolRounds, 1)
         XCTAssertEqual(ToolLoopOptions.defaultMaxToolRounds, 1)
