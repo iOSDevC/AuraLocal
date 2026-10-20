@@ -192,13 +192,31 @@ aborted; the fix it needs upstream is prepared as `contrib/localllmclient/0004`.
 - **Cut replies:** a reply ended by `maxTokens`, cancellation or backgrounding leaves the next turn unaffected. The
   decode runs in a task of its own, so the call returns at once; the next turn waits until that decode has stopped
   (at most one token, or the end of a prefill) and flushes the token it left queued.
-- **With tools** a turn runs on a LocalLLMClient `LlamaClient` (its tool-call parser), with the same rendering, the
-  call → execute → resume loop `LLMSession` runs, and the same clean start. That client decodes in a task nobody can
-  cancel, so a reply cut short returns at once but the **next** turn waits until that decode reaches the end of
-  generation or fills the context (seconds on a 0.5B model). After `unload()` (an eviction too) the model stays in
-  memory until that decode ends, so a reload in the meantime holds two copies, and a process that exits before it
-  ends aborts in `ggml_metal_device_free`. A tool that throws fails the turn with its own error; arguments that do
-  not decode fail it with LocalLLMClient's `ToolError.argumentDecodingFailed`.
+- **With tools** a turn runs on a LocalLLMClient `LlamaClient` (its tool-call parser), with the same rendering and
+  the same clean start, in **rounds**. A round is every call one reply asks for: the calls run in the order the
+  model wrote them, then the model replies again with their results. The turn ends at a reply that asks for no
+  tools, at a cut reply, or at a reply that asks for tools after `toolLoop.maxToolRounds` rounds (default 1, as many
+  rounds as before); those last calls do not run and are reported as `ToolEvent.roundLimitReached` and in
+  `lastToolTurn.skipped`. Every round shares the turn's `maxTokens` and prefills the whole conversation again, so
+  each round costs a full prefill (see
+  [Tool calling]({{ '/api/core' | relative_url }}#tool-calling-gguf)).
+  - **Errors:** a tool that throws, arguments that do not decode and an unknown tool name reach the model as
+    `{"error": "…"}` and the turn goes on. `ToolLoopOptions(toolErrors: .failTurn)` makes the turn throw instead:
+    the tool's own error, LocalLLMClient's `ToolError.argumentDecodingFailed`, or `LLMError.invalidParameter`.
+    Cancelling the turn while a tool runs cancels the tool's task and throws `CancellationError`.
+  - **What the model sees:** a tool's output as JSON with sorted keys (`key: value` pairs sorted by key when the
+    output holds a value JSON cannot, such as a `Date`). With a chat template that mentions `tools` (Qwen2.5's, for
+    example) a round is sent in the template's own format: the reply's calls as an assistant turn with `tool_calls`,
+    each result as a `tool` turn. Other templates, and any whose native rendering throws, get the calls as
+    `<tool_call>` text and the last result as an assistant `<tool_response>` turn (earlier results stay `tool`
+    turns), the form LocalLLMClient sends.
+  - **Limits:** every round's prompt is trimmed like the first, but the newest user turn and the rounds after it
+    always stay, so tool output too large for the context fails the turn with `LLMError.failedToDecode`.
+    LocalLLMClient keeps only the first call per tool name in one reply (`LlamaClient.swift:119-124` in 0.5.0).
+    The client decodes in a task nobody can cancel, so a reply cut short returns at once but the **next** turn
+    waits until that decode reaches the end of generation or fills the context (seconds on a 0.5B model).
+    After `unload()` (an eviction too) the model stays in memory until that decode ends, so a reload in the
+    meantime holds two copies, and a process that exits before it ends aborts in `ggml_metal_device_free`.
 - **Not reset:** the sampler's repetition-penalty window and random state carry over between turns (no public reset
   in LocalLLMClient 0.5.0; see `contrib/localllmclient/0003`). At temperature 0 they have no effect.
 
