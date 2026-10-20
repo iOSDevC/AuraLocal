@@ -59,6 +59,8 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   search with a device-fit filter; the Model Finder example app; the AuraUI Hugging Face browser.
 - `ModelDownloads`: resumable GGUF and MLX downloads, gated and private repos, one folder of a repo pinned by
   revision (`HFRepoInfo.revision`, `deleteFolder`), and `DownloadRecords` that survive relaunches.
+- `DownloadConflictError.partialChanged(path:)`: a finished `.partial` that another writer removed or resized before
+  it was moved into place fails with this instead of a raw file-system error, and nothing is replaced.
 - GGUF: `GenerationConstraint` (`.json`, `.grammar(gbnf:root:)`) enforced in llama.cpp's sampler, and
   conversations rendered with each model's chat template and real roles.
 - `GenerationStats` after each generation, a decode-speed estimate, and `HardwareAnalyzer.assess` judging wall
@@ -108,6 +110,11 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 - Consent shows, caches and prices the exact escalation payload; redaction applies on the policy path; the cost
   cap holds at the consent gate; unknown spend is never priced as $0.
 - A loaded model stays ready when another sampling load fails.
+- Two downloads of one model no longer write the same `.partial` files at once, which failed one of them with
+  "`<file>.partial` doesn't exist". `ModelDownloads.download` and `downloadFolder`, `GGUFModelDownloader`, the MLX
+  load path and `ChunkedDownloader` wait for each other per file or per Hugging Face snapshot, in one process and,
+  through a `flock` on a lock file next to the destination, across processes sharing the storage root (the `aura`
+  CLI and AuraExample on a Mac). The later call returns the finished model without a transfer.
 - RAG document IDs survive relaunches, and vectors from a provider the index no longer matches are never stored.
 - The memory safeguards that were documented but inert (`evictAllButMostRecent`, the iOS OOM guards).
 - `scripts/package-cli.sh` finds the build products of newer SwiftPM (`.build/out/Products/Release`), and the
