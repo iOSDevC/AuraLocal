@@ -74,6 +74,9 @@ struct ContentView: View {
             }
         }
         .tabViewStyle(.sidebarAdaptable)
+        #if os(iOS)
+        .background(KeyboardDismissOnTap())
+        #endif
         .onChange(of: selectedTab) { _, tab in storedTab = tab }
     }
 }
