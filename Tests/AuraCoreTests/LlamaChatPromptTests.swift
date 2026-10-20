@@ -208,6 +208,20 @@ final class LlamaChatPromptTests: XCTestCase {
         XCTAssertFalse(rendered.contains("If you decide to invoke"), "instructions only precede a fresh request")
     }
 
+    func testWhileRoundsRemainTheToolInstructionsFollowAResultToo() throws {
+        let renderer = LlamaPromptRenderer(template: Self.chatML, tools: [AnyLLMTool(EchoTool())])
+        let round: [LlamaChatMessage] = [.user("Echo hi, then echo bye"),
+                                         .assistant("<tool_call>\n{\"name\": \"echo\", \"arguments\": {}}\n</tool_call>"),
+                                         .tool(#"{"text":"hi"}"#)]
+        let next = try renderer.render(round, toolRoundsRemain: true)
+        XCTAssertTrue(next.hasPrefix("<|im_start|>system\nIf you decide to invoke"), next)
+        XCTAssertTrue(next.contains(#""name":"echo""#), "a template without tool support lists the tools only there")
+        XCTAssertEqual(try renderer.render([.user("Echo hi")]).prefix(while: { $0 != "[" }),
+                       next.prefix(while: { $0 != "[" }), "the same instructions as the first reply's")
+        XCTAssertFalse(try renderer.render(round, toolRoundsRemain: false).contains("If you decide to invoke"),
+                       "the reply after the last round is steered to answer")
+    }
+
     /// ChatML that renders `tool_calls` and keeps the `tool` role, the way Qwen2.5's template does.
     private static let nativeChatML = """
     {%- if tools %}{{- 'TOOLS|' }}{%- endif %}{%- for message in messages %}\

@@ -379,6 +379,8 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
         var history = LlamaChatNormalizer.normalize(messages)
         var sent: (history: [LlamaChatMessage], prompt: String) = (history, "")
         var replies = 0
+        let limit = max(0, toolLoop.options.maxToolRounds)
+        var rounds = 0
         let driver = ToolLoopDriver(tools: renderer.tools, context: toolLoop)
         let summary = try await driver.run(
             reply: {
@@ -388,13 +390,15 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
                 }
                 replies += 1
                 progress.roundText = ""
-                let streamed = try await stream(history, progress: &progress, shouldStop: shouldStop, onPiece: onPiece)
+                let streamed = try await stream(history, toolRoundsRemain: rounds < limit, progress: &progress,
+                                                shouldStop: shouldStop, onPiece: onPiece)
                 history = streamed.history
                 sent = (streamed.history, streamed.prompt)
                 guard case .finished(let calls) = streamed.outcome else { return nil }
                 return calls
             },
             record: { calls, results in
+                rounds += 1
                 history += Self.roundMessages(text: progress.roundText, calls: calls, results: results)
             }
         )
@@ -412,11 +416,16 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
     /// that rendered; trimming drops whole exchanges before the newest user turn, never the rounds after it.
     private func stream(
         _ messages: [LlamaChatMessage],
+        toolRoundsRemain: Bool,
         progress: inout Progress,
         shouldStop: ((Int) -> Bool)?,
         onPiece: (String) -> Void
     ) async throws -> (outcome: Outcome, history: [LlamaChatMessage], prompt: String) {
-        var (history, prompt) = try fitter.fitted(messages, replyBudget: progress.limit, render: renderer.render)
+        let renderer = self.renderer
+        let render = { (messages: [LlamaChatMessage]) throws -> String in
+            try renderer.render(messages, toolRoundsRemain: toolRoundsRemain)
+        }
+        var (history, prompt) = try fitter.fitted(messages, replyBudget: progress.limit, render: render)
         let chunks: AsyncThrowingStream<StreamingChunk, any Error>
         while true {
             let client = try await liveClient()
@@ -427,7 +436,7 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
                 await discardQueuedTokens(of: client)
                 guard fitter.learn(from: error, promptBytes: prompt.utf8.count),
                       let shorter = try fitter.shortened(history, replyBudget: progress.limit,
-                                                         render: renderer.render) else { throw error }
+                                                         render: render) else { throw error }
                 (history, prompt) = shorter
             }
         }

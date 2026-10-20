@@ -167,39 +167,55 @@ struct LlamaPromptRenderer: Sendable {
     /// A tool round renders natively when the template mentions `tools`; if every native attempt throws, the
     /// attempts run again with the text form.
     func render(_ messages: [LlamaChatMessage]) throws -> String {
+        try render(messages, toolRoundsRemain: false)
+    }
+
+    /// As ``render(_:)``. After a tool result the tool instructions are sent again only while `toolRoundsRemain`
+    /// (another round may still run); on a template without tool support they are the only listing of the tools.
+    func render(_ messages: [LlamaChatMessage], toolRoundsRemain: Bool) throws -> String {
         let normalized = LlamaChatNormalizer.normalize(messages)
-        guard let template, let parsed else { return Self.transcript(normalized) }
-        let compiled: Template
-        do {
-            compiled = try parsed.get()
-        } catch {
-            throw RenderError.templateFailed(String(describing: error))
-        }
-
-        let preferred = Self.contentShape(for: template)
-        var attempts: [(messages: [LlamaChatMessage], shape: ContentShape)] = [(normalized, preferred)]
-        if preferred != .text { attempts.append((normalized, .text)) }
-        if normalized.first?.role == .system {
-            attempts.append((Self.foldingSystemIntoFirstUser(normalized), .text))
-        }
-
+        guard let template, parsed != nil else { return Self.transcript(normalized) }
+        let compiled = try compiledTemplate()
+        let attempts = Self.attempts(for: normalized, template: template)
         let nativeTools = template.contains("tools")
         if nativeTools && Self.hasToolRounds(normalized),
-           let rendered = try? render(attempts, with: compiled, nativeTools: nativeTools, style: .native) {
+           let rendered = try? render(attempts, with: compiled, nativeTools: nativeTools, style: .native,
+                                      keepsInstructions: toolRoundsRemain) {
             return rendered
         }
-        return try render(attempts, with: compiled, nativeTools: nativeTools, style: .text)
+        return try render(attempts, with: compiled, nativeTools: nativeTools, style: .text,
+                          keepsInstructions: toolRoundsRemain)
     }
 
     // MARK: Rendering
 
+    private func compiledTemplate() throws -> Template {
+        guard let parsed else { throw RenderError.templateFailed("the model has no chat template") }
+        do {
+            return try parsed.get()
+        } catch {
+            throw RenderError.templateFailed(String(describing: error))
+        }
+    }
+
+    private static func attempts(for normalized: [LlamaChatMessage],
+                                 template: String) -> [(messages: [LlamaChatMessage], shape: ContentShape)] {
+        let preferred = contentShape(for: template)
+        var attempts: [(messages: [LlamaChatMessage], shape: ContentShape)] = [(normalized, preferred)]
+        if preferred != .text { attempts.append((normalized, .text)) }
+        if normalized.first?.role == .system {
+            attempts.append((foldingSystemIntoFirstUser(normalized), .text))
+        }
+        return attempts
+    }
+
     private func render(_ attempts: [(messages: [LlamaChatMessage], shape: ContentShape)], with compiled: Template,
-                        nativeTools: Bool, style: ToolTurnStyle) throws -> String {
+                        nativeTools: Bool, style: ToolTurnStyle, keepsInstructions: Bool) throws -> String {
         var lastFailure = "no attempt rendered"
         for (index, attempt) in attempts.enumerated() {
             do {
                 let rendered = try render(attempt.messages, with: compiled, nativeTools: nativeTools,
-                                          shape: attempt.shape, style: style)
+                                          shape: attempt.shape, style: style, keepsInstructions: keepsInstructions)
                 let isLast = index == attempts.count - 1
                 if isLast || Self.keepsEveryMessage(attempt.messages, in: rendered) {
                     return rendered
@@ -217,9 +233,10 @@ struct LlamaPromptRenderer: Sendable {
     }
 
     private func render(_ messages: [LlamaChatMessage], with compiled: Template, nativeTools: Bool,
-                        shape: ContentShape, style: ToolTurnStyle) throws -> String {
+                        shape: ContentShape, style: ToolTurnStyle, keepsInstructions: Bool) throws -> String {
         let payload = try toolProcessed(try messages.map { try Self.payload(for: $0, shape: shape, style: style) },
-                                        nativeSupport: nativeTools, shape: shape, style: style)
+                                        nativeSupport: nativeTools, shape: shape, style: style,
+                                        keepsInstructions: keepsInstructions)
         var context: [String: Value] = [
             "add_generation_prompt": .boolean(true),
             "messages": try Value(any: payload),
@@ -302,9 +319,10 @@ struct LlamaPromptRenderer: Sendable {
     }
 
     /// `StandardToolInstructionProcessor.processMessages`, which LocalLLMClient applies whenever tools exist. A system
-    /// message it has to add gets the template's content shape; LocalLLMClient always uses parts there.
+    /// message it has to add gets the template's content shape; LocalLLMClient always uses parts there. Unlike it,
+    /// `keepsInstructions` keeps the instructions after a tool result too.
     private func toolProcessed(_ messages: [[String: any Sendable]], nativeSupport: Bool, shape: ContentShape,
-                               style: ToolTurnStyle) throws -> [[String: any Sendable]] {
+                               style: ToolTurnStyle, keepsInstructions: Bool) throws -> [[String: any Sendable]] {
         guard !tools.isEmpty else { return messages }
         var processed = messages
         let toolsJSON = try tools.toOAICompatJSONString(options: [])
@@ -318,7 +336,7 @@ struct LlamaPromptRenderer: Sendable {
                                   "tools": toolsJSON], at: 0)
             }
         }
-        if !lastIsTool {
+        if !lastIsTool || keepsInstructions {
             let instructions = Self.toolInstructions(toolsJSON)
             if let index = Self.systemIndex(in: processed) {
                 processed[index]["content"] = Self.appending(instructions, to: processed[index]["content"])
