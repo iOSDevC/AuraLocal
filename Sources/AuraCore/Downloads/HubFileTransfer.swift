@@ -27,6 +27,9 @@ struct HubFileReference: Sendable, Equatable {
 /// cancel and resume is never spliced. The file is moved into place only when its size matches, so a failed or
 /// refused request never becomes a model file. When the caller passes the published SHA-256, the finished partial is
 /// hashed first and a mismatch deletes it instead.
+///
+/// `fetch` takes no ``DownloadGate`` turn itself: its callers in ``ModelDownloads`` hold the one for the file or the
+/// snapshot folder it writes into.
 struct HubFileTransfer: Sendable {
     static let chunkSize: Int64 = 32 * 1024 * 1024
     static let maxChunkAttempts = 6
@@ -203,7 +206,10 @@ struct HubFileTransfer: Sendable {
             try handle.close()
         }
 
-        let finalSize = Self.fileSize(at: partial) ?? 0
+        guard let finalSize = Self.fileSize(at: partial) else {
+            Self.log.error("\(path, privacy: .public): partial vanished after the transfer")
+            throw DownloadConflictError.partialChanged(path: path)
+        }
         if expectedSize > 0, finalSize != expectedSize {
             Self.log.error("\(path, privacy: .public): \(finalSize) bytes, expected \(expectedSize)")
             throw ModelDownloadError.sizeMismatch(path: path, expected: expectedSize, actual: finalSize)
@@ -211,10 +217,27 @@ struct HubFileTransfer: Sendable {
         if let expectedSHA256 {
             try FileIntegrity.verify(partial, expectedSHA256: expectedSHA256, path: path)
         }
-        try? fileManager.removeItem(at: destination)
-        try fileManager.moveItem(at: partial, to: destination)
+        try Self.promote(partial, to: destination, expectedSize: finalSize, path: path)
         let verified = expectedSHA256 == nil ? "" : " · SHA-256 verified"
         Self.log.info("\(path, privacy: .public) complete · \(finalSize) bytes\(verified, privacy: .public)")
+    }
+
+    /// Re-checks that `partial` is still the `expectedSize` bytes this download wrote, so a file another writer took
+    /// fails with ``DownloadConflictError/partialChanged(path:)`` instead of a raw file-system error.
+    static func promote(_ partial: URL, to destination: URL, expectedSize: Int64, path: String) throws {
+        let actual = fileSize(at: partial)
+        guard actual == expectedSize else {
+            let found = actual.map { "\($0) bytes" } ?? "gone"
+            log.error("\(path, privacy: .public): partial is \(found, privacy: .public), expected \(expectedSize)")
+            throw DownloadConflictError.partialChanged(path: path)
+        }
+        try? FileManager.default.removeItem(at: destination)
+        do {
+            try FileManager.default.moveItem(at: partial, to: destination)
+        } catch where fileSize(at: partial) == nil {
+            log.error("\(path, privacy: .public): partial vanished while it was moved into place")
+            throw DownloadConflictError.partialChanged(path: path)
+        }
     }
 
     private func appendChunks(from url: URL, to handle: FileHandle, partial: URL, offset start: Int64,

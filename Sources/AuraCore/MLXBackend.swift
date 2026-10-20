@@ -364,8 +364,9 @@ struct AuraHFDownloader: Downloader {
         let sanitized = id.replacingOccurrences(of: "/", with: "--")
         let snapshotPath = "huggingface/hub/models--\(sanitized)/snapshots/main"
         let dir = cacheDirectory.appending(path: snapshotPath)
-        // Two loads of one repo (e.g. two sampling settings) would write the same .partial files and race.
-        return try await SnapshotDownloadGate.shared.serialized(dir.path(percentEncoded: false)) {
+        // Two loads of one repo (e.g. two sampling settings), or a load and ModelDownloads, would write the same
+        // .partial files and race.
+        return try await DownloadGate.shared.exclusive(dir) { _ in
             try await self.downloadSnapshot(id: id, revision: revision, patterns: patterns, useLatest: useLatest,
                                             snapshotPath: snapshotPath, dir: dir, progressHandler: progressHandler)
         }
@@ -582,8 +583,8 @@ struct AuraHFDownloader: Downloader {
             if let expectedSHA256 {
                 try FileIntegrity.verify(partial, expectedSHA256: expectedSHA256, path: destination.lastPathComponent)
             }
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: partial, to: destination)
+            try HubFileTransfer.promote(partial, to: destination, expectedSize: expectedSize,
+                                        path: destination.lastPathComponent)
             Self.log.info("\(destination.lastPathComponent, privacy: .public): partial already complete — promoted")
             return
         }
@@ -685,40 +686,21 @@ struct AuraHFDownloader: Downloader {
         try handle.close()
 
         // Size integrity check before promoting.
-        if expectedSize > 0 {
-            let attrs = try? FileManager.default.attributesOfItem(atPath: partial.path(percentEncoded: false))
-            let finalSize = (attrs?[.size] as? Int64) ?? 0
-            guard finalSize == expectedSize else {
-                Self.log.error("\(destination.lastPathComponent, privacy: .public): final size \(finalSize) != expected \(expectedSize)")
-                throw AuraError.invalidResponse("Incomplete download of \(destination.lastPathComponent): \(finalSize)/\(expectedSize) bytes")
-            }
+        guard let finalSize = HubFileTransfer.fileSize(at: partial) else {
+            Self.log.error("\(destination.lastPathComponent, privacy: .public): partial vanished after the transfer")
+            throw DownloadConflictError.partialChanged(path: destination.lastPathComponent)
+        }
+        guard finalSize == expectedSize else {
+            Self.log.error("\(destination.lastPathComponent, privacy: .public): final size \(finalSize) != expected \(expectedSize)")
+            throw AuraError.invalidResponse("Incomplete download of \(destination.lastPathComponent): \(finalSize)/\(expectedSize) bytes")
         }
         if let expectedSHA256 {
             try FileIntegrity.verify(partial, expectedSHA256: expectedSHA256, path: destination.lastPathComponent)
         }
 
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: partial, to: destination)
+        try HubFileTransfer.promote(partial, to: destination, expectedSize: expectedSize,
+                                    path: destination.lastPathComponent)
         Self.log.info("\(destination.lastPathComponent, privacy: .public) complete")
-    }
-}
-
-/// Runs downloads into the same snapshot folder one at a time; a later call then finds the finished files.
-private actor SnapshotDownloadGate {
-    static let shared = SnapshotDownloadGate()
-    private var tails: [String: (id: UUID, done: Task<Void, Never>)] = [:]
-
-    func serialized<T: Sendable>(_ key: String, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
-        let previous = tails[key]?.done
-        let work = Task<T, Error> {
-            await previous?.value
-            try Task.checkCancellation()
-            return try await body()
-        }
-        let ticket = UUID()
-        tails[key] = (ticket, Task { _ = await work.result })
-        defer { if tails[key]?.id == ticket { tails[key] = nil } }
-        return try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
     }
 }
 

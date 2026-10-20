@@ -920,8 +920,11 @@ it. Each file arrives in `Range` chunks appended to `<file>.partial`, which surv
 relaunch; a partial whose ETag no longer matches restarts from zero, and a file moves into place only when its
 size matches and, for an LFS file, when its SHA-256 matches the one Hugging Face publishes. A finished model an
 earlier version left in Caches is used from there; a GGUF `.partial` left there moves into the storage root and is
-resumed. Guide:
-[Downloading without loading]({{ '/guide/models' | relative_url }}#downloading-without-loading).
+resumed. Downloads of the same file or snapshot run one at a time, also with `GGUFModelDownloader`, the MLX load
+path, `ChunkedDownloader` and other processes sharing the storage root; a later call returns the finished model
+without a transfer. Guides:
+[Downloading without loading]({{ '/guide/models' | relative_url }}#downloading-without-loading),
+[Concurrent downloads]({{ '/guide/models' | relative_url }}#concurrent-downloads).
 
 ```swift
 public enum ModelDownloads {
@@ -967,6 +970,11 @@ public enum ModelDownloadError: LocalizedError, Equatable, Sendable {
 public enum ModelIntegrityError: LocalizedError, Equatable, Sendable {
     case checksumMismatch(path: String, expected: String, actual: String)   // lowercase hex SHA-256
 }
+
+// Separate from ModelDownloadError for the same reason. Nothing was moved into place; download again.
+public enum DownloadConflictError: LocalizedError, Equatable, Sendable {
+    case partialChanged(path: String)   // the finished .partial was gone or resized by another writer
+}
 ```
 
 Only single-file GGUF quants at the top level of a repo download; a split or subfolder quant, or a model
@@ -975,7 +983,10 @@ backed by a local file, throws `.unsupported`. `DownloadedModels.scan()`, `scanS
 Caches; `DownloadedModels.modelsDirectory` is the GGUF root downloads write to and `modelsDirectories` every GGUF
 root that is read. `GGUFModelDownloader` (the GGUF path of `ModelManager.load`) and
 `ChunkedDownloader.download(from:to:fileName:expectedSHA256:onProgress:)` throw `ModelIntegrityError` too; the
-latter checks only a hash you pass.
+latter checks only a hash you pass. `GGUFModelDownloader` and the MLX load path throw `DownloadConflictError` too.
+`ChunkedDownloader` waits for another download to the same destination. It returns the file there without a
+transfer when that download ran in the same process and fetched the same URL and hash, or when the file hashes to
+the `expectedSHA256` passed; otherwise it downloads again and replaces the file.
 
 ### DownloadRecords
 

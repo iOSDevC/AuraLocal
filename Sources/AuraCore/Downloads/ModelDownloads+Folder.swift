@@ -18,6 +18,9 @@ extension ModelDownloads {
     /// The listing is untrusted: an absolute path, a `.` or `..` segment, a backslash, a NUL or a path outside
     /// `folder` throws ``ModelDownloadError/unsupported(_:)`` before anything is written. An `include` entry that
     /// matches no file throws ``ModelDownloadError/notFound(repoID:path:)``.
+    ///
+    /// Downloads into one repo run one at a time, also across processes sharing the storage root; a later call for a
+    /// finished folder returns it without a transfer.
     public static func downloadFolder(repoID: String, revision: String, folder: String, include: [String],
                                       auth: any DownloadAuthorizing = NoDownloadAuth(),
                                       progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
@@ -198,17 +201,31 @@ extension ModelDownloads {
         _ = try validated(repoID: repoID)
         _ = try validated(include: include)
         let directory = localFolder(repoID: repoID, folder: try validated(folder: folder), root: root)
-        let marker = directory.appendingPathComponent(completeMarker)
         if isIntact(directory, revision: revision, include: include) { return directory }
         let previous = fallbackRoots.lazy.map { localFolder(repoID: repoID, folder: folder, root: $0) }
             .first { isIntact($0, revision: revision, include: include) }
         if let previous { return previous }
+
+        // Keyed by the snapshot, not the folder: nested folders and a repo's MLX files then exclude each other
+        // across processes too.
+        let snapshot = snapshotDirectory(repoID: repoID, root: root)
+        return try await DownloadGate.shared.exclusive(snapshot) { _ in
+            try await fetchFolder(repoID: repoID, revision: revision, folder: folder, include: include,
+                                  into: directory, snapshot: snapshot, transfer: transfer, progress: progress)
+        }
+    }
+
+    private static func fetchFolder(repoID: String, revision: String, folder: String, include: [String],
+                                    into directory: URL, snapshot: URL, transfer: HubFileTransfer,
+                                    progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
+        // The call this one waited for may have finished the folder.
+        if isIntact(directory, revision: revision, include: include) { return directory }
+        let marker = directory.appendingPathComponent(completeMarker)
         if isFolderComplete(at: directory, revision: revision) {
             // Something was removed after completion: refetch what is missing.
             try FileManager.default.removeItem(at: marker)
         }
 
-        let snapshot = snapshotDirectory(repoID: repoID, root: root)
         let files = try await folderFiles(repoID: repoID, revision: revision, folder: folder, include: include,
                                           transfer: transfer)
         try discardOtherRevision(in: directory, keeping: revision)

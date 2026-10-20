@@ -59,7 +59,8 @@ public struct DownloadPlan: Sendable, Equatable {
 /// deletes it and throws ``ModelIntegrityError/checksumMismatch(path:expected:actual:)``. Only single-file GGUF
 /// quants at the top level of a repo are supported. The Hugging Face token comes from ``KeychainDownloadAuth``.
 /// ``downloadFolder(repoID:revision:folder:include:auth:progress:)`` fetches one folder of a repo instead, such as
-/// a Core ML model, and sends no token by default.
+/// a Core ML model, and sends no token by default. Two downloads that would write the same `.partial` files never run
+/// at once; see ``download(_:auth:progress:)``.
 public enum ModelDownloads {
 
     /// Mirrors mlx-swift-lm's `modelDownloadPatterns` (`ModelFactory.swift`, package-internal there).
@@ -82,6 +83,9 @@ public enum ModelDownloads {
     /// moved into the storage root first), and verifies each LFS file's SHA-256. Returns the GGUF file or the MLX
     /// snapshot folder; one still in Caches from an earlier version is returned as is. `progress` receives (bytes
     /// on disk, total bytes). Cancel the calling task to stop; the partial file is kept for the next call.
+    ///
+    /// Downloads of one file or snapshot run one at a time, from any API or process sharing the storage root: a later
+    /// call waits, then returns the finished model without a transfer. Cancelling a waiting call stops only that call.
     public static func download(_ model: Model,
                                 auth: any DownloadAuthorizing = KeychainDownloadAuth(),
                                 progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
@@ -252,26 +256,39 @@ public enum ModelDownloads {
     private static func downloadGGUF(_ model: Model, transfer: HubFileTransfer, root: URL, fallbackRoots: [URL],
                                      progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
         let target = try ggufTarget(for: model, root: root)
-        for candidate in [root] + fallbackRoots {
+        if let finished = try finishedGGUF(model, roots: [root] + fallbackRoots, progress: progress) {
+            return finished
+        }
+        return try await DownloadGate.shared.exclusive(target.file) { _ in
+            // The call this one waited for may have finished the file.
+            if let finished = try finishedGGUF(model, roots: [root], progress: progress) { return finished }
+            adoptFallbackPartial(of: model, to: target.file, from: fallbackRoots)
+            let path = target.file.lastPathComponent
+            let total = try await transfer.size(of: target.source, repoID: model.repoID, path: path)
+            let directory = target.file.deletingLastPathComponent()
+            let present = onDiskBytes(target.file)
+            try transfer.ensureSpace(remaining: max(0, total - present), at: directory)
+            let sha256 = try await transfer.publishedSHA256(of: target.source)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try await transfer.fetch(target.source, to: target.file, expectedSize: total, expectedSHA256: sha256,
+                                     repoID: model.repoID, path: path) { bytes in
+                progress(bytes, total)
+            }
+            return target.file
+        }
+    }
+
+    /// The finished GGUF file in the first of `roots` that has one.
+    private static func finishedGGUF(_ model: Model, roots: [URL],
+                                     progress: @Sendable (Int64, Int64) -> Void) throws -> URL? {
+        for candidate in roots {
             let file = try ggufTarget(for: model, root: candidate).file
             if let size = HubFileTransfer.fileSize(at: file) {
                 progress(size, size)
                 return file
             }
         }
-        adoptFallbackPartial(of: model, to: target.file, from: fallbackRoots)
-        let path = target.file.lastPathComponent
-        let total = try await transfer.size(of: target.source, repoID: model.repoID, path: path)
-        let directory = target.file.deletingLastPathComponent()
-        let present = onDiskBytes(target.file)
-        try transfer.ensureSpace(remaining: max(0, total - present), at: directory)
-        let sha256 = try await transfer.publishedSHA256(of: target.source)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try await transfer.fetch(target.source, to: target.file, expectedSize: total, expectedSHA256: sha256,
-                                 repoID: model.repoID, path: path) { bytes in
-            progress(bytes, total)
-        }
-        return target.file
+        return nil
     }
 
     /// Moves a `.partial` an earlier version left in a fallback root next to `file`, so the transfer resumes from
@@ -299,24 +316,29 @@ public enum ModelDownloads {
         let marker = directory.appendingPathComponent(completeMarker)
         if FileManager.default.fileExists(atPath: marker.path) { return directory }
 
-        let files = try await snapshotFiles(repoID: repoID, patterns: patterns, revision: revision, transfer: transfer)
-        let total = files.map(\.sizeBytes).saturatingSum()
-        let present = files.map { onDiskBytes(directory.appendingPathComponent($0.path)) }.saturatingSum()
-        try transfer.ensureSpace(remaining: max(0, total - present), at: directory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return try await DownloadGate.shared.exclusive(directory) { _ in
+            // The call this one waited for may have finished the snapshot.
+            if FileManager.default.fileExists(atPath: marker.path) { return directory }
+            let files = try await snapshotFiles(repoID: repoID, patterns: patterns, revision: revision,
+                                                transfer: transfer)
+            let total = files.map(\.sizeBytes).saturatingSum()
+            let present = files.map { onDiskBytes(directory.appendingPathComponent($0.path)) }.saturatingSum()
+            try transfer.ensureSpace(remaining: max(0, total - present), at: directory)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        var finished: Int64 = 0
-        for file in files {
-            try Task.checkCancellation()
-            try await fetchSnapshotFile(file, repoID: repoID, revision: revision, into: directory,
-                                        transfer: transfer, finished: finished, total: total, progress: progress)
-            finished += file.sizeBytes
+            var finished: Int64 = 0
+            for file in files {
+                try Task.checkCancellation()
+                try await fetchSnapshotFile(file, repoID: repoID, revision: revision, into: directory,
+                                            transfer: transfer, finished: finished, total: total, progress: progress)
+                finished += file.sizeBytes
+            }
+            progress(total, total)
+            if patterns.contains("*.safetensors") {
+                FileManager.default.createFile(atPath: marker.path, contents: Data())
+            }
+            return directory
         }
-        progress(total, total)
-        if patterns.contains("*.safetensors") {
-            FileManager.default.createFile(atPath: marker.path, contents: Data())
-        }
-        return directory
     }
 
     private static func fetchSnapshotFile(_ file: PlannedFile, repoID: String, revision: String, into directory: URL,

@@ -638,16 +638,48 @@ try ModelDownloads.delete(model)                                // file + .parti
   invalid token, no access, license not accepted), `notFound` (404, or `RepoNotFound` / `EntryNotFound` /
   `RevisionNotFound`), `notFoundOrPrivate` (an anonymous 401 with no error code: Hugging Face answers a missing,
   renamed or private repo the same way), `insufficientSpace`, `http`, `incompleteRepo`, `sizeMismatch`,
-  `unsupported`.
+  `unsupported`. `DownloadConflictError.partialChanged(path:)` when another writer changed a `.partial` (see
+  [Concurrent downloads](#concurrent-downloads)).
   An error response never becomes a model file.
 - **Token**: gated repos need a read token in the Keychain item that `ModelDownloads`, `GGUFModelDownloader`,
   `ChunkedDownloader` and `ModelCompatibilityChecker` read, as does AuraUI's `ModelSection` through `ModelDownloads` (the MLX load path does not; service
   `dev.auralocal.remote`, account `download.huggingface`): `KeychainDownloadAuth.saveHuggingFaceToken(_:)`,
   `deleteHuggingFaceToken()`, `hasHuggingFaceToken`. It is sent to `huggingface.co` / `hf.co` only, never to the
   CDN a file redirects to. On iOS the item belongs to the app that saved it.
-- **Limits**: one download at a time per model (do not run it and `GGUFModelDownloader` on the same model at
-  once); no background `URLSession`, so a transfer stops when the app is suspended and resumes from the partial
-  file later.
+- **Limits**: no background `URLSession`, so a transfer stops when the app is suspended and resumes from the
+  partial file later. `delete`, `deleteFolder` and `deleteRepo` do not wait for a running download; AuraUI refuses
+  them while one writes the files.
+
+### Concurrent downloads
+
+Two downloads that would write the same `.partial` files never run at once, whichever API starts them:
+`ModelDownloads.download` and `downloadFolder`, `GGUFModelDownloader` (the GGUF path of `ModelManager.load`), the
+MLX load path and `ChunkedDownloader`. Starting the same model twice — two sampling settings, a load while the
+Library downloads it, the `aura` CLI and AuraExample at once — is safe:
+
+- **What is reserved**: a GGUF or `ChunkedDownloader` file by its path; a Hugging Face snapshot
+  (`…/snapshots/main`) as a whole, since its MLX files and every `downloadFolder` folder of the repo share it. Two
+  folders of one repo therefore download one after the other. Different files and different repos download in
+  parallel.
+- **Waiting**: callers take turns in arrival order. A later call waits, then finds the finished file, snapshot or
+  folder and returns it without a transfer. `ChunkedDownloader` keeps a file already at the destination when the
+  call it waited for, in the same process, fetched the same URL and expected SHA-256, or when the file hashes to the
+  `expectedSHA256` you pass (as one another process just finished does); otherwise it downloads again and replaces
+  the file.
+- **Cancelling**: a waiting call that is cancelled ends at once and leaves the running download alone. Cancelling
+  the running one stops its transfer; the next waiting call resumes from the `.partial`, so the download goes on
+  while anyone still waits for it. `GGUFModelDownloader.cancel()` also ends that downloader's calls still waiting
+  for the file, and its cancelled call returns only once its `URLSession` has stopped, so a file it was verifying
+  is left as a `.partial` for the next caller instead of being moved into place under it. A paused
+  `GGUFModelDownloader` keeps its file reserved until it resumes and finishes, or is cancelled.
+- **Across processes**: processes sharing the storage root (on macOS the `aura` CLI, apps without App Sandbox and
+  `swift test`) also take an advisory `flock` on `<file>.lock` or `snapshots/main.lock` next to the destination,
+  polled without blocking a thread. The lock file is removed on release unless a delete replaced it meanwhile; one
+  left by a crash is simply taken over, since the kernel drops the lock with the process.
+- **Validation**: before a finished `.partial` is moved into place it must still exist with the size just
+  written. If something else changed it — another tool, or an AuraLocal build older than this guard writing the
+  same folder — the download throws `DownloadConflictError.partialChanged(path:)`, replaces nothing, and the next
+  download resumes or restarts the file.
 
 ### Where models are stored
 
