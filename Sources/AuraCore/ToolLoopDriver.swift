@@ -11,6 +11,8 @@ protocol ToolLoopHost: AnyObject {
     var lastToolTurn: ToolTurnSummary? { get }
 }
 
+extension AuraLocal: ToolLoopHost {}
+
 /// Captured when a turn starts, so changes apply to later turns only.
 struct ToolLoopContext {
     let options: ToolLoopOptions

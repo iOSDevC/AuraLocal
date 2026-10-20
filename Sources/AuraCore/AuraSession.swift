@@ -44,6 +44,10 @@ extension AuraLocal: AuraProfileEngine {
     /// Stable across profile switches, for the caller to key stored turns by.
     public let conversationID: UUID
     public private(set) var profile: AuraProfile
+    /// Receives tool events while a profile with tools generates; read when a stream starts.
+    public var onToolEvent: (@MainActor (ToolEvent) -> Void)?
+    /// What the tool loop did in the last generation of a profile with tools (with an outputSchema, the last attempt).
+    public private(set) var lastToolTurn: ToolTurnSummary?
     /// With an ``AuraProfile/outputSchema``, how many times ``stream(_:maxTokens:)`` re-prompts after a reply that
     /// breaks the schema. Each repair is a full extra generation. Negative values count as 0.
     public var maxRepairAttempts = 2
@@ -98,8 +102,15 @@ extension AuraLocal: AuraProfileEngine {
     /// torn down, so the current profile stays usable. If building the new engine throws, the old
     /// one is already torn down: streams fail with ``AuraError/modelNotLoaded`` until a retry (to any profile,
     /// the current one included) succeeds.
+    ///
+    /// A profile that differs from the current one only in ``AuraProfile/toolLoop`` takes effect without a rebuild,
+    /// for every generation that has not started yet.
     public func switchProfile(to newProfile: AuraProfile) async throws {
         guard newProfile != profile || switchFailed || pendingSwitches > 0 else { return }
+        if !switchFailed && pendingSwitches == 0 && profile.differsOnlyInToolLoop(from: newProfile) {
+            profile.toolLoop = newProfile.toolLoop      // read per stream, so no rebuild
+            return
+        }
         try Self.requireSupport(for: newProfile)
         let newValidator = try newProfile.outputSchema.map(OutputSchemaValidator.init)
         let prior = inFlight
@@ -172,6 +183,8 @@ extension AuraLocal: AuraProfileEngine {
                           into continuation: AsyncThrowingStream<String, Error>.Continuation) async throws {
         guard !switchFailed else { throw AuraError.modelNotLoaded }
         let engine = self.engine
+        let toolHost = prepareTools(on: engine)
+        defer { lastToolTurn = toolHost?.lastToolTurn }
         let tokens = maxTokens ?? profile.sampling.maxTokens
         if let validator {
             let system = Self.systemPrompt(profile.instructions, schema: validator.source)
@@ -239,5 +252,26 @@ extension AuraSession {
 
             Reply again with only the corrected JSON value.
             """
+    }
+}
+
+// MARK: - Tools
+
+extension AuraSession {
+    /// Hands the profile's tool loop and the event sink to an engine that runs tools; `nil` when there is none.
+    private func prepareTools(on engine: any AuraProfileEngine) -> (any ToolLoopHost)? {
+        lastToolTurn = nil
+        guard !profile.tools.isEmpty, let host = engine as? any ToolLoopHost else { return nil }
+        host.toolLoop = profile.toolLoop
+        host.onToolEvent = onToolEvent
+        return host
+    }
+}
+
+private extension AuraProfile {
+    func differsOnlyInToolLoop(from other: AuraProfile) -> Bool {
+        var probe = other
+        probe.toolLoop = toolLoop
+        return probe == self && other.toolLoop != toolLoop
     }
 }

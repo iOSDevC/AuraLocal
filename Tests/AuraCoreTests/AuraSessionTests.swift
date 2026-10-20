@@ -63,6 +63,39 @@ private func failure(of stream: AsyncThrowingStream<String, Error>) async -> (an
     func next() -> any AuraProfileEngine { defer { i += 1 }; return engines[i] }
 }
 
+/// An engine that also runs a tool loop, like a GGUF `AuraLocal` with tools.
+@MainActor private final class ToolSpyEngine: AuraProfileEngine, ToolLoopHost {
+    var toolLoop = ToolLoopOptions.default { didSet { toolLoopWrites += 1 } }
+    var onToolEvent: (@MainActor (ToolEvent) -> Void)?
+    private(set) var lastToolTurn: ToolTurnSummary?
+    private(set) var toolLoopWrites = 0
+    private(set) var seenLoops: [ToolLoopOptions] = []
+    /// What the next generation reports; `nil` makes it throw.
+    var nextTurn: ToolTurnSummary? = ToolTurnSummary(rounds: 0, results: [], skipped: [])
+
+    struct Failure: Error {}
+
+    func generate(prompt: String, systemPrompt: String?, maxTokens: Int,
+                  onDelta: @escaping @MainActor (String) -> Void) async throws {
+        seenLoops.append(toolLoop)
+        lastToolTurn = nil
+        onToolEvent?(.roundLimitReached(skipped: []))
+        guard let nextTurn else { throw Failure() }
+        lastToolTurn = nextTurn
+        onDelta("done")
+    }
+
+    func teardown() {}
+}
+
+private func drainAll(_ stream: AsyncThrowingStream<String, Error>) async throws {
+    for try await _ in stream {}
+}
+
+private func summary(rounds: Int) -> ToolTurnSummary {
+    ToolTurnSummary(rounds: rounds, results: [], skipped: [])
+}
+
 final class AuraSessionTests: XCTestCase {
 
     private func ggufModel() -> Model {
@@ -301,5 +334,79 @@ final class AuraSessionTests: XCTestCase {
             return XCTFail("expected modelNotLoaded, got \(String(describing: streamFailure))")
         }
         XCTAssertEqual(good.generateCount, 0, "the torn-down engine must not decode")
+    }
+
+    // MARK: - Tools
+
+    private func agentProfile(rounds: Int) -> AuraProfile {
+        var profile = AuraProfileCatalog.agent(model: ggufModel(), tools: [TapTool()])
+        profile.toolLoop = ToolLoopOptions(maxToolRounds: rounds)
+        return profile
+    }
+
+    @MainActor
+    func testToolSettingsReachTheEngineEachStream() async throws {
+        let spy = ToolSpyEngine()
+        let session = try await AuraSession(profile: agentProfile(rounds: 4)) { _ in spy }
+        var events: [ToolEvent] = []
+        session.onToolEvent = { events.append($0) }
+
+        try await drainAll(session.stream("go"))
+        try await session.switchProfile(to: agentProfile(rounds: 2))
+        try await drainAll(session.stream("again"))
+
+        XCTAssertEqual(spy.seenLoops.map(\.maxToolRounds), [4, 2])
+        XCTAssertEqual(events, [.roundLimitReached(skipped: []), .roundLimitReached(skipped: [])])
+    }
+
+    @MainActor
+    func testToolLessProfilesLeaveTheEngineAlone() async throws {
+        let spy = ToolSpyEngine()
+        let session = try await AuraSession(profile: AuraProfileCatalog.chat(model: ggufModel())) { _ in spy }
+        session.onToolEvent = { _ in XCTFail("a tool-less profile forwarded the event sink") }
+
+        try await drainAll(session.stream("hi"))
+
+        XCTAssertEqual(spy.toolLoopWrites, 0)
+        XCTAssertNil(spy.onToolEvent)
+        XCTAssertNil(session.lastToolTurn, "a profile without tools reports no tool turn")
+    }
+
+    @MainActor
+    func testLastToolTurnFollowsTheLastGeneration() async throws {
+        let spy = ToolSpyEngine()
+        let session = try await AuraSession(profile: agentProfile(rounds: 3)) { _ in spy }
+        XCTAssertNil(session.lastToolTurn)
+
+        spy.nextTurn = summary(rounds: 2)
+        try await drainAll(session.stream("one"))
+        XCTAssertEqual(session.lastToolTurn, summary(rounds: 2))
+
+        spy.nextTurn = summary(rounds: 1)
+        try await drainAll(session.stream("two"))
+        XCTAssertEqual(session.lastToolTurn, summary(rounds: 1))
+
+        spy.nextTurn = nil
+        let thrown = await failure(of: session.stream("three"))
+        XCTAssertTrue(thrown is ToolSpyEngine.Failure, "\(String(describing: thrown))")
+        XCTAssertNil(session.lastToolTurn, "a generation that threw leaves no summary")
+    }
+
+    @MainActor
+    func testSwitchingOnlyTheToolLoopDoesNotRebuild() async throws {
+        let spy = ToolSpyEngine()
+        var builds = 0
+        let session = try await AuraSession(profile: agentProfile(rounds: 1)) { _ in
+            builds += 1
+            return spy
+        }
+
+        try await session.switchProfile(to: agentProfile(rounds: 5))
+
+        XCTAssertEqual(builds, 1, "the factory is not called again")
+        XCTAssertEqual(session.profile.toolLoop.maxToolRounds, 5)
+        XCTAssertEqual(session.profile, agentProfile(rounds: 5))
+        try await drainAll(session.stream("go"))
+        XCTAssertEqual(spy.seenLoops.map(\.maxToolRounds), [5])
     }
 }

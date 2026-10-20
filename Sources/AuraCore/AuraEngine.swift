@@ -29,6 +29,15 @@ final class AuraEngine {
     let appLifecycle: BackgroundLifecycle
     /// Opt-in guard checked before and during every generation; `nil` is off.
     var deviceGuard: DeviceConditions?
+    /// Forwarded to a backend that runs the tool loop; others ignore it.
+    var toolLoop = ToolLoopOptions.default {
+        didSet { if let host = backend as? any ToolLoopHost { host.toolLoop = toolLoop } }
+    }
+    var onToolEvent: (@MainActor (ToolEvent) -> Void)? {
+        didSet { if let host = backend as? any ToolLoopHost { host.onToolEvent = onToolEvent } }
+    }
+    /// Kept the same way as ``lastGenerationStats``.
+    private(set) var lastToolTurn: ToolTurnSummary?
 
     // MARK: - Init
 
@@ -121,9 +130,11 @@ final class AuraEngine {
     ) async throws -> String {
         lastGenerationStats = nil
         lastContextOverflow = nil
+        lastToolTurn = nil
         let reply = try await supervised(onToken: onToken, body)
         lastGenerationStats = backend.lastGenerationStats
         lastContextOverflow = backend.lastContextOverflow
+        lastToolTurn = (backend as? any ToolLoopHost)?.lastToolTurn
         return reply
     }
 
