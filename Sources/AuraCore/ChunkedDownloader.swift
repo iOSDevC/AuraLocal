@@ -54,16 +54,20 @@ public actor ChunkedDownloader {
         resourceTimeoutSeconds: TimeInterval = 1800,
         auth: DownloadAuthorizing = KeychainDownloadAuth()
     ) {
-        self.auth = auth
-        self.maxConcurrentChunks = max(1, concurrentChunks)
-        self.chunkThreshold = chunkThresholdMB * 1024 * 1024
-
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = timeoutSeconds
         config.timeoutIntervalForResource = resourceTimeoutSeconds
         config.waitsForConnectivity = true
         config.httpMaximumConnectionsPerHost = max(1, concurrentChunks) + 2
-        self.session = URLSession(configuration: config)
+        self.init(session: URLSession(configuration: config), concurrentChunks: concurrentChunks,
+                  chunkThresholdMB: chunkThresholdMB, auth: auth)
+    }
+
+    init(session: URLSession, concurrentChunks: Int, chunkThresholdMB: Int, auth: DownloadAuthorizing) {
+        self.auth = auth
+        self.maxConcurrentChunks = max(1, concurrentChunks)
+        self.chunkThreshold = chunkThresholdMB * 1024 * 1024
+        self.session = session
     }
 
     /// Progress report for an in-flight download.
@@ -93,6 +97,9 @@ public actor ChunkedDownloader {
     ///     and, on a mismatch, deleted with ``ModelIntegrityError/checksumMismatch(path:expected:actual:)``.
     ///     `nil` (the default) skips the check; nothing else tells this downloader what the bytes should be.
     ///   - onProgress: Called periodically with download progress.
+    ///
+    /// Downloads to the same `destination` run one at a time, in this process and in others. A call that waited in
+    /// this process for another with the same `url` and `expectedSHA256` returns that file without a transfer.
     public func download(
         from url: URL,
         to destination: URL,
@@ -100,9 +107,17 @@ public actor ChunkedDownloader {
         expectedSHA256: String? = nil,
         onProgress: @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
-        try await transfer(from: url, to: destination, fileName: fileName, onProgress: onProgress)
-        guard let expectedSHA256 else { return }
-        try FileIntegrity.verify(destination, expectedSHA256: expectedSHA256.lowercased(), path: fileName)
+        let request = "\(url.absoluteString) \(expectedSHA256?.lowercased() ?? "")"
+        try await DownloadGate.shared.exclusive(destination, request: request) { peerFinished in
+            let finished = try? FileManager.default.attributesOfItem(atPath: destination.path(percentEncoded: false))
+            if peerFinished, let size = finished?[.size] as? Int64 {
+                onProgress(DownloadProgress(bytesDownloaded: size, totalBytes: size, fileName: fileName))
+                return
+            }
+            try await transfer(from: url, to: destination, fileName: fileName, onProgress: onProgress)
+            guard let expectedSHA256 else { return }
+            try FileIntegrity.verify(destination, expectedSHA256: expectedSHA256.lowercased(), path: fileName)
+        }
     }
 
     private func transfer(

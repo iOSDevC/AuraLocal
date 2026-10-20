@@ -13,6 +13,9 @@ import Foundation
 ///   earlier version left in Caches instead of downloading it again.
 /// - Hashes a Hugging Face download against the SHA-256 published for it before moving it into place; a mismatch
 ///   deletes it and fails with ``ModelIntegrityError/checksumMismatch(path:expected:actual:)``.
+/// - Waits while another download writes the same file (another downloader, ``ModelDownloads`` or another process
+///   sharing the storage root), then returns the finished file without a transfer. A paused download keeps the file
+///   reserved until it is resumed and finishes, or is cancelled.
 @MainActor
 public final class GGUFModelDownloader: ObservableObject {
 
@@ -87,8 +90,6 @@ public final class GGUFModelDownloader: ObservableObject {
         let cacheDir = model.cacheDirectory
         let destinationURL = cacheDir.appendingPathComponent(filename)
 
-        try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-
         // Prefer the model's explicit download URL — user-supplied models carry the exact HF
         // `resolve/<rev>/…` URL the user pasted; catalog models derive it from repo + filename at `main`.
         let hfURL: URL
@@ -99,6 +100,27 @@ public final class GGUFModelDownloader: ObservableObject {
         } else {
             throw AuraError.invalidResponse("Couldn't build a download URL for \(model.displayName)")
         }
+
+        // Another downloader, ModelDownloads or another process may be writing this file's .partial.
+        return try await DownloadGate.shared.exclusive(destinationURL) { _ in
+            try await downloadHolding(model, from: hfURL, to: destinationURL, onProgress: onProgress)
+        }
+    }
+
+    /// The rest of ``download(model:onProgress:)``, run while this file's ``DownloadGate`` turn is held.
+    private func downloadHolding(
+        _ model: Model,
+        from hfURL: URL,
+        to destinationURL: URL,
+        onProgress: @escaping @MainActor (String) -> Void
+    ) async throws -> URL {
+        // The download this call waited for may have finished the file.
+        if let existing = model.resolvedFileURL, FileManager.default.fileExists(atPath: existing.path) {
+            onProgress("\(model.displayName) already downloaded")
+            return existing
+        }
+        try FileManager.default.createDirectory(at: destinationURL.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
 
         // Looked up before the single-flight check: no suspension may separate that check from claiming the slot.
         let expectedSHA256 = try await checksums.publishedSHA256(of: hfURL)
@@ -320,14 +342,13 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
             let staged = HubFileTransfer.partialURL(for: destination)
             try? FileManager.default.removeItem(at: staged)
             try FileManager.default.moveItem(at: location, to: staged)
+            let stagedSize = HubFileTransfer.fileSize(at: staged) ?? 0
             if let expectedSHA256 {
                 onVerifying()
                 try FileIntegrity.verify(staged, expectedSHA256: expectedSHA256, path: destination.lastPathComponent)
             }
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
-            }
-            try FileManager.default.moveItem(at: staged, to: destination)
+            try HubFileTransfer.promote(staged, to: destination, expectedSize: stagedSize,
+                                        path: destination.lastPathComponent)
             onFinished(destination)
         } catch {
             try? FileManager.default.removeItem(at: location)

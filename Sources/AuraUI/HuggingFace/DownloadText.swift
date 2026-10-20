@@ -25,6 +25,9 @@ enum DownloadMessages {
         if error is ModelIntegrityError {
             return "The download did not match its published checksum and was deleted. Download it again."
         }
+        if let conflict = error as? DownloadConflictError {
+            return conflict.errorDescription ?? "Another download changed this file. Download it again."
+        }
         guard let failure = error as? ModelDownloadError else {
             return "\(error.localizedDescription) The partial file is kept; Resume continues from it."
         }
