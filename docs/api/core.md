@@ -243,7 +243,9 @@ print(llm.lastToolTurn?.rounds ?? 0)
 > GGUF only: tools on an MLX model throw `ModelConfigurationError.toolsUnsupported(.mlx)`. Every round prefills the
 > whole conversation again, so a turn with three rounds costs about three prefills. LocalLLMClient keeps only the
 > first call per tool name in one reply, and a tool's output is not capped: a large one makes the oldest exchanges
-> drop out of the window, or overflows it. The native tool-turn format has been checked on Qwen2.5 only. See
+> drop out of the window, or overflows it. The native tool-turn format has been checked on Qwen2.5 only. On a
+> template that does not mention `tools`, only the first reply's prompt lists the tools, so chaining to another
+> tool in a later round needs a template with tool support. See
 > [Multi-turn conversations]({{ '/guide/backends' | relative_url }}#multi-turn-conversations-gguf).
 
 ### History Methods

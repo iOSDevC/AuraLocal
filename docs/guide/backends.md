@@ -207,9 +207,13 @@ aborted; the fix it needs upstream is prepared as `contrib/localllmclient/0004`.
   - **What the model sees:** a tool's output as JSON with sorted keys (`key: value` pairs sorted by key when the
     output holds a value JSON cannot, such as a `Date`). With a chat template that mentions `tools` (Qwen2.5's, for
     example) a round is sent in the template's own format: the reply's calls as an assistant turn with `tool_calls`,
-    each result as a `tool` turn. Other templates, and any whose native rendering throws, get the calls as
-    `<tool_call>` text and the last result as an assistant `<tool_response>` turn (earlier results stay `tool`
-    turns), the form LocalLLMClient sends.
+    each result as a `tool` turn. Other templates, and any whose native rendering throws, get each round as one
+    assistant turn: the reply's calls as `<tool_call>` text, then each result wrapped in `<tool_response>` (the
+    wrapping LocalLLMClient gives a result), so templates that require alternating user and assistant turns, such
+    as Gemma 3's, accept it. The call turn is AuraLocal's: LocalLLMClient's own resume sends only the results. On a
+    template that does not mention `tools`, only the first reply's prompt lists the tools and the call format; later
+    rounds do not repeat them, so a chain that moves on to another tool in a later round needs a template with
+    native tool support.
   - **Limits:** every round's prompt is trimmed like the first, but the newest user turn and the rounds after it
     always stay, so tool output too large for the context fails the turn with `LLMError.failedToDecode`.
     LocalLLMClient keeps only the first call per tool name in one reply (`LlamaClient.swift:119-124` in 0.5.0).

@@ -38,7 +38,9 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   `{"error": …}` instead of failing the turn (`ToolLoopOptions(toolErrors: .failTurn)` restores that); tool output
   reaches the model as JSON with sorted keys instead of `key: value` pairs in random order; with a chat template that
   supports tools, the resumed prompt carries the model's call as an assistant turn and each result as a `tool` turn
-  in the template's own format.
+  in the template's own format; with other templates each round is sent as one assistant turn, the model's call as
+  `<tool_call>` text followed by every result in `<tool_response>` (before, only the results were sent, and only
+  the last one as an assistant turn), so templates that require alternating roles, such as Gemma 3's, render it.
 - **Behaviour change:** AuraUI's `TextChatTab`, `VisionTab` and `OCRTab` and AuraDocs' `DocsTab` no longer download
   a model without asking. While a model they need is not on disk they show `ModelDownloadPlaceholder` with
   **Download**; models already on disk load as before. `DocsTab` used to download Qwen3 1.7B and FastVLM (~2 GB)
