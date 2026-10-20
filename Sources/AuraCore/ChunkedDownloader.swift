@@ -167,7 +167,7 @@ public actor ChunkedDownloader {
 
             // Assemble in order
             chunkFiles.sort { $0.0 < $1.0 }
-            FileManager.default.createFile(atPath: destination.path(), contents: nil)
+            FileManager.default.createFile(atPath: destination.path(percentEncoded: false), contents: nil)
             let handle = try FileHandle(forWritingTo: destination)
             defer { try? handle.close() }
 
@@ -200,7 +200,7 @@ public actor ChunkedDownloader {
 
         try FileManager.default.moveItem(at: tempURL, to: destination)
 
-        let size = (try? FileManager.default.attributesOfItem(atPath: destination.path())[.size] as? Int64) ?? 0
+        let size = (try? FileManager.default.attributesOfItem(atPath: destination.path(percentEncoded: false))[.size] as? Int64) ?? 0
         onProgress(DownloadProgress(bytesDownloaded: size, totalBytes: size, fileName: fileName))
     }
 
@@ -226,7 +226,7 @@ public actor ChunkedDownloader {
             throw DownloadError.httpError(code, url.lastPathComponent)
         }
 
-        FileManager.default.createFile(atPath: destination.path(), contents: nil)
+        FileManager.default.createFile(atPath: destination.path(percentEncoded: false), contents: nil)
         let handle = try FileHandle(forWritingTo: destination)
         defer { try? handle.close() }
 

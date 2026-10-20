@@ -451,7 +451,8 @@ private final class SnapshotDownloadFixture: @unchecked Sendable {
     ) throws {
         identifier = UUID().uuidString
         repoID = "tests/\(identifier)"
-        rootURL = FileManager.default.temporaryDirectory.appending(path: "aura-hf-tests-\(identifier)")
+        // A space like the real storage root's "Application Support": paths must not be percent-encoded.
+        rootURL = FileManager.default.temporaryDirectory.appending(path: "aura-hf-tests-\(identifier)/Application Support")
         snapshotURL = rootURL.appending(path: "huggingface/hub/models--tests--\(identifier)/snapshots/main")
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SnapshotDownloadURLProtocol.self]

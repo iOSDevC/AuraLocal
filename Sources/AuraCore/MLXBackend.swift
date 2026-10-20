@@ -365,7 +365,7 @@ struct AuraHFDownloader: Downloader {
         let snapshotPath = "huggingface/hub/models--\(sanitized)/snapshots/main"
         let dir = cacheDirectory.appending(path: snapshotPath)
         // Two loads of one repo (e.g. two sampling settings) would write the same .partial files and race.
-        return try await SnapshotDownloadGate.shared.serialized(dir.path()) {
+        return try await SnapshotDownloadGate.shared.serialized(dir.path(percentEncoded: false)) {
             try await self.downloadSnapshot(id: id, revision: revision, patterns: patterns, useLatest: useLatest,
                                             snapshotPath: snapshotPath, dir: dir, progressHandler: progressHandler)
         }
@@ -379,19 +379,19 @@ struct AuraHFDownloader: Downloader {
 
         let completionMarker = dir.appending(path: ".complete")
 
-        if !useLatest, FileManager.default.fileExists(atPath: completionMarker.path()) {
-            Self.log.info("snapshot already complete — skip · \(dir.path(), privacy: .public)")
+        if !useLatest, FileManager.default.fileExists(atPath: completionMarker.path(percentEncoded: false)) {
+            Self.log.info("snapshot already complete — skip · \(dir.path(percentEncoded: false), privacy: .public)")
             return dir
         }
         let previous = fallbackDirectories.lazy.map { $0.appending(path: snapshotPath) }
-            .first { FileManager.default.fileExists(atPath: $0.appending(path: ".complete").path()) }
+            .first { FileManager.default.fileExists(atPath: $0.appending(path: ".complete").path(percentEncoded: false)) }
         if !useLatest, let previous {
-            Self.log.info("snapshot complete in Caches — load in place · \(previous.path(), privacy: .public)")
+            Self.log.info("snapshot complete in Caches — load in place · \(previous.path(percentEncoded: false), privacy: .public)")
             return previous
         }
         // Refreshing may replace previously complete files. Invalidate their old marker before
         // touching the snapshot, so a failed or cancelled refresh cannot take the offline fast path.
-        if FileManager.default.fileExists(atPath: completionMarker.path()) {
+        if FileManager.default.fileExists(atPath: completionMarker.path(percentEncoded: false)) {
             try FileManager.default.removeItem(at: completionMarker)
         }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -476,8 +476,8 @@ struct AuraHFDownloader: Downloader {
             let dest = dir.appending(path: name)
             let expectedSize = sizes[name] ?? 0
 
-            if FileManager.default.fileExists(atPath: dest.path()) {
-                let attributes = try FileManager.default.attributesOfItem(atPath: dest.path())
+            if FileManager.default.fileExists(atPath: dest.path(percentEncoded: false)) {
+                let attributes = try FileManager.default.attributesOfItem(atPath: dest.path(percentEncoded: false))
                 if attributes[.type] as? FileAttributeType == .typeRegular,
                    attributes[.size] as? Int64 == expectedSize,
                    try FileIntegrity.reusable(dest, expectedSHA256: checksums[name]) {
@@ -488,7 +488,7 @@ struct AuraHFDownloader: Downloader {
                     continue
                 }
                 // `reusable` has already deleted a file that hashed wrong.
-                if FileManager.default.fileExists(atPath: dest.path()) {
+                if FileManager.default.fileExists(atPath: dest.path(percentEncoded: false)) {
                     try FileManager.default.removeItem(at: dest)
                 }
             }
@@ -558,7 +558,7 @@ struct AuraHFDownloader: Downloader {
 
         // Bytes already in the .partial from a prior attempt → resume.
         var offset: Int64 = 0
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: partial.path()),
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: partial.path(percentEncoded: false)),
            let existing = attrs[.size] as? Int64 {
             offset = existing
         }
@@ -588,8 +588,8 @@ struct AuraHFDownloader: Downloader {
             return
         }
 
-        if !FileManager.default.fileExists(atPath: partial.path()) {
-            FileManager.default.createFile(atPath: partial.path(), contents: nil)
+        if !FileManager.default.fileExists(atPath: partial.path(percentEncoded: false)) {
+            FileManager.default.createFile(atPath: partial.path(percentEncoded: false), contents: nil)
         }
         let handle = try FileHandle(forWritingTo: partial)
         try handle.seekToEnd()
@@ -686,7 +686,7 @@ struct AuraHFDownloader: Downloader {
 
         // Size integrity check before promoting.
         if expectedSize > 0 {
-            let attrs = try? FileManager.default.attributesOfItem(atPath: partial.path())
+            let attrs = try? FileManager.default.attributesOfItem(atPath: partial.path(percentEncoded: false))
             let finalSize = (attrs?[.size] as? Int64) ?? 0
             guard finalSize == expectedSize else {
                 Self.log.error("\(destination.lastPathComponent, privacy: .public): final size \(finalSize) != expected \(expectedSize)")
