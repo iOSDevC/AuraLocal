@@ -84,9 +84,19 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   other seven model cards declare none. `Model.listedModels` is the catalog
   without its uncensored entries.
 - Continuous integration (`.github/workflows/ci.yml`) and a weekly canary that resolves without the lockfile.
+- `ModelDownloadPlaceholder` (AuraCore, SwiftUI): stands in for a feature whose models are not on disk, with each
+  model's purpose and size, the free space and a warning when it may not fit, **Download**, progress, Cancel and
+  Retry, and an `onReady` callback once the files are there. `RequiredModel`, `[RequiredModel].notDownloaded`,
+  `OnDemandDownloads` (one transfer at a time through `ModelDownloads`, tracked by file) and
+  `Model.approximateSizeBytes` go with it; `DocsTab.neededModels` lists what `DocsTab` loads.
 
 ### Changed
 
+- **Behaviour change:** AuraUI's `TextChatTab`, `VisionTab` and `OCRTab` and AuraDocs' `DocsTab` no longer download
+  a model without asking. While a model they need is not on disk they show `ModelDownloadPlaceholder` with
+  **Download**; models already on disk load as before. `DocsTab` used to download Qwen3 1.7B and FastVLM (~2 GB)
+  as soon as it appeared. Each tab takes `autoDownload: Bool = false`; pass `true` to keep the old behaviour.
+  AuraExample's Library and (macOS) Agents tabs ask the same way.
 - MLX is back: `AuraCore` links mlx-swift-lm again and offers both engines.
 - LocalLLMClient is pinned by revision `edc39ef` (tag 0.5.0, llama.cpp b8851); mlx-swift-lm from 3.31.3;
   ml-stable-diffusion exact 1.1.1; mlx-swift `0.31.3..<0.31.5`.

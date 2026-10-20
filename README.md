@@ -492,7 +492,8 @@ Requires macOS 26 (AgentCrew).
 AuraExample also runs on iPhone (iOS 18.6+); the Agents tab is Mac-only (macOS 26). Each section gets its own models:
 **Chat** (text, images and documents in one conversation, with Text, Vision, OCR and Tools badges per model)
 downloads from the catalog or searches Hugging Face for chat models that run on the phone, **Voice** uses the
-downloaded text models, and **Models** (under More) lists what is on disk with its size and Delete. See
+downloaded text models, **Library** asks before downloading the two models it answers and reads images with, and
+**Models** (under More) lists what is on disk with its size and Delete. See
 [The example apps](docs/guide/models.md#the-example-apps). **Image** generates images on the phone with Core ML
 Stable Diffusion after a one-time ~1.07 GB download, and offers Apple's Image Playground, asking before each use
 from iOS 27, when it runs on Apple's servers.
@@ -1065,6 +1066,10 @@ TabView {
 }
 ```
 
+Until Qwen3 1.7B and FastVLM are on the device, the tab shows a placeholder with their size, the free space and a
+**Download** button; nothing downloads before the user taps it. `DocsTab(autoDownload: true)` downloads them on
+first appearance instead.
+
 ---
 
 ## Prebuilt SwiftUI Interface
@@ -1091,6 +1096,12 @@ struct MyApp: App {
 ```
 
 For voice, add `AuraVoice` and place `VoiceChatView(llm:)` in a tab (it needs an `AuraLocal` instance).
+
+No tab downloads a model on its own. While the selected model is not on the device, `TextChatTab`, `VisionTab`,
+`OCRTab` and `DocsTab` show `ModelDownloadPlaceholder` (AuraCore): the model, what it is for, its size, the free
+space and **Download**, then progress with Cancel, or the error with Retry. Pass `autoDownload: true` to any of them
+to download without asking, as before. Use the placeholder in your own screens the same way
+([Download on demand](docs/api/core.md#download-on-demand)).
 
 | Tab | Module | Description |
 |-----|--------|-------------|

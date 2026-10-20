@@ -325,6 +325,9 @@ TabView {
 ```
 
 `DocsTab` includes:
+- A download placeholder while Qwen3 1.7B or FastVLM is not on this device: their purpose and size, the free
+  space, and **Download** with progress, Cancel and Retry. Nothing downloads until the user taps it;
+  `DocsTab(autoDownload: true)` downloads them on first appearance instead
 - Multi-file picker
 - Per-document indexing progress with percentage
 - Swipe-to-delete

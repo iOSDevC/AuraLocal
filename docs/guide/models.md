@@ -543,13 +543,15 @@ finished). A gated repo shows **Add a token**, which opens the token form in pla
   - **Voice** talks to a downloaded model that chats from text, loading the one last picked there (or the first
     that fits) when the tab opens, with **Try again** if the load fails; get more in Chat.
   - **Image** has its own Core ML finder (see [Image generation]({{ '/guide/imagegen' | relative_url }})).
-  - **Library** imports its embedding model from Files instead of searching: it is a Core ML bundle that
-    `scripts/embeddings/convert_e5_coreml.py` converts and checks on a Mac (`embedding-model.json`, schema
-    `aura.text-embedding/1`), not a file a Hugging Face repo serves as is.
+  - **Library** (AuraDocs' `DocsTab`) shows a download placeholder until Qwen3 1.7B and FastVLM are on the device,
+    and downloads them only when you tap **Download**. On a Mac the **Agents** tab does the same for the models it
+    configures the document library with. Library imports its embedding model from Files instead of searching:
+    it is a Core ML bundle that `scripts/embeddings/convert_e5_coreml.py` converts and checks on a Mac
+    (`embedding-model.json`, schema `aura.text-embedding/1`), not a file a Hugging Face repo serves as is.
   - **Models** (under More on iPhone) only manages storage: every chat, image and embedding model on disk,
     finished, downloading or paused, with its size, the section that uses it and Delete, plus the space used and
-    free. Delete is disabled while a download writes the files or a model loads from them, including the MLX
-    snapshots Library and Agents download through `ModelManager`. Badges appear only on files that a download
+    free. Delete is disabled while a download writes the files or a model loads from them, including the
+    downloads Library and Agents start from their placeholder. Badges appear only on files that a download
     record or `ModelRegistry` identifies.
 - **[ModelFinder](https://github.com/iOSDevC/AuraLocal/blob/main/Examples/ModelFinder/README.md)** (iOS 18 and
   macOS 15): the same views in a split view with a device picker (this device, iPhone classes, Macs), a Downloads

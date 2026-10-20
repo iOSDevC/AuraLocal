@@ -130,6 +130,10 @@ struct MyApp: App {
 }
 ```
 
+The tabs download nothing on their own: while the selected model is not on this device they show a placeholder with
+its size, the free space and a **Download** button, and continue once it is downloaded. Pass `autoDownload: true` to
+download on the first send or run instead.
+
 `TextChatTab(offersHuggingFaceSearch: true)` starts the model menu with **Find on Hugging Face…**, which searches,
 checks and downloads models for this device. To list those downloads again after a relaunch, call
 `DownloadRecords.standard.registerDownloaded()` (`import AuraCore`) in your `App`'s `init`, before the first view

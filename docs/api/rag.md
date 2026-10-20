@@ -251,8 +251,12 @@ func configureIfNeeded(embeddingProvider: any EmbeddingProvider, llm: AuraLocal,
 Drop-in SwiftUI tab over `DocumentLibrary.shared`. Includes a file picker, per-document progress,
 swipe to export (leading) or delete (trailing), and a chat sheet with source citations.
 
-On first appearance it loads `.qwen3_1_7b` and `.fastVLM_0_5b_fp16` through `ModelManager`,
-downloading them if needed. It uses multilingual-e5-small when a valid bundle is installed at
+It needs `DocsTab.neededModels`: `.qwen3_1_7b` answers, `.fastVLM_0_5b_fp16` reads images. When both are on
+disk it loads them through `ModelManager` on first appearance. When one is missing it shows a
+`ModelDownloadPlaceholder` (both models with their purpose and size, the free space, **Download**) and downloads
+nothing until the user taps it; once both are on disk it loads them and opens the library. `DocsTab(autoDownload:
+true)` skips the placeholder and downloads them on first appearance, as earlier versions did. See
+[Downloading on demand]({{ '/api/ui' | relative_url }}#downloading-on-demand). It uses multilingual-e5-small when a valid bundle is installed at
 `AutoEmbeddingProvider.defaultModelBundleURL` (the toolbar's "Import embedding model…" copies one
 there), and TF-IDF otherwise. When the provider changed since the index was built, it re-embeds the
 index before it becomes ready.
@@ -261,7 +265,7 @@ index before it becomes ready.
 import AuraDocs
 
 TabView {
-    DocsTab()
+    DocsTab()                    // asks before downloading its models
         .tabItem { Label("Docs", systemImage: "doc.text.magnifyingglass") }
 }
 ```
