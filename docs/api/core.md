@@ -155,10 +155,11 @@ costs, and the limits.
 > window still cuts the output, and a cut JSON object does not parse. A cancelled constrained call throws
 > `CancellationError`.
 
-### Tool calling (GGUF)
+### Tool calling (GGUF and MLX)
 
-An instance loaded with tools (`ModelManager.shared.load(_:tools:)` with a GGUF model) runs the calls the model
-makes and feeds their results back. `toolLoop` sets how many rounds a turn may run and what a failing tool does:
+An instance loaded with tools (`ModelManager.shared.load(_:tools:)` with a GGUF model or an MLX text model) runs the
+calls the model makes and feeds their results back. `toolLoop` sets how many rounds a turn may run and what a
+failing tool does:
 
 ```swift
 var toolLoop: ToolLoopOptions                         // read when a turn starts; no effect without tools
@@ -240,13 +241,23 @@ print(llm.lastToolTurn?.rounds ?? 0)
   [AuraSession](#aurasession)).
 
 {: .warning }
-> GGUF only: tools on an MLX model throw `ModelConfigurationError.toolsUnsupported(.mlx)`. Every round prefills the
-> whole conversation again, so a turn with three rounds costs about three prefills. LocalLLMClient keeps only the
-> first call per tool name in one reply, and a tool's output is not capped: a large one makes the oldest exchanges
+> Tools on an MLX vision or document model, or on any MLX model in the iOS Simulator, throw
+> `ModelConfigurationError.toolsUnsupported(.mlx)`. On GGUF every round prefills the whole conversation again, so a
+> turn with three rounds costs about three prefills. LocalLLMClient keeps only the first call per tool name in one
+> reply, and a tool's output is not capped: a large one makes the oldest exchanges
 > drop out of the window, or overflows it. The native tool-turn format has been checked on Qwen2.5 only. On a
 > template that does not mention `tools`, only the first reply's prompt lists the tools, so chaining to another
 > tool in a later round needs a template with tool support. See
 > [Multi-turn conversations]({{ '/guide/backends' | relative_url }}#multi-turn-conversations-gguf).
+
+{: .warning }
+> On MLX, calls are parsed in the format mlx-swift-lm infers from the model's `config.json` (JSON in `<tool_call>`
+> tags when it infers none): a model that writes another format gets no calls, and a call whose text does not
+> parse is dropped. Every call in a reply runs, the same tool twice included, and every generated token counts
+> against `maxTokens`, call text included. The tools reach the template only as `tools`, so a template that ignores
+> them leaves the model unaware of them. Each reply prefills only what the prompt cache does not hold. Checked on
+> Qwen3 0.6B 4-bit only. See
+> [Prompt cache and tool rounds]({{ '/guide/backends' | relative_url }}#prompt-cache-and-tool-rounds-mlx).
 
 ### History Methods
 
@@ -296,7 +307,7 @@ if let stats = llm.lastGenerationStats {
 ```swift
 public struct GenerationStats: Sendable, Hashable {
     public enum Provenance: String, Sendable, Hashable, CaseIterable {
-        case runtime    // the runtime's own counters (MLX GenerateResult); decode timed by AuraLocal
+        case runtime    // exact token counts (MLX); prefill and decode timed by AuraLocal
         case measured   // AuraLocal's clock around the stream; output counted per piece; prompt estimated
         case estimated  // counts from text length (UTF-8 bytes ÷ 4)
         var label: String
@@ -315,7 +326,7 @@ public struct GenerationStats: Sendable, Hashable {
 
 | Backend | `source` | Prompt tokens | Output tokens | Durations |
 |---|---|---|---|---|
-| `MLXBackend` | `.runtime` | exact | exact | runtime prefill; decode and TTFT from AuraLocal's clock (first token callback to last) |
+| `MLXBackend` | `.runtime` | exact, the whole prompt | exact | AuraLocal's clock around mlx-swift-lm's token iterator. On a prompt-cache hit `promptTime` covers only the tokens prefilled; a tool turn sums prefill and decode over its replies and counts the last reply's prompt |
 | `LlamaCppBackend`, no tools; constrained calls | `.measured` | estimated from the rendered prompt | one per streamed piece (one per sampled token in LocalLLMClient 0.5.0) | AuraLocal's clock |
 | `LlamaCppBackend` / `LayerStreamingBackend` with tools | `.estimated` | estimated | estimated | AuraLocal's clock |
 | `LayerStreamingBackend`, no tools | `.measured` | estimated | one per streamed piece | AuraLocal's clock |
@@ -354,14 +365,14 @@ public final class ModelManager: ObservableObject
 // For GGUF models, downloads the file from HuggingFace first
 func load(
     _ model: Model,
-    tools: [any LLMTool] = [],            // GGUF only; sessions with tools are built fresh, never cached
+    tools: [any LLMTool] = [],            // GGUF or MLX text models; instances with tools are never cached
     temperature: Float? = nil,            // nil: backend default; 0 is greedy
     topP: Float? = nil,                   // nil: backend default; 0 < topP <= 1
     onProgress: (@MainActor (String) -> Void)? = nil
 ) async throws -> AuraLocal
 
 public enum ModelConfigurationError: LocalizedError, Equatable, Sendable {
-    case toolsUnsupported(BackendKind)    // tools with an MLX model
+    case toolsUnsupported(BackendKind)    // tools with an MLX vision or document model
     case invalidTemperature(Float)        // negative, infinite or NaN
     case invalidTopP(Float)               // outside 0 < topP <= 1, or NaN
 }
@@ -381,8 +392,10 @@ ones that stay
 ([Memory Management]({{ '/guide/memory' | relative_url }})).
 
 {: .warning }
-> `tools` run only on the llama.cpp backends (GGUF models). With an MLX model `load` throws
-> `ModelConfigurationError.toolsUnsupported(.mlx)`; MLX has no tool-calling loop yet.
+> `tools` run on GGUF models and MLX text models. With an MLX vision or document model, or any MLX model in the iOS
+> Simulator, `load` throws `ModelConfigurationError.toolsUnsupported(.mlx)`. An MLX instance with tools runs on the
+> weights of a cached instance of the same model when there is one, instead of loading them again; the two generate
+> one at a time, and the weights stay in memory until both are released.
 
 ### State Observation
 
@@ -570,7 +583,7 @@ so that stream runs on the new profile. After a switch fails to build its engine
 `AuraError.modelNotLoaded` until a later `switchProfile` succeeds.
 
 With tools, each stream gives the engine `profile.toolLoop` and `onToolEvent` (see
-[Tool calling](#tool-calling-gguf)); a `switchProfile` to a profile that differs only in `toolLoop` applies it
+[Tool calling](#tool-calling-gguf-and-mlx)); a `switchProfile` to a profile that differs only in `toolLoop` applies it
 without rebuilding the engine.
 
 ### AuraProfile
@@ -582,7 +595,7 @@ public struct AuraProfile: Sendable, Identifiable, Equatable {
     var instructions: String            // the system prompt
     var model: Model
     var sampling: SamplingParams        // temperature + topP at load, maxTokens per turn; topK, contextOverride unused
-    var tools: [any LLMTool]            // GGUF only; an MLX model throws ModelConfigurationError
+    var tools: [any LLMTool]            // GGUF or MLX text; an MLX vision/document model throws ModelConfigurationError
     var outputSchema: OutputSchema?
     var escalation: EscalationPolicy    // default .off
     var toolLoop: ToolLoopOptions       // default: 1 round; tool errors reported to the model
@@ -1018,7 +1031,7 @@ offers image input and document extraction only where they work.
 | `.text` | category `.text` or `.vision` | a conversation from text alone (`chat`, `stream`, `stream(_:in:)`) |
 | `.vision` | category `.vision` or `.visionSpecialized`, MLX format (the llama.cpp backends drop the image) | an image with the prompt (`analyze`, `streamVision`) |
 | `.documentExtraction` | an image model with a `defaultDocumentPrompt` | `extractDocument(_:)` |
-| `.tools` | a GGUF model (only the llama.cpp backends run a tool loop) | `ModelManager.shared.load(_:tools:…)`; an MLX model throws `ModelConfigurationError.toolsUnsupported(.mlx)` |
+| `.tools` | a GGUF model, or an MLX text model outside the iOS Simulator | `ModelManager.shared.load(_:tools:…)`; an MLX vision or document model throws `ModelConfigurationError.toolsUnsupported(.mlx)` |
 
 ### ModelRegistry
 

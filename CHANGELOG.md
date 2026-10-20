@@ -30,8 +30,18 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   lists them, `Model.allModels` still has every model, and AuraExample's Catalog shows them behind a toggle.
 - `Model.gemma4_1b`, `.gemma4_4b`, `.granite4_compact`, `.lfm25_3_2b`, `.ministral_3b` and `.graniteVision_3_3`
   are `@available(*, unavailable)`, with the reason in the message: none of them ever downloaded a loadable model.
-- Tools on an MLX model throw `ModelConfigurationError.toolsUnsupported(.mlx)` from `ModelManager.load` and
-  `AuraSession` instead of being dropped silently. GGUF tool calling is unchanged.
+- Tools on an MLX vision or document model throw `ModelConfigurationError.toolsUnsupported(.mlx)` from
+  `ModelManager.load` and `AuraSession` instead of being dropped silently. GGUF tool calling is unchanged.
+- **Behaviour change (MLX tools):** an MLX text model loaded with tools runs them with the same tool loop as GGUF
+  (`toolLoop`, `ToolEvent`, `lastToolTurn`, `{"error": …}` results, one round by default), with calls parsed in the
+  format mlx-swift-lm infers from the model's `config.json`. `ModelCapabilities.tools` includes MLX text models
+  outside the iOS Simulator.
+- **Behaviour change (MLX prompt cache):** an MLX text model keeps the KV cache of its last generation, so the
+  next prompt prefills only the tokens it does not share with it (prefill over an 8-turn conversation with Qwen3
+  0.6B: 0.46–0.61 s against 1.44–1.61 s). The cache stays in memory until `unload()` or an eviction. A greedy
+  reply can differ from a full prefill's after a few dozen tokens, as with any change of prefill split; on a hit
+  `lastGenerationStats.promptTime` covers only the tokens prefilled. MLX stats are timed by AuraLocal around
+  mlx-swift-lm's token iterator instead of read from `GenerateResult`.
 - **Behaviour change (GGUF tools):** calls a model makes after `maxToolRounds` rounds (default 1, as many rounds as
   before) are reported as `ToolEvent.roundLimitReached` and in `ToolTurnSummary.skipped` instead of being dropped
   silently; a tool that throws, arguments that do not decode and an unknown tool name reach the model as
@@ -117,6 +127,8 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 - GGUF tool loop controls: `ToolLoopOptions` (`maxToolRounds`, `toolErrors`) on `AuraLocal.toolLoop` and
   `AuraProfile.toolLoop`, `ToolEvent` through `AuraLocal.onToolEvent` and `AuraSession.onToolEvent`, and
   `ToolTurnSummary` in `lastToolTurn`.
+- Tool calling on MLX text models, with the same controls. `ModelManager.load(_:tools:)` runs an MLX tool instance
+  on the weights of a cached instance of the same model instead of loading a second copy.
 
 ### Changed
 

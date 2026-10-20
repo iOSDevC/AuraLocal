@@ -58,8 +58,8 @@ When an iOS app backgrounds, its running generations stop and throw `GenerationI
 `ModelManager.shared.load` and the `AuraLocal.text` / `.vision` / `.specialized` factories take `temperature:` and
 `topP:`, fixed for the instance's lifetime; temperature 0 is greedy on both backends
 ([Sampling]({{ '/guide/backends' | relative_url }}#sampling-temperature-and-top-p)). Tool calling needs a GGUF
-model: with an MLX model, `load` and `AuraSession` throw `ModelConfigurationError.toolsUnsupported(.mlx)` before
-loading anything.
+model or an MLX text model: with an MLX vision or document model, `load` and `AuraSession` throw
+`ModelConfigurationError.toolsUnsupported(.mlx)` before loading anything.
 
 ## Constrained and structured output
 
