@@ -9,6 +9,9 @@ struct GGUFChatMetadata: Sendable, Equatable {
     let template: String?
     /// The variables LocalLLMClient hands its template renderer (`bos_token`, `eos_token`, …), with the same values.
     let specialTokens: [String: String]
+    /// Texts of the tokens llama.cpp's tokenizer splits on before anything else (control, user-defined and unknown
+    /// types), in vocabulary order; empty when the file has no token types.
+    var controlTokenTexts: [String] = []
 
     enum ReadError: LocalizedError, Equatable {
         case notGGUF
@@ -89,6 +92,7 @@ struct GGUFChatMetadata: Sendable, Equatable {
         var strings: [String: String] = [:]
         var integers: [String: Int] = [:]
         var tokenList: (offset: Int, count: Int)?
+        var tokenTypes: (offset: Int, count: Int, type: GGUFValueType)?
         var index: UInt64 = 0
         while index < keyCount {
             let key = try cursor.string()
@@ -96,6 +100,8 @@ struct GGUFChatMetadata: Sendable, Equatable {
             switch (key, type) {
             case ("tokenizer.ggml.tokens", .array):
                 tokenList = try cursor.skipStringArray()
+            case ("tokenizer.ggml.token_type", .array):
+                tokenTypes = try cursor.skipIntegerArray()
             case (_, .string):
                 strings[key] = try cursor.string()
             case (_, .array):
@@ -120,7 +126,32 @@ struct GGUFChatMetadata: Sendable, Equatable {
 
         let texts = try tokenTexts(at: [0, ids.bos, ids.eos, ids.sep, ids.pad], in: tokenList, cursor: cursor)
         let template = strings["tokenizer.chat_template"].flatMap { $0.isEmpty ? nil : $0 }
-        return GGUFChatMetadata(template: template, specialTokens: specialTokens(ids: ids) { texts[$0] ?? "" })
+        return GGUFChatMetadata(template: template, specialTokens: specialTokens(ids: ids) { texts[$0] ?? "" },
+                                controlTokenTexts: try controlTexts(in: tokenList, types: tokenTypes, cursor: cursor))
+    }
+
+    /// llama.cpp's `LLAMA_TOKEN_TYPE_UNKNOWN`, `_CONTROL` and `_USER_DEFINED`: the types its tokenizer matches as
+    /// whole tokens before splitting the rest of the text.
+    static let controlTypes: Set<Int> = [2, 3, 4]
+
+    private static func controlTexts(in list: (offset: Int, count: Int)?,
+                                     types: (offset: Int, count: Int, type: GGUFValueType)?,
+                                     cursor: MetadataCursor) throws -> [String] {
+        guard let list, let types, types.count == list.count, let width = types.type.byteWidth else { return [] }
+        var reader = cursor
+        reader.offset = list.offset
+        var kinds = cursor
+        var texts: [String] = []
+        for id in 0..<list.count {
+            kinds.offset = types.offset + id * width
+            if controlTypes.contains(try kinds.integer(of: types.type)) {
+                let text = try reader.string()
+                if !text.isEmpty { texts.append(text) }
+            } else {
+                try reader.skipValue(of: .string)
+            }
+        }
+        return texts
     }
 
     /// Walks the vocabulary only as far as the highest id needed.
@@ -153,6 +184,8 @@ struct GGUFChatMetadata: Sendable, Equatable {
 /// Reads in place over the mapped file. `GGUFHeaderParser` copies its input and keeps only the first 64 array
 /// elements, which misses special tokens deep in a 150k vocabulary.
 private struct MetadataCursor {
+    static let integerTypes: Set<GGUFValueType> = [.uint8, .int8, .uint16, .int16, .uint32, .int32, .uint64, .int64]
+
     let buffer: UnsafeRawBufferPointer
     var offset = 0
 
@@ -220,6 +253,16 @@ private struct MetadataCursor {
         try skipValues(of: elementType, count: count)
         guard elementType == .string, let elements = Int(exactly: count) else { return nil }
         return (start, elements)
+    }
+
+    /// Skips an array, returning where its elements start, how many there are and their type when they are integers.
+    mutating func skipIntegerArray() throws -> (offset: Int, count: Int, type: GGUFValueType)? {
+        let elementType = try GGUFChatMetadata.valueType(integer(UInt32.self))
+        let count = try integer(UInt64.self)
+        let start = offset
+        try skipValues(of: elementType, count: count)
+        guard Self.integerTypes.contains(elementType), let elements = Int(exactly: count) else { return nil }
+        return (start, elements, elementType)
     }
 
     mutating func skipValues(of type: GGUFValueType, count: UInt64, depth: Int = 0) throws {
