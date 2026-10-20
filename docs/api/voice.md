@@ -65,14 +65,14 @@ public enum State: Equatable {   // nested in VoiceSession → VoiceSession.Stat
 func requestPermissions() async -> Bool
 func startListening() async throws   // returns without doing anything unless state is .idle
 func stopListening() async           // while .listening: stop recording, run the LLM → TTS pipeline
-func interrupt()     // stop the current sentence, clear the TTS queue, set .idle
-func cancel()        // also stops recording; same effect on TTS as interrupt()
+func interrupt()     // stop speaking and the reply being generated, clear the TTS queue, set .idle
+func cancel()        // the same, and also stops recording
 ```
 
-{: .warning }
-> Neither `interrupt()` nor `cancel()` stops an LLM generation already in progress. It runs to the
-> end, its later sentences are still queued and spoken, and the assistant turn is saved to the
-> conversation.
+Both stop the reply being generated: the session stops reading its `stream(_:in:)`, which cancels the
+generation. As with any stopped history stream, the text generated so far is stored as the assistant turn, and
+with none yet the prompt turn is removed ([Multi-Turn Chat]({{ '/guide/conversations' | relative_url }}#multi-turn-chat)).
+On a GGUF instance loaded with tools, llama.cpp finishes its decode before the next turn can start.
 
 On iOS, moving the app to the background stops the reply: the session ends in `.error` with the
 `GenerationInterrupted` message ("Generation stopped because the app moved to the background."), and the

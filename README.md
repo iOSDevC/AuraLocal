@@ -900,10 +900,10 @@ try await session.startListening()
 // Or stop manually
 await session.stopListening()
 
-// Interrupt TTS mid-sentence
+// Stop speaking and the reply in progress
 session.interrupt()
 
-// Stop recording and TTS (an LLM reply in progress keeps generating and speaking)
+// The same, and also stop recording
 session.cancel()
 ```
 

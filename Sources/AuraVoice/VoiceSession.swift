@@ -82,6 +82,8 @@ public final class VoiceSession: NSObject, ObservableObject {
 
     private var silenceTimer: Task<Void, Never>?
     private var maxDurationTimer: Task<Void, Never>?
+    /// Bumped by cancel() and interrupt(); a pipeline started under an older value stops consuming its reply.
+    private var pipelineGeneration = 0
 
     // MARK: - Init
 
@@ -154,16 +156,18 @@ public final class VoiceSession: NSObject, ObservableObject {
         await runPipeline()
     }
 
-    /// Interrupt TTS immediately and return to idle.
+    /// Stop speaking immediately, stop the reply being generated, and return to idle.
     public func interrupt() {
+        pipelineGeneration += 1
         synthesizer.stopSpeaking(at: .immediate)
         ttsQueue.removeAll()
         isSpeaking = false
         state = .idle
     }
 
-    /// Cancel everything — recording, LLM, TTS — and return to idle.
+    /// Cancel everything — recording, the reply being generated, and speech — and return to idle.
     public func cancel() {
+        pipelineGeneration += 1
         silenceTimer?.cancel()
         maxDurationTimer?.cancel()
         recognitionTask?.cancel()
@@ -287,6 +291,7 @@ public final class VoiceSession: NSObject, ObservableObject {
         let prompt = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { state = .idle; return }
 
+        let generation = pipelineGeneration
         state = .thinking(partial: "")
         response = ""
 
@@ -307,6 +312,8 @@ public final class VoiceSession: NSObject, ObservableObject {
                 maxTokens: config.maxTokens,
                 store: store
             ) {
+                // Leaving the loop ends the stream, which cancels its generation.
+                guard generation == pipelineGeneration else { return }
                 response += token
                 sentenceBuffer += token
                 state = .thinking(partial: response)
@@ -318,11 +325,13 @@ public final class VoiceSession: NSObject, ObservableObject {
                 }
             }
 
+            guard generation == pipelineGeneration else { return }
             // Flush any remaining partial sentence
             let tail = sentenceBuffer.trimmingCharacters(in: .whitespaces)
             if !tail.isEmpty { enqueueSpeech(tail) }
 
         } catch {
+            guard generation == pipelineGeneration else { return }
             state = .error(error.localizedDescription)
         }
     }

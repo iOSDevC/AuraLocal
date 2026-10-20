@@ -293,6 +293,12 @@ public final class ModelManager: ObservableObject {
             self?.states[model] = .downloading(progress: p)
             onProgress?(p)
         }
+        // engine.load reports both download progress (MLX fetches inside it) and load messages ("… ready"); only the
+        // former is a download, so the state no longer flips back to .downloading after .loading.
+        let engineProgress: @MainActor (String) -> Void = { [weak self] p in
+            self?.states[model] = Self.isDownloadMessage(p) ? .downloading(progress: p) : .loading
+            onProgress?(p)
+        }
 
         do {
             // GGUF models: download first if needed
@@ -306,7 +312,7 @@ public final class ModelManager: ObservableObject {
             // Create AuraLocal instance — BackendRouter picks the right backend; `tools` (if any) enable
             // GGUF function-calling.
             let instance = AuraLocal(model: model, sampling: sampling, tools: tools)
-            try await instance.engine.load(onProgress: progress)
+            try await instance.engine.load(onProgress: engineProgress)
 
             // Only plain (tool-less) instances are cached; tool-enabled ones are caller-owned.
             if tools.isEmpty {
@@ -342,6 +348,11 @@ public final class ModelManager: ObservableObject {
     }
 
     /// A load that fails or is cancelled leaves the model `.ready` while another setting of it is still cached.
+    /// Backends prefix download progress with "Downloading"; every other load message means the weights are on disk.
+    nonisolated static func isDownloadMessage(_ message: String) -> Bool {
+        message.hasPrefix("Downloading")
+    }
+
     private func settle(_ model: Model, otherwise state: ModelLoadState) {
         states[model] = isLoaded(model) ? .ready : state
     }

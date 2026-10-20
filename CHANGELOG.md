@@ -173,6 +173,10 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 
 ### Fixed
 
+- `VoiceSession.interrupt()` and `cancel()` now stop the reply being generated. Before, the reply kept
+  generating, set the state back to `.thinking` and was still spoken after either call.
+- `ModelManager.state(for:)` no longer returns to `.downloading` after `.loading`: load messages such as
+  "… ready" keep `.loading`, and only download progress shows as `.downloading`.
 - AuraLocal resolves for integrators (the swift-syntax conflict between LocalLLMClient and mlx-swift-lm).
 - AuraCore builds for the iOS Simulator, and GGUF runs there.
 - Conversation search after deletes, turns stored in the same millisecond, one reply per prompt when a generation

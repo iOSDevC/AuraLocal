@@ -1337,8 +1337,8 @@
 
 <span class="c">// Manual control</span>
 <span class="k">try</span> <span class="k">await</span> session.<span class="f">startListening</span>()
-session.<span class="f">interrupt</span>()   <span class="c">// stop TTS mid-sentence</span>
-session.<span class="f">cancel</span>()      <span class="c">// stop recording + TTS (not an LLM reply in progress)</span></code></pre>
+session.<span class="f">interrupt</span>()   <span class="c">// stop speaking and the reply</span>
+session.<span class="f">cancel</span>()      <span class="c">// stop recording, the reply and TTS</span></code></pre>
             </div>
           </div>
 

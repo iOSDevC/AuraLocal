@@ -6,12 +6,12 @@ import LocalLLMClientLlama
 
 /// Inference backend that uses mmap-based streaming for models too large for monolithic loading.
 ///
-/// Configures llama.cpp with minimal GPU layer offload and relies on the OS virtual
-/// memory system to page weights from disk on-demand. Peak memory stays at ~500-750 MB
-/// regardless of total model size, enabling 7B-13B models on 6-8 GB iOS devices.
+/// Keeps llama.cpp's default Metal offload of every layer on a device (CPU only in the Simulator) and mmaps the
+/// weights, so the OS pages them from disk on demand instead of holding the whole file resident; a small context
+/// keeps the KV cache small. That is what lets 7B–14B models run on 6–8 GB iOS devices.
 ///
-/// **Trade-off:** Slower than full-GPU inference (2-5 tok/s for 7B Q4) due to
-/// CPU computation and disk page faults.
+/// **Trade-off:** slower than a fully resident model (2–6 tok/s for a 7B Q4, illustrative) because decoding waits on
+/// page faults from disk.
 ///
 /// On **macOS**, this backend is rarely selected since Macs typically have 16-96 GB RAM.
 @MainActor
@@ -172,7 +172,7 @@ final class LayerStreamingBackend: InferenceBackend {
 
     // MARK: - Adaptive Configuration
 
-    /// Configured for minimal memory: small context, CPU-only, mmap.
+    /// Configured for minimal memory: small context and a bounded batch; GPU offload and mmap are llama.cpp's defaults.
     func loadParameter() -> LlamaClient.Parameter {
         LlamaClient.Parameter(
             context: adaptiveContextLength(),
