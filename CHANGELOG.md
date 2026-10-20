@@ -36,6 +36,9 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   (`toolLoop`, `ToolEvent`, `lastToolTurn`, `{"error": …}` results, one round by default), with calls parsed in the
   format mlx-swift-lm infers from the model's `config.json`. `ModelCapabilities.tools` includes MLX text models
   outside the iOS Simulator.
+- **Behaviour change (MLX cancellation):** an MLX call cancelled before it starts, or while it waits for another
+  generation on the same weights, throws `CancellationError` without prefilling, as on GGUF, instead of
+  prefilling the prompt and returning one token's text.
 - **Behaviour change (MLX prompt cache):** an MLX text model keeps the KV cache of its last generation, so the
   next prompt prefills only the tokens it does not share with it (prefill over an 8-turn conversation with Qwen3
   0.6B: 0.46–0.61 s against 1.44–1.61 s). The cache stays in memory until `unload()` or an eviction. A greedy

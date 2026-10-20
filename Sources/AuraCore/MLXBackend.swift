@@ -254,6 +254,9 @@ final class MLXBackend: InferenceBackend {
         let parameters = self.parameters
         let promptCache = self.promptCache
         let outcome = try await container.perform { (context: ModelContext) async throws -> MLXDecodeOutcome in
+            // Cancelled before its turn, or while queued behind another generation: throw without prefilling, as GGUF
+            // does, and leave the prompt cache as it was.
+            try Task.checkCancellation()
             let started = ContinuousClock.now
             let input = try await prepare(context)
             return try MLXDecodeLoop.run(input, request: request, context: context, parameters: parameters,
@@ -274,6 +277,7 @@ final class MLXBackend: InferenceBackend {
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
+        try Task.checkCancellation()
         lastGenerationStats = nil
         lastContextOverflow = nil
         lastToolTurn = nil
@@ -318,6 +322,7 @@ final class MLXBackend: InferenceBackend {
         let parameters = self.parameters
         let promptCache = self.promptCache
         return try await container.perform { (context: ModelContext) async throws -> MLXToolReply in
+            try Task.checkCancellation()
             let started = ContinuousClock.now
             let rendered = try await Self.firstRendering(of: attempts, tools: specs, context: context)
             let outcome = try MLXDecodeLoop.run(rendered.input, request: request, context: context,

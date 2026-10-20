@@ -169,6 +169,53 @@ final class MLXToolLoopLiveTests: XCTestCase {
         XCTAssertFalse(next.isEmpty)
     }
 
+    func testACallCancelledBeforeItStartsThrowsWithoutDecoding() async throws {
+        let log = CallLog()
+        let agent = try await loadBackend(tools: [EchoTool(log: log)])
+        let plain = try XCTUnwrap(agent.sharingWeights(sampling: Self.greedy, tools: []))
+        let nothing = MLXPromptCache.ReuseStats()
+        for backend in [agent, plain] {
+            let outcome = await cancelledBeforeItStarts(backend)
+            XCTAssertThrowsError(try outcome.get()) { XCTAssertTrue($0 is CancellationError, "\($0)") }
+            XCTAssertEqual(backend.promptCacheStats, nothing, "nothing was prefilled")
+            XCTAssertNil(backend.lastGenerationStats)
+        }
+        XCTAssertNil(agent.lastToolTurn)
+        XCTAssertEqual(log.calls, [])
+    }
+
+    func testAToolTurnCancelledWhileQueuedBehindAnotherGenerationThrowsWithoutDecoding() async throws {
+        let log = CallLog()
+        let plain = try await loadBackend()
+        let agent = try XCTUnwrap(plain.sharingWeights(sampling: Self.greedy, tools: [EchoTool(log: log)]))
+        let progress = BusyProgress()
+        let busy = Task { @MainActor in
+            defer { progress.finished = true }
+            return try await plain.generate(prompt: "Count from one to one hundred in words. /no_think",
+                                            systemPrompt: nil, maxTokens: 200) { _ in progress.started = true }
+        }
+        for _ in 0..<2_000 where !progress.started {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let queued = Task { @MainActor in
+            try await agent.generate(prompt: "Use the echo tool to repeat the word pineapple. /no_think",
+                                     systemPrompt: nil, maxTokens: 64) { _ in }
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        let busyWhenCancelled = progress.started && !progress.finished
+        queued.cancel()
+        let outcome = await queued.result
+        let busyReply = try await busy.value
+        print("cancel while queued: busy \(busyWhenCancelled); queued \(outcome); cache \(agent.promptCacheStats)")
+        guard busyWhenCancelled else { throw XCTSkip("the other generation was not running at the cancel") }
+
+        XCTAssertThrowsError(try outcome.get()) { XCTAssertTrue($0 is CancellationError, "\($0)") }
+        XCTAssertEqual(agent.promptCacheStats, MLXPromptCache.ReuseStats(), "the queued turn prefilled nothing")
+        XCTAssertNil(agent.lastToolTurn)
+        XCTAssertEqual(log.calls, [])
+        XCTAssertFalse(busyReply.isEmpty)
+    }
+
     func testModelManagerRunsAToolInstanceOnTheCachedWeights() async throws {
         let model = try testModel()
         let plain = try await ModelManager.shared.load(model, temperature: 0)
@@ -314,6 +361,15 @@ final class MLXToolLoopLiveTests: XCTestCase {
         XCTAssertEqual(Set(turn.skipped.map(\.round)).count, turn.skipped.isEmpty ? 0 : 1, file: file, line: line)
     }
 
+    private func cancelledBeforeItStarts(_ backend: MLXBackend) async -> Result<String, any Error> {
+        let call = Task { @MainActor in
+            try await backend.generate(prompt: "Use the echo tool to repeat the word pineapple. /no_think",
+                                       systemPrompt: nil, maxTokens: 64) { _ in }
+        }
+        call.cancel()
+        return await call.result
+    }
+
     private func report(_ name: String, reply: String, turn: ToolTurnSummary, events: EventLog) {
         print("""
         ---- \(name): \(turn.rounds) round(s), \(turn.results.count) result(s), \(turn.skipped.count) skipped
@@ -372,6 +428,12 @@ private final class EventLog {
     var finishedCount: Int {
         all.filter { if case .finished = $0 { true } else { false } }.count
     }
+}
+
+@MainActor
+private final class BusyProgress {
+    var started = false
+    var finished = false
 }
 
 private final class CallLog: Sendable {

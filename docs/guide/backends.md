@@ -174,10 +174,15 @@ Used for all `.mlx` format models, from Granite Docling 258M up to Ornith 1.5 35
     renders the whole conversation, and the prompt cache prefills only what it does not hold: in the live test the
     reply after a round reused 149 of its 200 prompt tokens. Checked on Qwen3 0.6B 4-bit only.
   - **Cancelling** while a tool runs cancels its task and throws `CancellationError`; cancelling during a reply
-    cuts it, and the turn returns the text so far. Nothing keeps decoding afterwards.
+    cuts it, and the turn returns the text so far. Cancelled before a reply starts, also while it waits for
+    another generation on the same weights, the turn throws `CancellationError` without decoding that reply.
+    Nothing keeps decoding afterwards.
 - **Shared weights:** with a cached instance of the same model, `ModelManager.load(_:tools:)` runs the tool instance
   on its weights instead of loading a second copy. The two generate one at a time, and the weights stay in memory
   until both are released.
+- **Cancelling:** a call cancelled before it starts, or while it waits for another generation on the same
+  weights, throws `CancellationError` without prefilling or touching the prompt cache, tools or not. Cancelled
+  during a reply, it cuts the reply and returns the text so far.
 
 ---
 
