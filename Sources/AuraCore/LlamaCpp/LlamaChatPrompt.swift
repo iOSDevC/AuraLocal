@@ -325,7 +325,8 @@ struct LlamaPromptRenderer: Sendable {
                                style: ToolTurnStyle, keepsInstructions: Bool) throws -> [[String: any Sendable]] {
         guard !tools.isEmpty else { return messages }
         var processed = messages
-        let toolsJSON = try tools.toOAICompatJSONString(options: [])
+        // Sorted: the instructions are rendered again every round, and the same tools must give the same text.
+        let toolsJSON = try tools.toOAICompatJSONString(options: [.sortedKeys])
         let lastIsTool = processed.last?["role"] as? String == LlamaChatMessage.Speaker.tool.rawValue
 
         if nativeSupport {
@@ -467,10 +468,14 @@ struct LlamaPromptRenderer: Sendable {
 
     /// Qwen2.5 GGUFs escape the tool-call example as `{{"name": …}}` inside a string literal, which renders the
     /// braces doubled; small models copy them and no tool call parses.
+    /// One trailing newline goes too, as in Python Jinja (swift-jinja keeps it): Qwen's generation prompt ended
+    /// `assistant\n\n`, which no later prompt extends.
     static func patched(_ template: String) -> String {
-        template.replacingOccurrences(
+        let repaired = template.replacingOccurrences(
             of: #"{{\"name\": <function-name>, \"arguments\": <args-json-object>}}"#,
             with: #"{\"name\": <function-name>, \"arguments\": <args-json-object>}"#
         )
+        guard let last = repaired.last, last == "\n" || last == "\r\n" || last == "\r" else { return repaired }
+        return String(repaired.dropLast())
     }
 }

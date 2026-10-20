@@ -30,13 +30,14 @@ final class GGUFMultiTurnTests: XCTestCase {
         XCTAssertEqual(metadata.specialTokens, StandardLlamaDecoder().extractSpecialTokens(from: context.model))
 
         let processor = MessageProcessorFactory.createAutoProcessor(chatTemplate: context.model.chatTemplate)
+        let renderer = LlamaPromptRenderer(metadata: metadata, tools: [])
+        // The template as AuraLocal patches it (`LlamaPromptRenderer.patched`); the rest must match.
         let expected = try processor.renderAndExtractChunks(
             messages: [.system("Be brief."), .user("Hi"), .assistant("Hello!"), .user("Again")],
-            template: context.model.chatTemplate,
+            template: try XCTUnwrap(renderer.template),
             specialTokens: metadata.specialTokens
         ).rendered
-        let rendered = try LlamaPromptRenderer(metadata: metadata, tools: [])
-            .render([.system("Be brief."), .user("Hi"), .assistant("Hello!"), .user("Again")])
+        let rendered = try renderer.render([.system("Be brief."), .user("Hi"), .assistant("Hello!"), .user("Again")])
         XCTAssertEqual(rendered, expected)
     }
     #endif

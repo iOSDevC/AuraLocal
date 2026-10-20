@@ -222,6 +222,22 @@ final class LlamaChatPromptTests: XCTestCase {
                        "the reply after the last round is steered to answer")
     }
 
+    func testTheToolListIsTheSameEveryRender() throws {
+        let renderer = LlamaPromptRenderer(template: Self.chatML, tools: [AnyLLMTool(EchoTool())])
+        let request: [LlamaChatMessage] = [.user("Echo hi")]
+        let first = try renderer.render(request)
+        for _ in 0..<5 { XCTAssertEqual(try renderer.render(request), first) }
+        XCTAssertTrue(first.contains(#"[{"function":{"description":"Echo text.","name":"echo","parameters":"#), first)
+    }
+
+    func testATemplatesTrailingNewlineIsDroppedAsJinjaDoes() throws {
+        let rendered = try LlamaPromptRenderer(template: Self.chatML + "\n").render([.user("Hi")])
+        XCTAssertTrue(rendered.hasSuffix("<|im_start|>assistant\n"), rendered.debugDescription)
+        XCTAssertFalse(rendered.hasSuffix("\n\n"), "a reply's turn renders as `assistant\\n` + text, so the prompt must too")
+        XCTAssertEqual(LlamaPromptRenderer.patched("A\r\n"), "A")
+        XCTAssertEqual(LlamaPromptRenderer.patched("A\n\n"), "A\n", "only one, like Jinja")
+    }
+
     /// ChatML that renders `tool_calls` and keeps the `tool` role, the way Qwen2.5's template does.
     private static let nativeChatML = """
     {%- if tools %}{{- 'TOOLS|' }}{%- endif %}{%- for message in messages %}\
