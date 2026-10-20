@@ -238,6 +238,13 @@ final class LlamaChatPromptTests: XCTestCase {
         XCTAssertEqual(LlamaPromptRenderer.patched("A\n\n"), "A\n", "only one, like Jinja")
     }
 
+    func testWithoutToolsKeepsThePatchedTemplate() throws {
+        let renderer = LlamaPromptRenderer(template: Self.chatML + "\n\n", tools: [AnyLLMTool(EchoTool())])
+        XCTAssertEqual(renderer.withoutTools.template, Self.chatML + "\n")
+        XCTAssertEqual(try renderer.withoutTools.render([.user("Hi")]),
+                       try LlamaPromptRenderer(template: Self.chatML + "\n\n").render([.user("Hi")]))
+    }
+
     /// Qwen2.5's way of writing a call.
     private static let taggedChatML = """
     {%- if tools %}{{- 'TOOLS|' }}{%- endif %}{%- for message in messages %}\

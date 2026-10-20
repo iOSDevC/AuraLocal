@@ -93,9 +93,10 @@ enum LlamaChatNormalizer {
 
 // MARK: - LlamaPromptRenderer
 
-/// Renders a conversation with the GGUF's own chat template the way LocalLLMClient's `.chat` input does (same
-/// Jinja engine, context variables, message shapes and tool instructions), so the text a turn decodes is what
-/// `LLMSession` would have decoded for the same roles.
+/// Renders a conversation with the GGUF's own chat template with the same Jinja engine, context variables, message
+/// shapes and tool instructions as LocalLLMClient's `.chat` input, except that the template is ``patched(_:)`` (one
+/// trailing newline dropped, Qwen2.5's doubled braces repaired), the tool list in the instructions has sorted keys,
+/// and the instructions can follow a tool result (`toolRoundsRemain`).
 struct LlamaPromptRenderer: Sendable {
     /// `nil` renders a role-labelled transcript.
     let template: String?
@@ -115,10 +116,8 @@ struct LlamaPromptRenderer: Sendable {
 
     init(template: String?, specialTokens: [String: String] = [:], tools: [AnyLLMTool] = []) {
         let source = template.map(Self.patched)
-        self.template = source
-        self.specialTokens = specialTokens
-        self.tools = tools
-        parsed = source.map { text in Result<Template, any Error> { try Template(text) } }
+        self.init(patchedTemplate: source, specialTokens: specialTokens, tools: tools,
+                  parsed: source.map { text in Result<Template, any Error> { try Template(text) } })
     }
 
     init(metadata: GGUFChatMetadata, tools: [any LLMTool]) {
@@ -126,9 +125,19 @@ struct LlamaPromptRenderer: Sendable {
                   tools: tools.map { AnyLLMTool($0) })
     }
 
+    /// `patched` is not idempotent (it drops a trailing newline), so a renderer built from another keeps its source.
+    private init(patchedTemplate: String?, specialTokens: [String: String], tools: [AnyLLMTool],
+                 parsed: Result<Template, any Error>?) {
+        template = patchedTemplate
+        self.specialTokens = specialTokens
+        self.tools = tools
+        self.parsed = parsed
+    }
+
     /// Same template and tokens, no tool instructions: what a constrained call sends.
     var withoutTools: LlamaPromptRenderer {
-        tools.isEmpty ? self : LlamaPromptRenderer(template: template, specialTokens: specialTokens)
+        tools.isEmpty ? self
+            : LlamaPromptRenderer(patchedTemplate: template, specialTokens: specialTokens, tools: [], parsed: parsed)
     }
 
     /// How message content reaches the template. LocalLLMClient picks one per template family.
