@@ -4,14 +4,23 @@ import PhotosUI
 
 // MARK: - OCR Tab
 
+/// Document extraction. A model that is not on this device shows a ``ModelDownloadPlaceholder`` in place of the
+/// run button until the user downloads it.
 public struct OCRTab: View {
     @StateObject private var vm = OCRViewModel()
     @State private var pickerItem: PhotosPickerItem?
     @State private var selectedModel: Model = .fastVLM_0_5b_fp16
-    
-    public init() {}
+    private let autoDownload: Bool
+
+    /// - Parameter autoDownload: keep the run button for a model that is not downloaded and download it on the first
+    ///   run, as the tab did before it showed a download placeholder.
+    public init(autoDownload: Bool = false) {
+        self.autoDownload = autoDownload
+    }
     
     public var body: some View {
+        // Read so the run button returns when a download finishes.
+        let _ = ModelDownloadCenter.shared.revision
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
@@ -52,18 +61,7 @@ public struct OCRTab: View {
                             .font(.subheadline.weight(.semibold))
                     }
                     
-                    // Run button
-                    RunButton(
-                        title: "Extract Document",
-                        subtitle: "\(selectedModel.approximateSizeMB) MB",
-                        isDownloaded: selectedModel.isDownloaded,
-                        isLoading: vm.isLoading,
-                        color: .orange
-                    ) {
-                        guard let img = vm.selectedImage else { return }
-                        await vm.run(model: selectedModel, image: img)
-                    }
-                    .disabled(vm.selectedImage == nil)
+                    runButtonSection
                     
                     // Output
                     StatusSection(progress: vm.progress, output: vm.output)
@@ -72,6 +70,33 @@ public struct OCRTab: View {
             }
             .navigationTitle("OCR / Document")
             .background(Color.groupedBackground)
+        }
+        .onAppear {
+            if !selectedModel.isDownloaded {
+                selectedModel = Model.specializedModels.first(where: \.isDownloaded) ?? selectedModel
+            }
+        }
+    }
+
+    @ViewBuilder private var runButtonSection: some View {
+        if autoDownload || selectedModel.isDownloaded {
+            RunButton(
+                title: "Extract Document",
+                subtitle: "\(selectedModel.approximateSizeMB) MB",
+                isDownloaded: selectedModel.isDownloaded,
+                isLoading: vm.isLoading,
+                color: .orange
+            ) {
+                guard let img = vm.selectedImage else { return }
+                await vm.run(model: selectedModel, image: img)
+            }
+            .disabled(vm.selectedImage == nil)
+        } else {
+            ModelDownloadPlaceholder(
+                "Download \(selectedModel.displayName)",
+                message: "Documents are read on this device. Pick another model above, or download this one.",
+                models: [RequiredModel(selectedModel, purpose: "Extracts text and structure from photos of documents.")]
+            )
         }
     }
 }
