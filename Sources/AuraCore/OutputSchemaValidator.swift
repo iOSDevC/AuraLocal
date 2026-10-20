@@ -45,8 +45,9 @@ public struct OutputSchemaViolation: Sendable, Equatable, CustomStringConvertibl
 
 // MARK: - OutputSchemaValidator
 
-/// Compiles a JSON Schema once and checks JSON values against it. This is validation, not constrained decoding:
-/// the model can still produce anything, and ``AuraSession`` re-prompts when it does.
+/// Compiles a JSON Schema once and checks JSON values against it. ``AuraSession`` validates every reply with it and,
+/// for a profile without tools on a GGUF model loaded in full, also constrains decoding with a grammar derived from
+/// the compiled schema.
 ///
 /// Supported keywords: `type` (a name or an array of names), `properties`, `required`, `additionalProperties`
 /// (boolean or schema), `items` (a single schema), `enum`, `const`, `minItems`, `maxItems`, `minLength`,
@@ -57,12 +58,16 @@ public struct OutputSchemaValidator: Sendable {
     /// The schema text as given, for prompting the model.
     let source: String
     private let root: SchemaNode
+    /// GBNF that constrains decoding toward this schema (see OutputSchemaGrammar); nil when the schema admits no value.
+    let grammar: String?
 
     public init(_ schema: OutputSchema) throws(OutputSchemaError) {
         switch schema {
             case .json(let text):
                 source = text
-                root = try SchemaCompiler.compile(text)
+                let compiled = try SchemaCompiler.compile(text)
+                root = compiled
+                grammar = OutputSchemaGrammar.gbnf(for: compiled)
         }
     }
 
@@ -347,13 +352,13 @@ extension OutputSchemaValidator {
 
 // MARK: - Compiled schema
 
-private indirect enum SchemaNode: Sendable {
+indirect enum SchemaNode: Sendable {
     /// `true` accepts any value, `false` none.
     case constant(Bool)
     case rules(SchemaRules)
 }
 
-private struct SchemaRules: Sendable {
+struct SchemaRules: Sendable {
     var types: [SchemaType]?
     var properties: [String: SchemaNode] = [:]
     var required: [String] = []
@@ -374,7 +379,7 @@ private struct SchemaRules: Sendable {
     var oneOf: [SchemaNode]?
 }
 
-private enum SchemaType: String, Sendable {
+enum SchemaType: String, Sendable {
     case null, boolean, object, array, number, integer, string
 
     func admits(_ value: JSONValue) -> Bool {
