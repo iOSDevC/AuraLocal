@@ -143,7 +143,7 @@ public struct ModelDownloadPlaceholder: View {
                     .foregroundStyle(.secondary)
                 if !fitsOnDisk(free) {
                     Label("This may not fit. Downloading needs about \(Self.bytes(neededBytes)) free, "
-                          + "including room to verify the files.",
+                          + "including a 20 % safety margin.",
                           systemImage: "exclamationmark.triangle.fill")
                         .font(.footnote)
                         .foregroundStyle(.orange)
