@@ -22,18 +22,17 @@ struct HybridTab: View {
     // Read-only discovery panels
     @State private var providers: [LocalProviderStatus] = []
     @State private var isProbing = false
-    @State private var tools: [SystemToolRegistry.ToolInfo] = []
 
     @State private var showSettings = false
+    @State private var infoSheet: HybridInfoSheet?
 
     var body: some View {
         NavigationStack {
             Form {
                 askSection
                 providersSection
-                toolsSection
                 historySection
-                integrateSection
+                referenceSection
             }
             .navigationTitle("Hybrid")
             .toolbar {
@@ -42,15 +41,22 @@ struct HybridTab: View {
                 }
             }
             .sheet(isPresented: $showSettings) { HybridSettingsView() }
+            .sheet(item: $infoSheet) { sheet in
+                switch sheet {
+                case .onDeviceTools: OnDeviceToolsView()
+                case .integrate: IntegrateView()
+                }
+            }
             .sheet(item: $consentGate.pending) { request in
                 ConsentSheet(request: request, gate: consentGate)
             }
             .task {
-                if tools.isEmpty { tools = await SystemToolRegistry.discover() }
                 if providers.isEmpty { await refreshProviders() }
             }
         }
-        .frame(minWidth: 460, minHeight: 560)
+        #if os(macOS)
+        .frame(minWidth: 460, minHeight: 560)   // wider than an iPhone screen, so Mac only
+        #endif
     }
 
     // MARK: - Quick ask
@@ -198,50 +204,18 @@ struct HybridTab: View {
         providers = await LocalProviderDetector.detectAll()
     }
 
-    // MARK: - On-device system tools (read-only)
+    // MARK: - Reference (opened as bottom sheets)
 
-    @ViewBuilder
-    private var toolsSection: some View {
+    private var referenceSection: some View {
         Section {
-            ForEach(tools) { tool in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text(tool.displayName).font(.callout)
-                        Spacer()
-                        Image(systemName: tool.isAvailable ? "checkmark.circle.fill" : "xmark.circle")
-                            .foregroundStyle(tool.isAvailable ? .green : .secondary)
-                    }
-                    Text(tool.isAvailable ? tool.summary : (tool.availability.reason ?? "Unavailable"))
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
+            Button { infoSheet = .onDeviceTools } label: {
+                Label("On-device tools", systemImage: "wrench.and.screwdriver")
+            }
+            Button { infoSheet = .integrate } label: {
+                Label("Integrate", systemImage: "shippingbox")
             }
         } header: {
-            Text("On-device tools")
-        } footer: {
-            Text("Native Apple-framework tools that support the local models — no model download. Discovered per device via SystemToolRegistry.")
-        }
-    }
-
-    // MARK: - Integrate (self-documenting)
-
-    @ViewBuilder
-    private var integrateSection: some View {
-        Section {
-            integrateRow("Swift Package", ".package(url: \"…/AuraLocal.git\", branch: \"main\")")
-            integrateRow("CLI · detect providers", "aura providers")
-            integrateRow("CLI · ask a bigger model", "aura ask \"…\" [--provider openai|anthropic]")
-            integrateRow("CLI · native OCR", "aura ocr image.png")
-        } header: {
-            Text("Integrate")
-        } footer: {
-            Text("The same features run headlessly via the `aura` CLI (build: scripts/build-cli.sh) and this app ships as a .dmg (scripts/build-app.sh). `aura ask` uses your llama-server / Ollama by default and a cloud API only when you name one; export OPENAI_API_KEY or ANTHROPIC_API_KEY for the CLI.")
-        }
-    }
-
-    private func integrateRow(_ title: String, _ code: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption).foregroundStyle(.secondary)
-            Text(code).font(.caption.monospaced()).textSelection(.enabled)
+            Text("Reference")
         }
     }
 
