@@ -364,6 +364,18 @@ struct AuraHFDownloader: Downloader {
         let sanitized = id.replacingOccurrences(of: "/", with: "--")
         let snapshotPath = "huggingface/hub/models--\(sanitized)/snapshots/main"
         let dir = cacheDirectory.appending(path: snapshotPath)
+        // Two loads of one repo (e.g. two sampling settings) would write the same .partial files and race.
+        return try await SnapshotDownloadGate.shared.serialized(dir.path()) {
+            try await self.downloadSnapshot(id: id, revision: revision, patterns: patterns, useLatest: useLatest,
+                                            snapshotPath: snapshotPath, dir: dir, progressHandler: progressHandler)
+        }
+    }
+
+    private func downloadSnapshot(
+        id: String, revision: String?, patterns: [String], useLatest: Bool,
+        snapshotPath: String, dir: URL, progressHandler: @Sendable @escaping (Progress) -> Void
+    ) async throws -> URL {
+        try Task.checkCancellation()
 
         let completionMarker = dir.appending(path: ".complete")
 
@@ -688,6 +700,25 @@ struct AuraHFDownloader: Downloader {
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: partial, to: destination)
         Self.log.info("\(destination.lastPathComponent, privacy: .public) complete")
+    }
+}
+
+/// Runs downloads into the same snapshot folder one at a time; a later call then finds the finished files.
+private actor SnapshotDownloadGate {
+    static let shared = SnapshotDownloadGate()
+    private var tails: [String: (id: UUID, done: Task<Void, Never>)] = [:]
+
+    func serialized<T: Sendable>(_ key: String, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
+        let previous = tails[key]?.done
+        let work = Task<T, Error> {
+            await previous?.value
+            try Task.checkCancellation()
+            return try await body()
+        }
+        let ticket = UUID()
+        tails[key] = (ticket, Task { _ = await work.result })
+        defer { if tails[key]?.id == ticket { tails[key] = nil } }
+        return try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
     }
 }
 

@@ -55,6 +55,17 @@ struct AuraHFDownloaderTests {
         #expect(fixture.hasCompletionMarker)
     }
 
+    @Test("Two concurrent loads of one repo share a single transfer instead of racing on the same partial")
+    func serializesConcurrentDownloadsOfOneSnapshot() async throws {
+        let fixture = try SnapshotDownloadFixture(handler: { .standard($0) })
+        async let first = fixture.download()
+        async let second = fixture.download()
+        let (a, b) = try await (first, second)
+        #expect(a == b)
+        #expect(fixture.hasCompletionMarker)
+        #expect(fixture.rangeRequests == 1)
+    }
+
     @Test("A size in the tree listing is used without a HEAD request, and transfers ask for uncompressed bytes")
     func usesTreeSizeWithoutHead() async throws {
         let fixture = try SnapshotDownloadFixture(handler: { request in
