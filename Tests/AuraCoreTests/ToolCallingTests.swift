@@ -20,22 +20,38 @@ private struct TapTool: LLMTool {
 }
 // swiftlint:enable identifier_name
 
-private struct FailingTool: LLMTool {
-    struct Failure: Error {}
-    let name = "fail"
-    let description = "Always fails."
-    struct Arguments: Decodable, ToolSchemaGeneratable {
-        static var argumentsSchema: LLMToolArgumentsSchema { [:] }
+/// A backend that runs a tool loop and reports a fixed summary; `failNext` makes the next call throw.
+@MainActor
+private final class ToolHostBackend: InferenceBackend, ToolLoopHost {
+    static let turn = ToolTurnSummary(rounds: 1, results: [], skipped: [])
+    var toolLoop = ToolLoopOptions.default
+    var onToolEvent: (@MainActor (ToolEvent) -> Void)?
+    private(set) var lastToolTurn: ToolTurnSummary?
+    var failNext = false
+    var onGenerate: (@MainActor () -> Void)?
+    var isLoaded: Bool { true }
+    func load(onProgress: @escaping @MainActor (String) -> Void) async throws {}
+    func generate(prompt: String, systemPrompt: String?, maxTokens: Int,
+                  onToken: @escaping @MainActor (String) -> Void) async throws -> String {
+        onGenerate?()
+        lastToolTurn = nil
+        if failNext { throw AuraError.modelNotLoaded }
+        lastToolTurn = Self.turn
+        return "ok"
     }
-    func call(arguments: Arguments) async throws -> ToolOutput {
-        throw Failure()
-    }
+    func generate(prompt: String, systemPrompt: String?, maxTokens: Int, constraint: GenerationConstraint,
+                  onToken: @escaping @MainActor (String) -> Void) async throws -> String { "" }
+    func generate(prompt: String, image: PlatformImage?, maxTokens: Int,
+                  onToken: @escaping @MainActor (String) -> Void) async throws -> String { "" }
+    func generate(messages: [[String: String]], maxTokens: Int,
+                  onToken: @escaping @MainActor (String) -> Void) async throws -> String { "" }
+    func unload() {}
 }
 
 /// GGUF function-calling plumbing: a host-defined `LLMTool` threads from `AuraLocal(model:tools:)` /
 /// `ModelManager.load(tools:)` all the way to the llama.cpp backend. The model-driven tool loop runs live in
-/// `GGUFMultiTurnTests` (needs AURA_GGUF_TEST_MODEL); here we verify the wiring and that a tool declared
-/// against AuraCore's re-exported API is well-formed.
+/// `GGUFMultiTurnTests` and `GGUFToolLoopLiveTests` (need AURA_GGUF_TEST_MODEL); here we verify the wiring and
+/// that a tool declared against AuraCore's re-exported API is well-formed.
 @MainActor
 final class ToolCallingTests: XCTestCase {
 
@@ -78,31 +94,60 @@ final class ToolCallingTests: XCTestCase {
         XCTAssertEqual(output.data["x"] as? Int, 5)
     }
 
-    func testAThrowingToolFailsTheGGUFTurnWithItsOwnError() async {
-        let call = LLMToolCall(name: "fail", arguments: "{}")
-        do {
-            _ = try await LlamaToolTurnEngine.output(of: call, among: [AnyLLMTool(FailingTool())])
-            XCTFail("the tool's error was not thrown")
-        } catch {
-            XCTAssertTrue(error is FailingTool.Failure, "\(error)")
-        }
+    func testToolLoopSettingsReachTheLlamaBackend() throws {
+        let aura = AuraLocal(model: ggufModel, tools: [TapTool()])
+        let backend = try XCTUnwrap(aura.engine.backend as? LlamaCppBackend)
+        XCTAssertEqual(backend.toolLoop, .default)
+        var received: [ToolEvent] = []
+        aura.toolLoop = ToolLoopOptions(maxToolRounds: 3, toolErrors: .failTurn)
+        aura.onToolEvent = { received.append($0) }
+
+        XCTAssertEqual(backend.toolLoop, ToolLoopOptions(maxToolRounds: 3, toolErrors: .failTurn))
+        XCTAssertEqual(aura.toolLoop, backend.toolLoop)
+        let skipped = ToolEvent.roundLimitReached(skipped: [])
+        backend.onToolEvent?(skipped)
+        XCTAssertEqual(received, [skipped])
+        XCTAssertNil(aura.lastToolTurn, "no turn has run")
+        aura.onToolEvent = nil
+        XCTAssertNil(backend.onToolEvent)
     }
 
-    func testUndecodableToolArgumentsFailTheGGUFTurnWithArgumentDecodingFailed() async {
-        let call = LLMToolCall(name: "tap", arguments: #"{"x": "left"}"#)
-        do {
-            _ = try await LlamaToolTurnEngine.output(of: call, among: [AnyLLMTool(TapTool())])
-            XCTFail("undecodable arguments were accepted")
-        } catch ToolError.argumentDecodingFailed(let toolName, _) {
-            XCTAssertEqual(toolName, "tap")
-        } catch {
-            XCTFail("\(error)")
-        }
+    func testToolLoopSettingsReachTheLayerStreamingBackend() throws {
+        let backend = LayerStreamingBackend(model: ggufModel, tools: [TapTool()])
+        let engine = AuraEngine(model: ggufModel, backend: backend)
+        engine.toolLoop = ToolLoopOptions(maxToolRounds: 0)
+        var received = 0
+        engine.onToolEvent = { _ in received += 1 }
+
+        XCTAssertEqual(backend.toolLoop.maxToolRounds, 0)
+        backend.onToolEvent?(.roundLimitReached(skipped: []))
+        XCTAssertEqual(received, 1)
+        XCTAssertNil(engine.lastToolTurn)
     }
 
-    func testAToolCallRendersItsOutputForTheResumedGGUFPrompt() async throws {
-        let call = LLMToolCall(name: "tap", arguments: #"{"x": 5, "y": 9}"#)
-        let rendered = try await LlamaToolTurnEngine.output(of: call, among: [AnyLLMTool(TapTool())])
-        XCTAssertEqual(Set(rendered.components(separatedBy: ", ")), ["ok: true", "x: 5", "y: 9"])
+    func testDefaultsKeepOneRoundAndReportErrorsToTheModel() {
+        XCTAssertEqual(ToolLoopOptions.default.maxToolRounds, 1)
+        XCTAssertEqual(ToolLoopOptions.defaultMaxToolRounds, 1)
+        XCTAssertEqual(ToolLoopOptions.default.toolErrors, .reportToModel)
+        XCTAssertEqual(AuraLocal(model: ggufModel, tools: [TapTool()]).toolLoop, .default)
+    }
+
+    func testLastToolTurnIsClearedWhenACallStartsAndNilAfterOneThrows() async throws {
+        let backend = ToolHostBackend()
+        let engine = AuraEngine(model: ggufModel, backend: backend)
+        let llm = AuraLocal(engine: engine)
+
+        _ = try await llm.chat("go")
+        XCTAssertEqual(llm.lastToolTurn, ToolHostBackend.turn)
+
+        var seenAtStart: ToolTurnSummary?? = .none
+        backend.onGenerate = { seenAtStart = .some(engine.lastToolTurn) }
+        backend.failNext = true
+        do {
+            _ = try await llm.chat("again")
+            XCTFail("the backend did not throw")
+        } catch {}
+        XCTAssertEqual(seenAtStart, .some(nil), "cleared when the call started")
+        XCTAssertNil(llm.lastToolTurn)
     }
 }

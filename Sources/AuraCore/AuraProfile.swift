@@ -32,6 +32,9 @@ public struct AuraProfile: Sendable, Identifiable {
     public var outputSchema: OutputSchema?
     /// Remote-escalation policy for this profile. Default `.off` (local-only).
     public var escalation: EscalationPolicy
+    /// How ``AuraSession`` runs this profile's tool calls; read for each stream. Default: one round per turn, tool
+    /// errors reported to the model.
+    public var toolLoop: ToolLoopOptions
 
     public init(id: String,
                 displayName: String,
@@ -40,7 +43,8 @@ public struct AuraProfile: Sendable, Identifiable {
                 sampling: SamplingParams = .default,
                 tools: [any LLMTool] = [],
                 outputSchema: OutputSchema? = nil,
-                escalation: EscalationPolicy = .off) {
+                escalation: EscalationPolicy = .off,
+                toolLoop: ToolLoopOptions = .default) {
         self.id = id
         self.displayName = displayName
         self.instructions = instructions
@@ -49,6 +53,7 @@ public struct AuraProfile: Sendable, Identifiable {
         self.tools = tools
         self.outputSchema = outputSchema
         self.escalation = escalation
+        self.toolLoop = toolLoop
     }
 
     /// Whether this profile enables function-calling (agentic) vs. plain chat.
@@ -67,6 +72,7 @@ extension AuraProfile: Equatable {
             && lhs.tools.map(\.name) == rhs.tools.map(\.name)
             && lhs.outputSchema == rhs.outputSchema
             && lhs.escalation == rhs.escalation
+            && lhs.toolLoop == rhs.toolLoop
     }
 }
 

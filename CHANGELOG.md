@@ -32,6 +32,15 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   are `@available(*, unavailable)`, with the reason in the message: none of them ever downloaded a loadable model.
 - Tools on an MLX model throw `ModelConfigurationError.toolsUnsupported(.mlx)` from `ModelManager.load` and
   `AuraSession` instead of being dropped silently. GGUF tool calling is unchanged.
+- **Behaviour change (GGUF tools):** calls a model makes after `maxToolRounds` rounds (default 1, as many rounds as
+  before) are reported as `ToolEvent.roundLimitReached` and in `ToolTurnSummary.skipped` instead of being dropped
+  silently; a tool that throws, arguments that do not decode and an unknown tool name reach the model as
+  `{"error": …}` instead of failing the turn (`ToolLoopOptions(toolErrors: .failTurn)` restores that); tool output
+  reaches the model as JSON with sorted keys instead of `key: value` pairs in random order; with a chat template that
+  supports tools, the resumed prompt carries the model's call as an assistant turn and each result as a `tool` turn
+  in the template's own format; with other templates each round is sent as one assistant turn, the model's call as
+  `<tool_call>` text followed by every result in `<tool_response>` (before, only the results were sent, and only
+  the last one as an assistant turn), so templates that require alternating roles, such as Gemma 3's, render it.
 - **Behaviour change:** AuraUI's `TextChatTab`, `VisionTab` and `OCRTab` and AuraDocs' `DocsTab` no longer download
   a model without asking. While a model they need is not on disk they show `ModelDownloadPlaceholder` with
   **Download**; models already on disk load as before. `DocsTab` used to download Qwen3 1.7B and FastVLM (~2 GB)
@@ -95,6 +104,9 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   Retry, and an `onReady` callback once the files are there. `RequiredModel`, `[RequiredModel].notDownloaded`,
   `OnDemandDownloads` (one transfer at a time through `ModelDownloads`, tracked by file) and
   `Model.approximateSizeBytes` go with it; `DocsTab.neededModels` lists what `DocsTab` loads.
+- GGUF tool loop controls: `ToolLoopOptions` (`maxToolRounds`, `toolErrors`) on `AuraLocal.toolLoop` and
+  `AuraProfile.toolLoop`, `ToolEvent` through `AuraLocal.onToolEvent` and `AuraSession.onToolEvent`, and
+  `ToolTurnSummary` in `lastToolTurn`.
 
 ### Changed
 
@@ -135,6 +147,8 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 - The memory safeguards that were documented but inert (`evictAllButMostRecent`, the iOS OOM guards).
 - `scripts/package-cli.sh` finds the build products of newer SwiftPM (`.build/out/Products/Release`), and the
   `aura` tarball now carries the SwiftPM resource bundles and the license texts.
+- GGUF tool turns: a resumed prompt that outgrew the context failed the turn; every round's prompt now drops the
+  oldest exchanges, as the first one does.
 
 ### Removed
 

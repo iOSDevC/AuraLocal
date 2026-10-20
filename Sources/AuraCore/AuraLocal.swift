@@ -55,6 +55,25 @@ public final class AuraLocal {
         set { engine.deviceGuard = newValue }
     }
 
+    /// How a GGUF instance loaded with tools runs the calls the model makes: at most
+    /// ``ToolLoopOptions/maxToolRounds`` rounds per turn (default 1), and tool errors reported to the model. Read when
+    /// a turn starts; no effect on an instance loaded without tools.
+    public var toolLoop: ToolLoopOptions {
+        get { engine.toolLoop }
+        set { engine.toolLoop = newValue }
+    }
+
+    /// Receives each ``ToolEvent`` on the main actor while a turn runs its tools; read when a turn starts. No effect
+    /// on an instance loaded without tools.
+    public var onToolEvent: (@MainActor (ToolEvent) -> Void)? {
+        get { engine.onToolEvent }
+        set { engine.onToolEvent = newValue }
+    }
+
+    /// What the tool loop did in the last generation. `nil` without tools, before the first turn, after one that
+    /// threw, and after a constrained call.
+    public var lastToolTurn: ToolTurnSummary? { engine.lastToolTurn }
+
     /// Set when the last generation outgrew the MLX KV window, which drops the oldest context without an error.
     /// `nil` when it fit, the model does not run on MLX, or the last generation threw.
     public var lastContextOverflow: ContextWindowOverflow? { engine.lastContextOverflow }

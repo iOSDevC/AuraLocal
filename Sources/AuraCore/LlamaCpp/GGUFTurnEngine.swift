@@ -18,10 +18,12 @@ protocol GGUFTurnEngine: AnyObject {
     var isIdle: Bool { get }
 
     /// Streams the reply to `messages` through `onPiece`. Stops after `maxTokens` pieces, when `shouldStop` returns
-    /// `true` for the pieces so far, or when the task is cancelled; then it returns the text so far.
+    /// `true` for the pieces so far, or when the task is cancelled; then it returns the text so far. An engine with
+    /// tools runs them as `toolLoop` says, with every round sharing `maxTokens`.
     func respond(
         to messages: [LlamaChatMessage],
         maxTokens: Int,
+        toolLoop: ToolLoopContext,
         shouldStop: ((Int) -> Bool)?,
         onPiece: (String) -> Void
     ) async throws -> GGUFTurnReply
@@ -33,9 +35,22 @@ struct GGUFTurnReply: Sendable {
     let prompt: String
     /// The messages `prompt` was rendered from.
     let history: [LlamaChatMessage]
+    /// What the tool loop did; `nil` for an engine without tools.
+    var tools: ToolTurnSummary? = nil
 }
 
 extension GGUFTurnEngine {
+    /// A turn with the default tool loop.
+    func respond(
+        to messages: [LlamaChatMessage],
+        maxTokens: Int,
+        shouldStop: ((Int) -> Bool)?,
+        onPiece: (String) -> Void
+    ) async throws -> GGUFTurnReply {
+        try await respond(to: messages, maxTokens: maxTokens, toolLoop: .standard, shouldStop: shouldStop,
+                          onPiece: onPiece)
+    }
+
     /// A turn timed with a ``StreamMeter``: `onToken` receives the accumulated text, and the stats estimate the
     /// prompt that was actually decoded.
     func measuredTurn(
@@ -43,17 +58,20 @@ extension GGUFTurnEngine {
         maxTokens: Int,
         backend: BackendKind,
         source: GenerationStats.Provenance,
+        toolLoop: ToolLoopContext = .standard,
         shouldStop: ((Int) -> Bool)? = nil,
         onToken: (String) -> Void
-    ) async throws -> (text: String, stats: GenerationStats) {
+    ) async throws -> (text: String, stats: GenerationStats, tools: ToolTurnSummary?) {
         var meter = StreamMeter()
         var fullText = ""
-        let reply = try await respond(to: conversation, maxTokens: maxTokens, shouldStop: shouldStop) { piece in
+        let reply = try await respond(to: conversation, maxTokens: maxTokens, toolLoop: toolLoop,
+                                      shouldStop: shouldStop) { piece in
             meter.recordPiece()
             fullText += piece
             onToken(fullText)
         }
-        return (reply.text, meter.stats(backend: backend, source: source, prompt: reply.prompt, output: reply.text))
+        let stats = meter.stats(backend: backend, source: source, prompt: reply.prompt, output: reply.text)
+        return (reply.text, stats, reply.tools)
     }
 }
 
@@ -129,9 +147,11 @@ final class LlamaTurnEngine: GGUFTurnEngine {
     /// The context, for tests that read its KV position while the engine is idle.
     var contextForTesting: LocalLLMClientLlama.Context? { core.currentContext }
 
+    /// Without tools `toolLoop` has nothing to run.
     func respond(
         to messages: [LlamaChatMessage],
         maxTokens: Int,
+        toolLoop: ToolLoopContext,
         shouldStop: ((Int) -> Bool)?,
         onPiece: (String) -> Void
     ) async throws -> GGUFTurnReply {
@@ -291,7 +311,9 @@ final class LlamaTurnCore: @unchecked Sendable {
 // MARK: - LlamaToolTurnEngine
 
 /// The tool-calling turn: LocalLLMClient's parser on a `LlamaClient`, fed `.plain` prompts (which clear the KV cache)
-/// rendered with real roles, and the call → execute → resume loop `LLMSession` runs.
+/// rendered with real roles. Each reply that asks for tools is a round: ``ToolLoopDriver`` runs its calls, the round
+/// (the reply's calls and their results) joins the conversation, and the whole conversation is prefilled again for
+/// the next reply, up to ``ToolLoopOptions/maxToolRounds`` rounds.
 ///
 /// `LlamaClient.responseStream` decodes in a task nobody can cancel. A reply cut by `maxTokens`, `shouldStop` or
 /// cancellation returns at once, but the next turn waits until that decode reaches end of generation or fills the
@@ -316,11 +338,13 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
         case cut
     }
 
-    /// Text and pieces across the first stream and the resumed one, which share `maxTokens`.
+    /// Text and pieces across every round of a turn, which share `maxTokens`.
     private struct Progress {
         let limit: Int
         var text = ""
         var produced = 0
+        /// The visible text of the current round's reply.
+        var roundText = ""
     }
 
     init(url: URL, parameter: LlamaClient.Parameter, renderer: LlamaPromptRenderer, client: LlamaClient) {
@@ -344,6 +368,7 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
     func respond(
         to messages: [LlamaChatMessage],
         maxTokens: Int,
+        toolLoop: ToolLoopContext,
         shouldStop: ((Int) -> Bool)?,
         onPiece: (String) -> Void
     ) async throws -> GGUFTurnReply {
@@ -351,34 +376,47 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
         try Task.checkCancellation()
 
         var progress = Progress(limit: maxTokens)
-        let first = try await stream(LlamaChatNormalizer.normalize(messages), trims: true, progress: &progress,
-                                     shouldStop: shouldStop, onPiece: onPiece)
-        guard case .finished(let calls) = first.outcome, !calls.isEmpty else {
-            return GGUFTurnReply(text: progress.text, prompt: first.prompt, history: first.history)
-        }
-
-        var resumed = first.history
-        for call in calls {
-            resumed.append(.tool(try await Self.output(of: call, among: renderer.tools)))
-        }
-        try await waitForDrain()
-        try Task.checkCancellation()
-        let second = try await stream(resumed, trims: false, progress: &progress, shouldStop: shouldStop,
-                                      onPiece: onPiece)
-        return GGUFTurnReply(text: progress.text, prompt: second.prompt, history: second.history)
+        var history = LlamaChatNormalizer.normalize(messages)
+        var sent: (history: [LlamaChatMessage], prompt: String) = (history, "")
+        var replies = 0
+        let driver = ToolLoopDriver(tools: renderer.tools, context: toolLoop)
+        let summary = try await driver.run(
+            reply: {
+                if replies > 0 {
+                    try await waitForDrain()
+                    try Task.checkCancellation()
+                }
+                replies += 1
+                progress.roundText = ""
+                let streamed = try await stream(history, progress: &progress, shouldStop: shouldStop, onPiece: onPiece)
+                history = streamed.history
+                sent = (streamed.history, streamed.prompt)
+                guard case .finished(let calls) = streamed.outcome else { return nil }
+                return calls
+            },
+            record: { calls, results in
+                history += Self.roundMessages(text: progress.roundText, calls: calls, results: results)
+            }
+        )
+        return GGUFTurnReply(text: progress.text, prompt: sent.prompt, history: sent.history, tools: summary)
     }
 
-    /// One `responseStream`. Returns the history it sent, after any trimming, and the prompt that rendered.
+    /// One round as the conversation records it: the reply with its calls, then one tool turn per result.
+    static func roundMessages(text: String, calls: [LLMToolCall], results: [ToolCallResult]) -> [LlamaChatMessage] {
+        // The parser leaves the newlines between calls as text; kept, they would precede the calls in the prompt.
+        let visible = LlamaChatNormalizer.isBlank(text) ? "" : text
+        return [.assistant(visible, toolCalls: calls)] + results.map { .tool($0.output) }
+    }
+
+    /// One `responseStream`, trimmed to the window. Returns the history it sent, after any trimming, and the prompt
+    /// that rendered; trimming drops whole exchanges before the newest user turn, never the rounds after it.
     private func stream(
         _ messages: [LlamaChatMessage],
-        trims: Bool,
         progress: inout Progress,
         shouldStop: ((Int) -> Bool)?,
         onPiece: (String) -> Void
     ) async throws -> (outcome: Outcome, history: [LlamaChatMessage], prompt: String) {
-        var (history, prompt) = trims
-            ? try fitter.fitted(messages, replyBudget: progress.limit, render: renderer.render)
-            : (messages, try renderer.render(messages))
+        var (history, prompt) = try fitter.fitted(messages, replyBudget: progress.limit, render: renderer.render)
         let chunks: AsyncThrowingStream<StreamingChunk, any Error>
         while true {
             let client = try await liveClient()
@@ -387,7 +425,7 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
                 break
             } catch {
                 await discardQueuedTokens(of: client)
-                guard trims, fitter.learn(from: error, promptBytes: prompt.utf8.count),
+                guard fitter.learn(from: error, promptBytes: prompt.utf8.count),
                       let shorter = try fitter.shortened(history, replyBudget: progress.limit,
                                                          render: renderer.render) else { throw error }
                 (history, prompt) = shorter
@@ -414,6 +452,7 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
                 switch chunk {
                 case .text(let piece):
                     progress.text += piece
+                    progress.roundText += piece
                     progress.produced += 1
                     onPiece(piece)
                     if progress.produced >= progress.limit || shouldStop?(progress.produced) == true {
@@ -429,21 +468,6 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
             throw error
         }
         return (Task.isCancelled ? .cut : .finished(calls), history, prompt)
-    }
-
-    /// Formats the output the way `LLMSession` does, so the resumed prompt matches its tool loop. A tool's own error
-    /// is rethrown unwrapped from LocalLLMClient's `ToolError.executionFailed`.
-    nonisolated static func output(of call: LLMToolCall, among tools: [AnyLLMTool]) async throws -> String {
-        guard let tool = tools.first(where: { $0.name == call.name }) else {
-            throw LLMError.invalidParameter(reason: "Tool '\(call.name)' not found")
-        }
-        let output: ToolOutput
-        do {
-            output = try await tool.call(argumentsJSON: call.arguments)
-        } catch ToolError.executionFailed(_, let underlying) {
-            throw underlying
-        }
-        return output.data.map { "\($0.key): \($0.value)" }.joined(separator: ", ")
     }
 
     private func waitForDrain() async throws {

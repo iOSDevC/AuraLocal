@@ -43,6 +43,22 @@ final class LlamaChatPromptTests: XCTestCase {
         XCTAssertEqual(normalized, [.user("u1\n\nu2"), .assistant("a1\n\na2"), .user("u3")])
     }
 
+    func testABlankAssistantWithToolCallsIsKeptAndNotMerged() {
+        let first = LLMToolCall(id: "1", name: "echo", arguments: "{}")
+        let second = LLMToolCall(id: "2", name: "echo", arguments: "{}")
+        let normalized = LlamaChatNormalizer.normalize([
+            .user("u1"), .assistant("", toolCalls: [first]), .tool("r1"), .assistant("so far"),
+            .assistant(" ", toolCalls: [second]), .assistant("after"),
+        ])
+        XCTAssertEqual(normalized, [
+            .user("u1"), .assistant("", toolCalls: [first]), .tool("r1"), .assistant("so far"),
+            .assistant(" ", toolCalls: [second]), .assistant("after"),
+        ])
+        let leading = LlamaChatNormalizer.normalize([.system("s"), .assistant("", toolCalls: [first]), .user("u")])
+        XCTAssertEqual(leading, [.system("s"), .assistant("", toolCalls: [first]), .user("u")],
+                       "a call before the first user turn does not join the system text")
+    }
+
     func testToolResultsStayInPlace() {
         let normalized = LlamaChatNormalizer.normalize([.user("u1"), .tool("r1"), .tool("r2")])
         XCTAssertEqual(normalized, [.user("u1"), .tool("r1"), .tool("r2")])
@@ -190,6 +206,142 @@ final class LlamaChatPromptTests: XCTestCase {
         XCTAssertTrue(rendered.contains("<|im_start|>assistant\n<tool_response>\ntext: hi\n</tool_response><|im_end|>"),
                       rendered)
         XCTAssertFalse(rendered.contains("If you decide to invoke"), "instructions only precede a fresh request")
+    }
+
+    /// ChatML that renders `tool_calls` and keeps the `tool` role, the way Qwen2.5's template does.
+    private static let nativeChatML = """
+    {%- if tools %}{{- 'TOOLS|' }}{%- endif %}{%- for message in messages %}\
+    {%- if message.role == 'assistant' and message.tool_calls %}{{- '<|im_start|>assistant\\n' + message.content }}\
+    {%- for tool_call in message.tool_calls %}{{- '<call id=' + tool_call.id + '>' + tool_call.function.name + ':' \
+    + (tool_call.function.arguments | tojson) + '</call>' }}{%- endfor %}{{- '<|im_end|>\\n' }}\
+    {%- else %}{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' }}{%- endif %}\
+    {%- endfor %}{%- if add_generation_prompt %}{{- '<|im_start|>assistant\\n' }}{%- endif %}
+    """
+
+    private static let echoCall = LLMToolCall(
+        id: "c1", name: "echo", arguments: #"{"text": "hi", "loud": true, "n": 2, "ratio": 0.5, "none": null}"#
+    )
+
+    func testNativeTemplatesGetToolCallsAndToolTurns() throws {
+        let renderer = LlamaPromptRenderer(template: Self.nativeChatML, tools: [AnyLLMTool(EchoTool())])
+        let rendered = try renderer.render([.user("Echo hi"), .assistant("", toolCalls: [Self.echoCall]),
+                                            .tool(#"{"text":"hi"}"#)])
+        XCTAssertTrue(rendered.contains("<|im_start|>assistant\n<call id=c1>echo:"
+                                        + #"{"loud":true,"n":2,"none":null,"ratio":0.5,"text":"hi"}</call>"#), rendered)
+        XCTAssertTrue(rendered.contains("<|im_start|>tool\n{\"text\":\"hi\"}<|im_end|>"), rendered)
+        XCTAssertFalse(rendered.contains("<tool_response>"), rendered)
+        XCTAssertFalse(rendered.contains("<tool_call>"), rendered)
+        XCTAssertFalse(rendered.contains("If you decide to invoke"), "instructions only precede a fresh request")
+    }
+
+    func testNativeRenderingThatThrowsFallsBackToText() throws {
+        let template = "{%- if tools %}{%- endif %}{%- for message in messages %}{%- if message.role == 'tool' %}"
+            + "{{ raise_exception('no tool role') }}{%- endif %}{{- '<|im_start|>' + message.role + '\\n' "
+            + "+ message.content + '<|im_end|>\\n' }}{%- endfor %}"
+        let renderer = LlamaPromptRenderer(template: template, tools: [AnyLLMTool(EchoTool())])
+        let rendered = try renderer.render([.user("Echo hi"), .assistant("", toolCalls: [Self.echoCall]),
+                                            .tool("r1")])
+        XCTAssertTrue(rendered.contains("<|im_start|>assistant\n<tool_call>\n{\"name\": \"echo\", \"arguments\": "
+                                        + Self.echoCall.arguments + "}\n</tool_call>\n<tool_response>\nr1\n"
+                                        + "</tool_response><|im_end|>"), rendered)
+        XCTAssertFalse(rendered.contains("<|im_start|>tool"), rendered)
+    }
+
+    func testNonObjectArgumentsFallBackToText() throws {
+        let renderer = LlamaPromptRenderer(template: Self.nativeChatML, tools: [AnyLLMTool(EchoTool())])
+        let odd = LLMToolCall(id: "c2", name: "echo", arguments: "[1, 2]")
+        let rendered = try renderer.render([.user("Echo hi"), .assistant("", toolCalls: [odd]), .tool("r1")])
+        XCTAssertTrue(rendered.contains("<tool_call>\n{\"name\": \"echo\", \"arguments\": [1, 2]}\n</tool_call>"),
+                      rendered)
+        XCTAssertFalse(rendered.contains("<call id="), rendered)
+    }
+
+    func testTextTemplatesGetToolCallTranscripts() throws {
+        let renderer = LlamaPromptRenderer(template: Self.chatML, tools: [AnyLLMTool(EchoTool())])
+        let call = LLMToolCall(id: "c1", name: "echo", arguments: #"{"text": "hi"}"#)
+        let blank = LLMToolCall(id: "c2", name: "echo", arguments: "")
+        let rendered = try renderer.render([.user("Echo hi"), .assistant("Sure.", toolCalls: [call, blank]),
+                                            .tool(#"{"text":"hi"}"#), .tool("{}")])
+        XCTAssertTrue(rendered.contains("""
+        <|im_start|>assistant\nSure.\n<tool_call>\n{"name": "echo", "arguments": {"text": "hi"}}\n</tool_call>\n\
+        <tool_call>\n{"name": "echo", "arguments": {}}\n</tool_call>\n<tool_response>\n{"text":"hi"}\n\
+        </tool_response>\n<tool_response>\n{}\n</tool_response><|im_end|>\n<|im_start|>assistant\n
+        """), rendered)
+        XCTAssertFalse(rendered.contains("<|im_start|>tool"), rendered)
+    }
+
+    /// Gemma 3's template: folds the system prompt into the first user turn, takes parts, raises on broken
+    /// alternation.
+    private static let gemma3 = """
+    {{ bos_token }}{%- if messages[0]['role'] == 'system' -%}{%- if messages[0]['content'] is string -%}\
+    {%- set first_user_prefix = messages[0]['content'] + '\\n\\n' -%}{%- else -%}\
+    {%- set first_user_prefix = messages[0]['content'][0]['text'] + '\\n\\n' -%}{%- endif -%}\
+    {%- set loop_messages = messages[1:] -%}{%- else -%}{%- set first_user_prefix = "" -%}\
+    {%- set loop_messages = messages -%}{%- endif -%}{%- for message in loop_messages -%}\
+    {%- if (message['role'] == 'user') != (loop.index0 % 2 == 0) -%}\
+    {{ raise_exception("Conversation roles must alternate user/assistant/user/assistant/...") }}{%- endif -%}\
+    {%- if (message['role'] == 'assistant') -%}{%- set role = "model" -%}{%- else -%}\
+    {%- set role = message['role'] -%}{%- endif -%}\
+    {{ '<start_of_turn>' + role + '\\n' + (first_user_prefix if loop.first else "") }}\
+    {%- if message['content'] is string -%}{{ message['content'] | trim }}\
+    {%- elif message['content'] is iterable -%}{%- for item in message['content'] -%}\
+    {%- if item['type'] == 'image' -%}{{ '<start_of_image>' }}{%- elif item['type'] == 'text' -%}\
+    {{ item['text'] | trim }}{%- endif -%}{%- endfor -%}{%- else -%}\
+    {{ raise_exception("Invalid content type") }}{%- endif -%}{{ '<end_of_turn>\\n' }}{%- endfor -%}\
+    {%- if add_generation_prompt -%}{{'<start_of_turn>model\\n'}}{%- endif -%}
+    """
+
+    private static let hiCall = LLMToolCall(id: "c1", name: "echo", arguments: #"{"text": "hi"}"#)
+    private static let byeCall = LLMToolCall(id: "c2", name: "echo", arguments: #"{"text": "bye"}"#)
+
+    private func assertAlternationTemplateRenders(_ messages: [LlamaChatMessage], rounds: [(LLMToolCall, String)],
+                                                  line: UInt = #line) throws {
+        let renderer = LlamaPromptRenderer(template: Self.gemma3, specialTokens: ["bos_token": "<bos>"],
+                                           tools: [AnyLLMTool(EchoTool())])
+        let rendered = try renderer.render(messages)
+        XCTAssertEqual(rendered.components(separatedBy: "<start_of_turn>model\n").count - 1, 2,
+                       "one model turn for the rounds, then the generation prompt: \(rendered)", line: line)
+        XCTAssertFalse(rendered.contains("<start_of_turn>tool"), rendered, line: line)
+        for (call, result) in rounds {
+            XCTAssertTrue(rendered.contains("{\"name\": \"echo\", \"arguments\": \(call.arguments)}"), rendered,
+                          line: line)
+            XCTAssertTrue(rendered.contains("<tool_response>\n\(result)\n</tool_response>"), rendered, line: line)
+        }
+    }
+
+    func testAlternationTemplatesGetEachTextRoundAsOneAssistantTurn() throws {
+        let one: [LlamaChatMessage] = [.user("Echo hi"), .assistant("", toolCalls: [Self.hiCall]),
+                                       .tool(#"{"text":"hi"}"#)]
+        try assertAlternationTemplateRenders(one, rounds: [(Self.hiCall, #"{"text":"hi"}"#)])
+        try assertAlternationTemplateRenders([.system("Be terse.")] + one, rounds: [(Self.hiCall, #"{"text":"hi"}"#)])
+        let renderer = LlamaPromptRenderer(template: Self.gemma3, specialTokens: ["bos_token": "<bos>"],
+                                           tools: [AnyLLMTool(EchoTool())])
+        XCTAssertEqual(try renderer.render([.system("Be terse.")] + one), """
+        <bos><start_of_turn>user\nBe terse.\n\nEcho hi<end_of_turn>\n<start_of_turn>model\n<tool_call>\n\
+        {"name": "echo", "arguments": {"text": "hi"}}\n</tool_call>\n\
+        You reply to the user using the following results of the invoked function:\n\
+        <tool_response>\n{"text":"hi"}\n</tool_response><end_of_turn>\n<start_of_turn>model\n
+        """)
+    }
+
+    func testAlternationTemplatesGetSeveralTextRoundsAsOneAssistantTurn() throws {
+        let two: [LlamaChatMessage] = [
+            .user("Echo hi, then bye"), .assistant("", toolCalls: [Self.hiCall]), .tool(#"{"text":"hi"}"#),
+            .assistant("", toolCalls: [Self.byeCall]), .tool(#"{"text":"bye"}"#),
+        ]
+        let rounds = [(Self.hiCall, #"{"text":"hi"}"#), (Self.byeCall, #"{"text":"bye"}"#)]
+        try assertAlternationTemplateRenders(two, rounds: rounds)
+        try assertAlternationTemplateRenders([.system("Be terse.")] + two, rounds: rounds)
+    }
+
+    func testATemplatelessGGUFWritesCallsIntoTheTranscript() throws {
+        let call = LLMToolCall(id: "c1", name: "echo", arguments: #"{"text": "hi"}"#)
+        let rendered = try LlamaPromptRenderer(template: nil).render([.user("U"), .assistant("", toolCalls: [call]),
+                                                                      .tool("R")])
+        XCTAssertEqual(rendered, """
+        User: U\n\nAssistant: <tool_call>\n{"name": "echo", "arguments": {"text": "hi"}}\n</tool_call>\n\n\
+        Tool: R\n\nAssistant:
+        """)
     }
 
     func testAConstrainedCallRendersWithoutToolInstructions() throws {

@@ -155,6 +155,99 @@ costs, and the limits.
 > window still cuts the output, and a cut JSON object does not parse. A cancelled constrained call throws
 > `CancellationError`.
 
+### Tool calling (GGUF)
+
+An instance loaded with tools (`ModelManager.shared.load(_:tools:)` with a GGUF model) runs the calls the model
+makes and feeds their results back. `toolLoop` sets how many rounds a turn may run and what a failing tool does:
+
+```swift
+var toolLoop: ToolLoopOptions                         // read when a turn starts; no effect without tools
+var onToolEvent: (@MainActor (ToolEvent) -> Void)?    // read when a turn starts; no effect without tools
+var lastToolTurn: ToolTurnSummary? { get }            // nil without tools, before the first turn, after one that
+                                                      // threw, and after a constrained call
+
+public struct ToolLoopOptions: Sendable, Equatable {
+    static let defaultMaxToolRounds = 1
+    static let `default`: ToolLoopOptions
+    var maxToolRounds: Int                // rounds per turn; negative counts as 0, and 0 runs none
+    var toolErrors: ToolErrorHandling
+    init(maxToolRounds: Int = ToolLoopOptions.defaultMaxToolRounds, toolErrors: ToolErrorHandling = .reportToModel)
+}
+
+public enum ToolErrorHandling: Sendable, Equatable {
+    case reportToModel                    // the model receives {"error": "…"} and the turn goes on (default)
+    case failTurn                         // the turn throws the error
+}
+
+public struct ToolInvocation: Sendable, Equatable, Identifiable {
+    let id: String                        // the parser's call id; a UUID when the model gave none
+    let round: Int                        // 1-based; for a skipped call, the round that did not run
+    let name: String
+    let arguments: String                 // the arguments JSON
+}
+
+public struct ToolCallResult: Sendable, Equatable {
+    let call: ToolInvocation
+    let output: String                    // exactly what the model received
+    let isError: Bool
+}
+
+public enum ToolEvent: Sendable, Equatable {
+    case started(ToolInvocation)
+    case finished(ToolCallResult)
+    case roundLimitReached(skipped: [ToolInvocation])
+}
+
+public struct ToolTurnSummary: Sendable, Equatable {
+    let rounds: Int                       // at most maxToolRounds
+    let results: [ToolCallResult]         // every call that ran, in order
+    let skipped: [ToolInvocation]         // non-empty only when maxToolRounds ended the loop
+}
+```
+
+```swift
+let llm = try await ModelManager.shared.load(.llama3_1_8b_gguf, tools: [WeatherTool()])
+llm.toolLoop = ToolLoopOptions(maxToolRounds: 3)
+llm.onToolEvent = { event in
+    switch event {
+    case .started(let call): print("calling \(call.name) \(call.arguments)")
+    case .finished(let result): print(result.isError ? "failed: \(result.output)" : "got \(result.output)")
+    case .roundLimitReached(let skipped): print("not run: \(skipped.map(\.name))")
+    }
+}
+let answer = try await llm.chat("What should I wear in Lima today?")
+print(llm.lastToolTurn?.rounds ?? 0)
+```
+
+- A **round** is every call in one reply. The calls run one after another, in the order the model wrote them and
+  off the main actor; then the model replies again over the whole conversation, its calls and their results
+  included.
+- The turn ends at a reply that asks for no tools, at a cut reply (`maxTokens`, which every round of the turn
+  shares, or cancellation), or at a reply that asks for tools after `maxToolRounds` rounds. Those last calls do not
+  run: `.roundLimitReached(skipped:)` fires and `lastToolTurn.skipped` lists them. The default, 1, runs as many
+  rounds as before `ToolLoopOptions` existed.
+- Every `.started` is followed by its `.finished` unless the turn throws. Events arrive on the main actor, in order,
+  but not ordered relative to the streamed text.
+- With `.reportToModel` a failing call becomes the result `{"error": "…"}` with `isError` set: the tool's own error
+  description, the argument that did not decode (for example `Invalid arguments for tool "tap": x: expected Int`),
+  or an unknown name with the tools that exist. With `.failTurn` the turn throws after `.finished`: the tool's own
+  error, LocalLLMClient's `ToolError.argumentDecodingFailed`, or `LLMError.invalidParameter` for an unknown tool.
+  A tool that throws `CancellationError` ends the turn with it under either setting.
+- Output reaches the model as JSON with sorted keys and unescaped slashes. A value JSON cannot hold (a `Date`, a
+  custom type, NaN) falls back to `key: value` pairs sorted by key.
+- `ModelManager` never caches an instance with tools, so these settings belong to that instance alone. In a session,
+  `AuraProfile.toolLoop`, `AuraSession.onToolEvent` and `AuraSession.lastToolTurn` do the same (see
+  [AuraSession](#aurasession)).
+
+{: .warning }
+> GGUF only: tools on an MLX model throw `ModelConfigurationError.toolsUnsupported(.mlx)`. Every round prefills the
+> whole conversation again, so a turn with three rounds costs about three prefills. LocalLLMClient keeps only the
+> first call per tool name in one reply, and a tool's output is not capped: a large one makes the oldest exchanges
+> drop out of the window, or overflows it. The native tool-turn format has been checked on Qwen2.5 only. On a
+> template that does not mention `tools`, only the first reply's prompt lists the tools, so chaining to another
+> tool in a later round needs a template with tool support. See
+> [Multi-turn conversations]({{ '/guide/backends' | relative_url }}#multi-turn-conversations-gguf).
+
 ### History Methods
 
 ```swift
@@ -461,6 +554,8 @@ var maxRepairAttempts: Int = 2     // re-prompts after a reply that breaks profi
 func switchProfile(to newProfile: AuraProfile) async throws
 func stream(_ prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<String, Error>
 func cancel()
+var onToolEvent: (@MainActor (ToolEvent) -> Void)?    // handed to the engine when a profile with tools streams
+private(set) var lastToolTurn: ToolTurnSummary?       // the last generation's; with an outputSchema, its last attempt
 ```
 
 `stream` sends `profile.instructions` as the system prompt and defaults `maxTokens` to
@@ -472,6 +567,10 @@ before building or tearing down an engine, whatever `makeEngine` is. One generat
 waiting. A `stream` or `switchProfile` called while a switch is rebuilding the engine waits for it,
 so that stream runs on the new profile. After a switch fails to build its engine, `stream` throws
 `AuraError.modelNotLoaded` until a later `switchProfile` succeeds.
+
+With tools, each stream gives the engine `profile.toolLoop` and `onToolEvent` (see
+[Tool calling](#tool-calling-gguf)); a `switchProfile` to a profile that differs only in `toolLoop` applies it
+without rebuilding the engine.
 
 ### AuraProfile
 
@@ -485,6 +584,7 @@ public struct AuraProfile: Sendable, Identifiable, Equatable {
     var tools: [any LLMTool]            // GGUF only; an MLX model throws ModelConfigurationError
     var outputSchema: OutputSchema?
     var escalation: EscalationPolicy    // default .off
+    var toolLoop: ToolLoopOptions       // default: 1 round; tool errors reported to the model
 }
 
 public enum OutputSchema: Sendable, Equatable, Codable {

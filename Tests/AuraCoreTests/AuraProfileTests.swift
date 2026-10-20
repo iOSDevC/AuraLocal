@@ -57,6 +57,9 @@ final class AuraProfileTests: XCTestCase {
         var hot = SamplingParams.default; hot.temperature = 1.0
         XCTAssertNotEqual(base, AuraProfile(id: "agent", displayName: "Agent", instructions: "do it", model: m, sampling: hot, tools: [TapTool()])) // sampling
         XCTAssertNotEqual(base, AuraProfile(id: "agent", displayName: "Agent", instructions: "do it", model: m, tools: [TapTool()], outputSchema: .json("{}"))) // schema
+        XCTAssertNotEqual(base, AuraProfile(id: "agent", displayName: "Agent", instructions: "do it", model: m, tools: [TapTool()], toolLoop: ToolLoopOptions(maxToolRounds: 3))) // tool loop
+        XCTAssertNotEqual(base, AuraProfile(id: "agent", displayName: "Agent", instructions: "do it", model: m, tools: [TapTool()], toolLoop: ToolLoopOptions(toolErrors: .failTurn))) // tool errors
+        XCTAssertEqual(base.toolLoop, .default)
     }
 
     func testCatalogChatIsPlainAndLocal() {
