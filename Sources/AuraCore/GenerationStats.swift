@@ -14,8 +14,9 @@ public struct GenerationStats: Sendable, Hashable {
         /// the runtime's prefill duration. Decode is timed by AuraLocal from the first token callback to the last.
         case runtime
         /// AuraLocal's monotonic clock around the token stream. Output tokens are counted one per streamed piece,
-        /// which llama.cpp emits once per sampled token; the prompt count is estimated (UTF-8 bytes ÷ 4 of the
-        /// rendered prompt, chat template included), and ``GenerationStats/promptTime`` equals the time to first token.
+        /// which llama.cpp emits once per sampled token; the prompt count is estimated (UTF-8 bytes ÷ 4 of the text
+        /// prefilled: the rendered prompt, chat template included, or only its new part when llama.cpp kept the KV
+        /// cache), and ``GenerationStats/promptTime`` equals the time to first token.
         case measured
         /// Prompt and output counts estimated from text length (UTF-8 bytes ÷ 4). Used when streamed pieces are
         /// not tokens, e.g. llama.cpp with tools registered.

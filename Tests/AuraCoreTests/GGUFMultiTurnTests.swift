@@ -62,7 +62,8 @@ final class GGUFMultiTurnTests: XCTestCase {
         XCTAssertEqual(engine.rebuildCount, 0, "no turn needed a new context")
     }
 
-    func testEveryTurnStartsFromAnEmptyKVCacheAndBatch() async throws {
+    /// A turn whose prompt does not extend what the cache holds (each probe here) starts from an empty cache.
+    func testATurnThatDoesNotExtendTheCacheStartsFromAnEmptyKVCacheAndBatch() async throws {
         let engine = try await makeEngine(context: 2048)
         let fresh = try await promptLength(of: Self.probe, on: engine)
 

@@ -187,6 +187,22 @@ struct LlamaPromptRenderer: Sendable {
                           keepsInstructions: toolRoundsRemain)
     }
 
+    /// Whether the model is asked to write calls as `<tool_call>{"name": …, "arguments": …}</tool_call>`
+    /// (``ToolCallTagParser``): by the injected instructions when the template has no tool support (or there is no
+    /// template), by the template itself when it renders a call that way.
+    var asksForTaggedToolCalls: Bool {
+        guard let template, parsed != nil, template.contains("tools") else { return true }
+        let probe = LLMToolCall(id: "probe", name: "aura_probe_tool", arguments: #"{"probe":1}"#)
+        let messages = LlamaChatNormalizer.normalize([.user("Probe."), .assistant("", toolCalls: [probe])])
+        guard let compiled = try? compiledTemplate(),
+              let rendered = try? withoutTools.render(Self.attempts(for: messages, template: template), with: compiled,
+                                                      nativeTools: true, style: .native, keepsInstructions: false)
+        else { return false }
+        var parser = ToolCallTagParser()
+        _ = parser.consume(rendered)
+        return parser.calls.contains { $0.name == probe.name }
+    }
+
     // MARK: Rendering
 
     private func compiledTemplate() throws -> Template {

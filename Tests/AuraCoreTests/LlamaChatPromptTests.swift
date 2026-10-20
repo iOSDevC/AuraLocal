@@ -238,6 +238,29 @@ final class LlamaChatPromptTests: XCTestCase {
         XCTAssertEqual(LlamaPromptRenderer.patched("A\n\n"), "A\n", "only one, like Jinja")
     }
 
+    /// Qwen2.5's way of writing a call.
+    private static let taggedChatML = """
+    {%- if tools %}{{- 'TOOLS|' }}{%- endif %}{%- for message in messages %}\
+    {%- if message.role == 'assistant' and message.tool_calls %}{{- '<|im_start|>assistant' }}\
+    {%- for tool_call in message.tool_calls %}{{- '\\n<tool_call>\\n{"name": "' + tool_call.function.name \
+    + '", "arguments": ' + (tool_call.function.arguments | tojson) + '}\\n</tool_call>' }}{%- endfor %}\
+    {{- '<|im_end|>\\n' }}{%- else %}{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' }}\
+    {%- endif %}{%- endfor %}{%- if add_generation_prompt %}{{- '<|im_start|>assistant\\n' }}{%- endif %}
+    """
+
+    func testTheTaggedCallFormatIsReadFromTheTemplate() {
+        let tools = [AnyLLMTool(EchoTool())]
+        XCTAssertTrue(LlamaPromptRenderer(template: Self.taggedChatML, tools: tools).asksForTaggedToolCalls)
+        XCTAssertTrue(LlamaPromptRenderer(template: Self.chatML, tools: tools).asksForTaggedToolCalls,
+                      "without tool support the injected instructions ask for <tool_call> JSON")
+        XCTAssertTrue(LlamaPromptRenderer(template: nil, tools: tools).asksForTaggedToolCalls)
+        XCTAssertFalse(LlamaPromptRenderer(template: Self.nativeChatML, tools: tools).asksForTaggedToolCalls,
+                       "a template with its own call format keeps LocalLLMClient's parser")
+        let refusing = "{%- if tools %}{%- endif %}{%- for message in messages %}{%- if message.tool_calls %}"
+            + "{{ raise_exception('no calls') }}{%- endif %}{{- message.content }}{%- endfor %}"
+        XCTAssertFalse(LlamaPromptRenderer(template: refusing, tools: tools).asksForTaggedToolCalls)
+    }
+
     /// ChatML that renders `tool_calls` and keeps the `tool` role, the way Qwen2.5's template does.
     private static let nativeChatML = """
     {%- if tools %}{{- 'TOOLS|' }}{%- endif %}{%- for message in messages %}\
