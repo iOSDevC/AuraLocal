@@ -34,7 +34,7 @@ output as well (see
 [Generation Stats]({{ '/api/core' | relative_url }}#generation-stats)).
 
 {: .warning }
-> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:temperature:topP:onProgress:)`, `AuraProfile.tools`) run only on the GGUF backends; with an MLX model `ModelManager.load` and `AuraSession` throw `ModelConfigurationError.toolsUnsupported(.mlx)` before loading anything. The llama.cpp backends are text-only (an `image:` argument is ignored). Both families pass a multi-turn history with its roles; the llama.cpp backends render it with the GGUF's own chat template (see [Multi-turn conversations](#multi-turn-conversations-gguf)). A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `AuraSession` enforces `AuraProfile.outputSchema` the same way on every backend, by validating each reply and re-prompting, not by constrained decoding; other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). `AuraSession` loads the model with `AuraProfile.sampling`'s `temperature` and `topP` and uses its `maxTokens` per turn; `topK` and `contextOverride` are not applied (see [Sampling](#sampling-temperature-and-top-p)).
+> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:temperature:topP:onProgress:)`, `AuraProfile.tools`) run only on the GGUF backends; with an MLX model `ModelManager.load` and `AuraSession` throw `ModelConfigurationError.toolsUnsupported(.mlx)` before loading anything. The llama.cpp backends are text-only (an `image:` argument is ignored). Both families pass a multi-turn history with its roles; the llama.cpp backends render it with the GGUF's own chat template (see [Multi-turn conversations](#multi-turn-conversations-gguf)). A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `AuraSession` enforces `AuraProfile.outputSchema` on every backend by validating each reply and re-prompting; on `LlamaCppBackend`, for a profile without tools, it also decodes each reply under a grammar built from the schema (see [Schema grammars](#schema-grammars)); other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). `AuraSession` loads the model with `AuraProfile.sampling`'s `temperature` and `topP` and uses its `maxTokens` per turn; `topK` and `contextOverride` are not applied (see [Sampling](#sampling-temperature-and-top-p)).
 
 `BackendKind` also declares `.remote` and `.hybrid`, but no AuraCore API returns them; remote inference goes through `HybridEscalator` (see [Hybrid inference]({{ '/guide/hybrid' | relative_url }})).
 
@@ -285,7 +285,35 @@ iOS it counts toward the jetsam limit, and so does the per-call peak.
 - The prompt is rendered with the model's chat template like an unconstrained call, the system prompt in its own
   turn, but without tool instructions.
 - Only `chat(_:systemPrompt:maxTokens:constraint:)` and `stream(_:systemPrompt:maxTokens:constraint:)` take a
-  constraint; the history, vision and `AuraSession` paths do not.
+  constraint; the history and vision paths do not. `AuraSession` uses one internally for a profile's
+  `outputSchema` (below).
+
+### Schema grammars
+
+For a profile with an `outputSchema` and no tools, `AuraSession` runs every generation, repairs included, through
+the constrained path above with a GBNF grammar that AuraLocal builds from the compiled schema. Validation and
+repair still run on every reply. MLX and layer-streaming keep validation only, and so does
+`AuraSession.usesSchemaGrammar = false`. What the grammar enforces is listed in
+[the API reference]({{ '/api/core' | relative_url }}#schema-grammars).
+
+Measured with `GGUFSchemaGrammarLiveTests` on the same M1 Pro (32 GB, macOS 26.7.1): temperature 0, the person
+schema (`name`, `age` with `minimum: 0`), four one-sentence prompts, `maxRepairAttempts = 0`, two runs per model.
+Times are wall clock per `stream` call. Other builds were loading the machine (1-minute load average 5.5 after the
+first Qwen run and 27–29 after the second runs, whose times are in parentheses), so read them as upper bounds:
+
+| Model | With the grammar | Validation only |
+|---|---|---|
+| Qwen2.5-0.5B-Instruct Q4_K_M (152k-token vocabulary) | 1.00–1.35 s (1.11–2.93 s); 4 of 4 replies conform; 12–18 tokens | 0.41–0.60 s (0.45–0.69 s); 4 of 4 conform; the same replies |
+| SmolLM2-360M-Instruct Q4_K_M (49k-token vocabulary) | 0.54–0.60 s (1.08–1.66 s); 4 of 4 conform; 18–20 tokens | 0.82–0.92 s (1.54–2.32 s); 0 of 4 conform: each reply, 58–61 tokens, restated the schema |
+
+Memory was not measured for schema grammars; the per-call peak above was measured for `.json` only.
+
+- The grammar fixes the member order (required properties in `required` order), so a reply can start differently
+  from what the model would write unprompted. With `required: ["age", "name"]` both models wrote `age` first.
+- `maxTokens` still cuts a reply, and a string or a free-form object can run until it does: on an open-ended prompt
+  under the schema `{}`, Qwen2.5-0.5B repeated members until `maxTokens` (200). A cut reply fails validation and is
+  repaired.
+- Bounds the grammar cannot express (`maximum`, lengths above 64) still cost repairs.
 
 ---
 

@@ -180,8 +180,9 @@ reported, but it is not scored, gated or checked against the receipt:
 - **By rule (the baseline):** the last amount on the last line that names a total and is not a subtotal or tax,
   the first line that names a tax, the first detected date, and the document title or first plain line as the
   merchant.
-- **By a model (`--model`):** temperature 0, a JSON Schema the reply must follow, and the OCR text plus the
-  amounts and dates Data Detection found as the only input.
+- **By a model (`--model`):** temperature 0, a JSON Schema the reply must follow (with a GGUF model, also
+  enforced while decoding by a grammar built from it), and the OCR text plus the amounts and dates Data
+  Detection found as the only input.
 
 Each model field but currency is then checked against the receipt: whether its value is printed there
 ("anchored"). An app can send an unanchored field to review instead of trusting it.
