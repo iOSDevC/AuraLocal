@@ -19,7 +19,8 @@ public struct GenerationStats: Sendable, Hashable {
         /// cache), and ``GenerationStats/promptTime`` equals the time to first token.
         case measured
         /// Prompt and output counts estimated from text length (UTF-8 bytes ÷ 4). Used when streamed pieces are
-        /// not tokens, e.g. llama.cpp with tools registered.
+        /// not tokens, e.g. llama.cpp with tools registered. The prompt count covers the last round's prefill: its
+        /// rendered prompt, or only its new part when llama.cpp kept the KV cache.
         case estimated
 
         /// Short label for display.
@@ -35,7 +36,8 @@ public struct GenerationStats: Sendable, Hashable {
     /// The backend that ran the generation.
     public let backend: BackendKind
     public let source: Provenance
-    /// Tokens in the prompt. Exact only for ``Provenance/runtime``.
+    /// Tokens prefilled for this generation: the whole prompt, or only its new part when a backend kept its KV
+    /// cache; with llama.cpp tool rounds, the last round's. Exact only for ``Provenance/runtime``.
     public let promptTokens: Int
     /// Tokens generated, not counting the stop token.
     public let generatedTokens: Int

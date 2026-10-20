@@ -198,17 +198,19 @@ cache when a new prompt did not extend the cached one, so the cache grew every t
   - a reply cut by `maxTokens`, `shouldStop`, cancellation or backgrounding, or a turn that failed;
   - a history that does not carry the reply exactly as it was returned (AuraLocal's history methods store it as
     returned);
-  - a history whose start changed: each exchange the overflow trimming or `chat(_:in:)`'s `maxContextTokens`
-    drops changes it, so a long conversation that keeps sliding re-prefills on every turn;
+  - a history whose start changed: a turn on which the overflow trimming drops more of the oldest history than the
+    turn before re-prefills. `chat(_:in:)`'s `maxContextTokens` window snaps its oldest kept turn to a stride of up
+    to 4 turns, so its start stays put between moves and only the turns where it moves miss;
   - templates that rewrite earlier assistant turns (Qwen3 strips their `<think>` blocks);
   - a GGUF without special-token types, and any error while decoding the rest (an overflowing context included).
 
-  Constrained calls run on a client of their own and leave the cache as it was. A reused turn continues from the
-  reply's cache as llama.cpp computed it token by token; a full prefill computes the same tokens in one batch, and the
-  two differ slightly, so at temperature 0 a reused turn can now and then pick a different token than a full prefill
-  would. Measured at temperature 0: on Qwen2.5-0.5B Q4_K_M, identical replies in two 10-turn conversations and 1
-  different reply in the 17 reused turns of a 22-turn conversation at a 1024 context; on SmolLM2-360M, identical
-  replies in all three.
+  Constrained calls run on a client of their own and leave the cache as it was. A reused turn keeps the reply's
+  tokens as sampled and as llama.cpp computed them one at a time; a full prefill re-tokenizes the reply text
+  (usually, not always, to the same tokens) and computes it in one batch, so at temperature 0 a reused turn can now
+  and then pick a different token than a full prefill would. Measured at temperature 0: on Qwen2.5-0.5B Q4_K_M,
+  identical replies in two 10-turn conversations and 1 different reply in the 17 reused turns of a 22-turn
+  conversation at a 1024 context, whose prompt was the same tokens either way (so there the computation made the
+  difference); on SmolLM2-360M, identical replies in all three (`GGUFPromptReuseLiveTests`).
 - **Cost:** a full prefill grows linearly with the history: 1.28 s for a 3038-token history with Qwen2.5-0.5B
   Q4_K_M on an M1 Pro (about 0.42 ms per token, measured with other builds running); larger models cost
   proportionally more. A reused turn decodes only its new part: after a system prompt of about 2,400 tokens, the
@@ -231,10 +233,13 @@ cache when a new prompt did not extend the cached one, so the cache grew every t
     without tools, and AuraLocal's parser reads the calls: every call in a reply runs, two to the same tool included;
     a `<tool_call>` block that is not such an object stays in the visible text; arguments reach the tool as JSON with
     sorted keys. The round joins the conversation as the reply exactly as the model wrote it, its `<tool_call>` text
-    included, followed by one tool turn per result, so the next reply's prompt extends the KV cache (see
+    included, followed by one tool turn per result. On a template that renders tool turns natively (Qwen2.5's), the
+    next reply's prompt then goes on from the reply at a special token and extends the KV cache (see
     **Reusing the KV cache**). That holds while another round may run: the reply after the last allowed round (at
-    the default of 1, the reply after the first round) is sent without the tool instructions and re-prefills. A
-    turn with rounds leaves nothing the next turn can reuse, since the conversation keeps only its answer.
+    the default of 1, the reply after the first round) is sent without the tool instructions and re-prefills. On a
+    template without tool support (SmolLM2's, Gemma 3's), each round's results join the reply's assistant turn after
+    a newline, not a special token, so every round re-prefills. A turn with rounds leaves nothing the next turn can
+    reuse, since the conversation keeps only its answer.
     `maxTokens` counts every token the model writes, its calls included. A cut reply stops its decode, as without
     tools.
   - **Other formats** (for example Llama 3.1's, Mistral's and Gemma 4's, and templates that write arguments as XML)

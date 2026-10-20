@@ -191,8 +191,9 @@ final class LlamaCppBackend: InferenceBackend {
     }
 
     /// Frees the model `unload()` dropped once no decode holds it, waiting at most `timeout`; within it the free
-    /// happens here, on the main actor. Past it the model is freed only when that decode ends: with tools it runs to
-    /// the end of generation or of the context, and one parked in the background waits for the app to be active.
+    /// happens here, on the main actor. Past it the model is freed only when that decode ends: with tools on a
+    /// `LlamaClient` it runs to the end of generation or of the context, and one parked in the background waits for
+    /// the app to be active.
     /// A process that exits before then aborts in `ggml_metal_device_free`.
     func awaitRelease(timeout: Duration = .seconds(5)) async {
         let deadline = ContinuousClock.now + timeout

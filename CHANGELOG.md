@@ -146,10 +146,13 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   weights support; memory on macOS is measured instead of assumed.
 - A GGUF turn whose rendered prompt starts with exactly the last turn's prompt and reply, and goes on with a special
   token, decodes only what it adds; any other turn starts from an empty KV cache and re-prefills the history, and so
-  does every turn after a reply that was cut. Tool rounds in the `<tool_call>` JSON format reuse the cache the same
-  way while another round may run. After a ~2,400-token system prompt, Qwen2.5-0.5B's time to the first token stayed
-  near 50 ms instead of about 800 ms (M1 Pro). At temperature 0 a reused turn can now and then pick a different token
-  than a full prefill, since llama.cpp computes the cached reply one token at a time instead of in one batch.
+  does every turn after a reply that was cut. Tool rounds on templates with native tool turns (Qwen2.5's) reuse the
+  cache the same way while another round may run; on templates without tool support each round's results join the
+  reply's assistant turn, so every round re-prefills. After a ~2,400-token system prompt, Qwen2.5-0.5B's time to the
+  first token stayed near 50 ms instead of about 800 ms (M1 Pro). A reused turn keeps the reply's tokens as sampled
+  and as llama.cpp computed them one at a time; a full prefill re-tokenizes the reply text (usually, not always, to
+  the same tokens) and computes it in one batch, so at temperature 0 a reused turn can now and then pick a different
+  token.
 - `aura ask` uses a local llama-server or Ollama by default, or OpenAI, Anthropic or a custom endpoint when named.
 
 ### Fixed
