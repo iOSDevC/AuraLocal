@@ -50,8 +50,8 @@ private final class ToolHostBackend: InferenceBackend, ToolLoopHost {
 
 /// GGUF function-calling plumbing: a host-defined `LLMTool` threads from `AuraLocal(model:tools:)` /
 /// `ModelManager.load(tools:)` all the way to the llama.cpp backend. The model-driven tool loop runs live in
-/// `GGUFMultiTurnTests` (needs AURA_GGUF_TEST_MODEL); here we verify the wiring and that a tool declared
-/// against AuraCore's re-exported API is well-formed.
+/// `GGUFMultiTurnTests` and `GGUFToolLoopLiveTests` (need AURA_GGUF_TEST_MODEL); here we verify the wiring and
+/// that a tool declared against AuraCore's re-exported API is well-formed.
 @MainActor
 final class ToolCallingTests: XCTestCase {
 
