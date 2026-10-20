@@ -32,6 +32,10 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   are `@available(*, unavailable)`, with the reason in the message: none of them ever downloaded a loadable model.
 - Tools on an MLX model throw `ModelConfigurationError.toolsUnsupported(.mlx)` from `ModelManager.load` and
   `AuraSession` instead of being dropped silently. GGUF tool calling is unchanged.
+- **Behaviour change:** AuraUI's `TextChatTab`, `VisionTab` and `OCRTab` and AuraDocs' `DocsTab` no longer download
+  a model without asking. While a model they need is not on disk they show `ModelDownloadPlaceholder` with
+  **Download**; models already on disk load as before. `DocsTab` used to download Qwen3 1.7B and FastVLM (~2 GB)
+  as soon as it appeared. Each tab takes `autoDownload: Bool = false`; pass `true` to keep the old behaviour.
 - Hybrid API, for code written against `v0.1.0` or a revision before 2026-09-30:
   - `OpenAICompatibleProvider.gitHubModels(apiKey:)` and the `cloudTargets` overload taking `gitHubModelsModel:`
     are `@available(*, unavailable)`: GitHub retired GitHub Models on 2026-07-30.
@@ -92,11 +96,8 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 
 ### Changed
 
-- **Behaviour change:** AuraUI's `TextChatTab`, `VisionTab` and `OCRTab` and AuraDocs' `DocsTab` no longer download
-  a model without asking. While a model they need is not on disk they show `ModelDownloadPlaceholder` with
-  **Download**; models already on disk load as before. `DocsTab` used to download Qwen3 1.7B and FastVLM (~2 GB)
-  as soon as it appeared. Each tab takes `autoDownload: Bool = false`; pass `true` to keep the old behaviour.
-  AuraExample's Library and (macOS) Agents tabs ask the same way.
+- AuraExample's Library and (macOS) Agents tabs ask before downloading their models, like the SDK tabs (see
+  Breaking changes).
 - MLX is back: `AuraCore` links mlx-swift-lm again and offers both engines.
 - LocalLLMClient is pinned by revision `edc39ef` (tag 0.5.0, llama.cpp b8851); mlx-swift-lm from 3.31.3;
   ml-stable-diffusion exact 1.1.1; mlx-swift `0.31.3..<0.31.5`.
