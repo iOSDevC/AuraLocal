@@ -10,6 +10,8 @@ public struct OCRTab: View {
     @StateObject private var vm = OCRViewModel()
     @State private var pickerItem: PhotosPickerItem?
     @State private var selectedModel: Model = .fastVLM_0_5b_fp16
+    /// The downloaded-model fallback runs on the first appearance only, so a later one keeps the user's pick.
+    @State private var choseStartModel = false
     private let autoDownload: Bool
 
     /// - Parameter autoDownload: keep the run button for a model that is not downloaded and download it on the first
@@ -72,6 +74,8 @@ public struct OCRTab: View {
             .background(Color.groupedBackground)
         }
         .onAppear {
+            guard !choseStartModel else { return }
+            choseStartModel = true
             if !selectedModel.isDownloaded {
                 selectedModel = Model.specializedModels.first(where: \.isDownloaded) ?? selectedModel
             }

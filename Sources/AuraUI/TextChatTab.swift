@@ -12,6 +12,8 @@ public struct TextChatTab: View {
     @State private var showsSearch = false
     /// Cached: `body` redraws on every streamed token, and the check reads the disk.
     @State private var needsDownload = false
+    /// The downloaded-model fallback runs on the first appearance only, so a later one keeps the user's pick.
+    @State private var choseStartModel = false
     private let offersHuggingFaceSearch: Bool
     private let autoDownload: Bool
 
@@ -93,7 +95,10 @@ public struct TextChatTab: View {
                 }
                 .sheet(isPresented: $showsSearch) { HFSearchSheet() }
                 .onAppear {
-                    if !selectedModel.isDownloaded { selectedModel = preferredModel ?? selectedModel }
+                    if !choseStartModel {
+                        choseStartModel = true
+                        if !selectedModel.isDownloaded { selectedModel = preferredModel ?? selectedModel }
+                    }
                     refreshNeedsDownload()
                 }
                 .onChange(of: revision) {

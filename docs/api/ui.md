@@ -65,8 +65,9 @@ No tab downloads a model until the user asks. When the selected model (or, for `
 `DocsTab.neededModels`) is not on disk, the tab shows AuraCore's `ModelDownloadPlaceholder`: the model, what it is
 for, its size, the free space with a warning when it may not fit, and **Download**. Progress and **Cancel
 download** follow, or the error and **Retry download**; when the files are on disk the tab continues on its own and
-loads the model from there. A model already on disk loads as before, on send, run or (`DocsTab`) appearance. The
-pickers start on a downloaded model when there is one. See
+loads the model from there. A model already on disk loads as before, on send, run or (`DocsTab`) appearance. On
+their first appearance the pickers start on a downloaded model when there is one; after that they keep the user's
+choice, even a catalog model that is downloading or was deleted. See
 [Download on demand]({{ '/api/core' | relative_url }}#download-on-demand) for the view and `OnDemandDownloads`.
 
 Each tab takes `autoDownload: Bool = false`. Pass `true` for the earlier behaviour, where a model that is not on disk

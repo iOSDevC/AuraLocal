@@ -15,6 +15,8 @@ public struct VisionTab: View {
     @State private var selectedModel: Model = .qwen35_0_8b
     @State private var runMode: AuraLocal.VisionRunMode = .standard
     @State private var customPrompt: String = "Describe this image in detail."
+    /// The downloaded-model fallback runs on the first appearance only, so a later one keeps the user's pick.
+    @State private var choseStartModel = false
     private let autoDownload: Bool
 
     /// - Parameter autoDownload: keep the run button for a model that is not downloaded and download it on the first
@@ -40,7 +42,11 @@ public struct VisionTab: View {
             .navigationTitle("Vision")
             .background(Color.groupedBackground)
         }
-        .onAppear { if !selectedModel.isDownloaded { selectedModel = preferredModel ?? selectedModel } }
+        .onAppear {
+            guard !choseStartModel else { return }
+            choseStartModel = true
+            if !selectedModel.isDownloaded { selectedModel = preferredModel ?? selectedModel }
+        }
         .onChange(of: revision) { resetSelectionIfRemoved() }
     }
 
