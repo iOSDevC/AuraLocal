@@ -572,14 +572,18 @@ final class DocsViewModel: ObservableObject {
     private var llm: AuraLocal?
     private var vlm: AuraLocal?
     private var isSetUp = false
+    private var isSettingUp = false
     
     // MARK: - Setup
     
     func setup(autoDownload: Bool) async {
-        // `.task` runs again on every appearance; reloading would repeat the embedding warm-up.
-        guard !isSetUp else { return }
+        // `.task` runs again on every appearance; reloading would repeat the embedding warm-up. The tab's `.task`
+        // and the placeholder's `onReady` can both call this when the models arrived while the tab was hidden.
+        guard !isSetUp, !isSettingUp else { return }
         awaitsDownload = !autoDownload && !DocsTab.neededModels.notDownloaded.isEmpty
         guard !awaitsDownload else { return }
+        isSettingUp = true
+        defer { isSettingUp = false }
         progress = "Loading model..."
         do {
             // Reuse already-loaded models from other tabs via ModelManager
