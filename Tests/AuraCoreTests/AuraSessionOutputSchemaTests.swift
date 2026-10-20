@@ -32,6 +32,54 @@ import XCTest
     func teardown() { didTeardown = true }
 }
 
+/// Records each call's constraint (nil when unconstrained) and replays scripted replies; the last one repeats.
+@MainActor private final class ConstrainedScriptedEngine: AuraProfileEngine, ConstrainedProfileEngine {
+    private let replies: [String]
+    /// Thrown by constrained calls instead of replying.
+    var constrainedError: (any Error)?
+    /// 1-based call that blocks until cancelled, then throws `CancellationError`.
+    var hangOnCall: Int?
+    private(set) var constraints: [GenerationConstraint?] = []
+    private(set) var systemPrompts: [String?] = []
+    private var answered = 0
+
+    init(replies: [String]) { self.replies = replies }
+
+    func generate(prompt: String, systemPrompt: String?, maxTokens: Int,
+                  onDelta: @escaping @MainActor (String) -> Void) async throws {
+        try await reply(constraint: nil, systemPrompt: systemPrompt, onDelta: onDelta)
+    }
+
+    func generate(prompt: String, systemPrompt: String?, maxTokens: Int, constraint: GenerationConstraint,
+                  onDelta: @escaping @MainActor (String) -> Void) async throws {
+        try await reply(constraint: constraint, systemPrompt: systemPrompt, onDelta: onDelta)
+    }
+
+    private func reply(constraint: GenerationConstraint?, systemPrompt: String?,
+                       onDelta: @MainActor (String) -> Void) async throws {
+        constraints.append(constraint)
+        systemPrompts.append(systemPrompt)
+        if constraints.count == hangOnCall {
+            while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(2)) }
+            throw CancellationError()
+        }
+        if constraint != nil, let constrainedError { throw constrainedError }
+        answered += 1
+        onDelta(replies[min(answered, replies.count) - 1])
+    }
+
+    func teardown() {}
+}
+
+private struct EchoTool: LLMTool {
+    let name = "echo"
+    let description = "echo"
+    struct Arguments: Decodable, ToolSchemaGeneratable {
+        static var argumentsSchema: LLMToolArgumentsSchema { [:] }
+    }
+    func call(arguments: Arguments) async throws -> ToolOutput { ToolOutput(data: ["ok": true]) }
+}
+
 private func collect(_ stream: AsyncThrowingStream<String, Error>) async -> (elements: [String], failure: (any Error)?) {
     var elements: [String] = []
     do {
@@ -227,5 +275,153 @@ final class AuraSessionOutputSchemaTests: XCTestCase {
         XCTAssertTrue(result.failure is CancellationError, "got \(String(describing: result.failure))")
         XCTAssertEqual(result.elements, [])
         XCTAssertEqual(engine.prompts.count, 2)
+    }
+}
+
+// MARK: - Schema grammar
+
+extension AuraSessionOutputSchemaTests {
+
+    private static let ana = #"{"name":"Ana","age":30}"#
+
+    private func personGrammar(_ schema: String = personSchema) throws -> GenerationConstraint {
+        .grammar(gbnf: try XCTUnwrap(OutputSchemaValidator(.json(schema)).grammar), root: "root")
+    }
+
+    @MainActor
+    private func waitForCalls(_ count: Int, on engine: ConstrainedScriptedEngine) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now + .seconds(5)
+        while engine.constraints.count < count, clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        XCTAssertEqual(engine.constraints.count, count)
+    }
+
+    @MainActor
+    func testGrammarConstrainsEveryAttemptIncludingRepairs() async throws {
+        let engine = ConstrainedScriptedEngine(replies: [#"{"name":7,"age":30}"#, Self.ana])
+        let session = try await AuraSession(profile: extractor()) { _ in engine }
+        XCTAssertTrue(session.usesSchemaGrammar)
+
+        let result = await collect(session.stream("Ana is 30."))
+
+        XCTAssertNil(result.failure)
+        XCTAssertEqual(result.elements, [Self.ana])
+        let grammar = try personGrammar()
+        XCTAssertEqual(engine.constraints, [grammar, grammar])
+        let system = try XCTUnwrap(engine.systemPrompts.first ?? nil)
+        XCTAssertTrue(system.contains("Reply with a single JSON value that conforms to this JSON Schema, no prose:"))
+        XCTAssertEqual(engine.systemPrompts[1], engine.systemPrompts[0])
+    }
+
+    @MainActor
+    func testUsesSchemaGrammarFalseValidatesOnly() async throws {
+        let engine = ConstrainedScriptedEngine(replies: ["nope", Self.ana])
+        let session = try await AuraSession(profile: extractor()) { _ in engine }
+        session.usesSchemaGrammar = false
+
+        let result = await collect(session.stream("Ana is 30."))
+
+        XCTAssertEqual(result.elements, [Self.ana])
+        XCTAssertEqual(engine.constraints, [nil, nil])
+    }
+
+    @MainActor
+    func testProfilesWithToolsAreNotConstrained() async throws {
+        let engine = ConstrainedScriptedEngine(replies: [Self.ana])
+        let profile = AuraProfile(id: "agent", displayName: "Agent", instructions: "", model: ggufModel(),
+                                  tools: [EchoTool()], outputSchema: .json(Self.personSchema))
+        let session = try await AuraSession(profile: profile) { _ in engine }
+
+        let result = await collect(session.stream("Ana is 30."))
+
+        XCTAssertEqual(result.elements, [Self.ana])
+        XCTAssertEqual(engine.constraints, [nil])
+    }
+
+    @MainActor
+    func testUnsupportedBackendFallsBackInTheSameAttempt() async throws {
+        let engine = ConstrainedScriptedEngine(replies: [Self.ana])
+        engine.constrainedError = GenerationConstraintError.unsupportedBackend(.mlx)
+        let session = try await AuraSession(profile: extractor()) { _ in engine }
+        session.maxRepairAttempts = 0
+
+        let first = await collect(session.stream("Ana is 30."))
+        let second = await collect(session.stream("Ana is 30."))
+
+        XCTAssertEqual(first.elements, [Self.ana])
+        XCTAssertEqual(second.elements, [Self.ana])
+        XCTAssertEqual(engine.constraints, [try personGrammar(), nil, nil])
+    }
+
+    @MainActor
+    func testRejectedGrammarIsNotRetriedUntilASuccessfulSwitch() async throws {
+        let rejecting = ConstrainedScriptedEngine(replies: [Self.ana])
+        rejecting.constrainedError = GenerationConstraintError.invalidGrammar(root: "root")
+        let accepting = ConstrainedScriptedEngine(replies: [Self.ana])
+        var engines = [rejecting, accepting]
+        let session = try await AuraSession(profile: extractor()) { _ in engines.removeFirst() }
+        let grammar = try personGrammar()
+
+        _ = await collect(session.stream("Ana is 30."))
+        _ = await collect(session.stream("Ana is 30."))
+        try await session.switchProfile(to: extractor())          // same profile: a no-op, still refused
+        _ = await collect(session.stream("Ana is 30."))
+        XCTAssertEqual(rejecting.constraints, [grammar, nil, nil, nil])
+
+        var renamed = extractor()
+        renamed.displayName = "Extract again"
+        try await session.switchProfile(to: renamed)
+        let result = await collect(session.stream("Ana is 30."))
+
+        XCTAssertEqual(result.elements, [Self.ana])
+        XCTAssertEqual(accepting.constraints, [grammar])
+    }
+
+    @MainActor
+    func testCancellationOnTheConstrainedPathIsNotAFallback() async throws {
+        let engine = ConstrainedScriptedEngine(replies: [Self.ana])
+        engine.hangOnCall = 1
+        let session = try await AuraSession(profile: extractor()) { _ in engine }
+        let grammar = try personGrammar()
+
+        let stream = session.stream("Ana is 30.")
+        try await waitForCalls(1, on: engine)
+        session.cancel()
+        let cancelled = await collect(stream)
+
+        XCTAssertTrue(cancelled.failure is CancellationError, "got \(String(describing: cancelled.failure))")
+        XCTAssertEqual(engine.constraints, [grammar])
+
+        let next = await collect(session.stream("Ana is 30."))
+        XCTAssertEqual(next.elements, [Self.ana])
+        XCTAssertEqual(engine.constraints, [grammar, grammar])
+    }
+
+    @MainActor
+    func testUnsatisfiableSchemaRunsUnconstrained() async throws {
+        let engine = ConstrainedScriptedEngine(replies: [Self.ana])
+        let session = try await AuraSession(profile: extractor(schema: "false")) { _ in engine }
+        session.maxRepairAttempts = 0
+
+        let result = await collect(session.stream("Ana is 30."))
+
+        XCTAssertTrue(result.failure is OutputSchemaError)
+        XCTAssertEqual(engine.constraints, [nil])
+    }
+
+    @MainActor
+    func testPlainEnginesKeepTheValidationOnlyPath() async throws {
+        let engine = ScriptedEngine(replies: ["nope", Self.ana])
+        let session = try await AuraSession(profile: extractor()) { _ in engine }
+        XCTAssertTrue(session.usesSchemaGrammar)
+
+        let result = await collect(session.stream("Ana is 30."))
+
+        XCTAssertNil(result.failure)
+        XCTAssertEqual(result.elements, [Self.ana])
+        XCTAssertEqual(engine.prompts.count, 2)
+        XCTAssertEqual(engine.systemPrompts[1], engine.systemPrompts[0])
     }
 }

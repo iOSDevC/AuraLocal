@@ -19,17 +19,39 @@ import LocalLLMClientCore
 extension AuraLocal: AuraProfileEngine {
     public func generate(prompt: String, systemPrompt: String?, maxTokens: Int,
                          onDelta: @escaping @MainActor (String) -> Void) async throws {
-        var last = 0
-        _ = try await engine.generate(prompt: prompt, systemPrompt: systemPrompt, maxTokens: maxTokens) { @MainActor partial in
-            let delta = String(partial.dropFirst(last))   // engine reports the cumulative text; emit the new tail
-            last = partial.count
-            if !delta.isEmpty { onDelta(delta) }
-        }
+        try await generateDeltas(prompt: prompt, systemPrompt: systemPrompt, maxTokens: maxTokens, constraint: nil,
+                                 onDelta: onDelta)
     }
 
     /// Route teardown through `ModelManager` so a SHARED cached instance is evicted (not left a torn-down zombie
     /// in the cache); an owned tool-enabled instance is just unloaded. Identity-checked, so this is safe + idempotent.
     public func teardown() { ModelManager.shared.release(self) }
+}
+
+/// An engine that can decode under a GenerationConstraint; AuraSession uses it for OutputSchema grammars.
+@MainActor protocol ConstrainedProfileEngine: AuraProfileEngine {
+    func generate(prompt: String, systemPrompt: String?, maxTokens: Int, constraint: GenerationConstraint,
+                  onDelta: @escaping @MainActor (String) -> Void) async throws
+}
+
+extension AuraLocal: ConstrainedProfileEngine {
+    func generate(prompt: String, systemPrompt: String?, maxTokens: Int, constraint: GenerationConstraint,
+                  onDelta: @escaping @MainActor (String) -> Void) async throws {
+        try await generateDeltas(prompt: prompt, systemPrompt: systemPrompt, maxTokens: maxTokens,
+                                 constraint: constraint, onDelta: onDelta)
+    }
+
+    private func generateDeltas(prompt: String, systemPrompt: String?, maxTokens: Int,
+                                constraint: GenerationConstraint?,
+                                onDelta: @escaping @MainActor (String) -> Void) async throws {
+        var last = 0
+        _ = try await engine.generate(prompt: prompt, systemPrompt: systemPrompt, maxTokens: maxTokens,
+                                      constraint: constraint) { @MainActor partial in
+            let delta = String(partial.dropFirst(last))   // engine reports the cumulative text; emit the new tail
+            last = partial.count
+            if !delta.isEmpty { onDelta(delta) }
+        }
+    }
 }
 
 // MARK: - AuraSession
@@ -51,6 +73,9 @@ extension AuraLocal: AuraProfileEngine {
     /// With an ``AuraProfile/outputSchema``, how many times ``stream(_:maxTokens:)`` re-prompts after a reply that
     /// breaks the schema. Each repair is a full extra generation. Negative values count as 0.
     public var maxRepairAttempts = 2
+    /// With an outputSchema and no tools, each generation on a GGUF model loaded in full is constrained by a grammar
+    /// built from the schema; validation and repair still run. Set false to validate and repair only.
+    public var usesSchemaGrammar = true
 
     private var engine: any AuraProfileEngine
     /// The active profile's compiled schema; `nil` streams plain deltas.
@@ -58,6 +83,8 @@ extension AuraLocal: AuraProfileEngine {
     /// The last generation or engine rebuild, kept even after ``cancel()``. Each new stream or switch awaits it
     /// before touching the engine, so work runs one at a time on the shared llama.cpp context.
     private var inFlight: Task<Void, Never>?
+    /// The engine refused the schema grammar; cleared by a successful switch.
+    private var grammarRefused = false
     /// Switches queued or running; while any is, a switch to the current profile is not a no-op.
     private var pendingSwitches = 0
     /// True after a failed rebuild — the engine is torn down; allows a retry to ANY profile (even the current one)
@@ -142,6 +169,7 @@ extension AuraLocal: AuraProfileEngine {
         switchFailed = false
         profile = newProfile
         validator = newValidator
+        grammarRefused = false
     }
 
     /// Stream a completion, injecting the ACTIVE profile's persona as the system prompt (the persona lives on the
@@ -152,7 +180,8 @@ extension AuraLocal: AuraProfileEngine {
     /// each generation is buffered, and its JSON is extracted and validated. A reply that breaks the schema is
     /// re-prompted with its violations up to ``maxRepairAttempts`` times. The stream then yields exactly one
     /// element, the conforming JSON text, or finishes throwing ``OutputSchemaError/violations(output:violations:)``
-    /// for the last attempt.
+    /// for the last attempt. On a GGUF model loaded in full, and without tools, generations are constrained by a
+    /// grammar derived from the schema (see ``usesSchemaGrammar``); every reply is still validated.
     public func stream(_ prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<String, Error> {
         let repairs = max(0, maxRepairAttempts)
         let prior = inFlight
@@ -188,8 +217,9 @@ extension AuraLocal: AuraProfileEngine {
         let tokens = maxTokens ?? profile.sampling.maxTokens
         if let validator {
             let system = Self.systemPrompt(profile.instructions, schema: validator.source)
-            let json = try await Self.conformingReply(to: prompt, system: system, maxTokens: tokens,
-                                                      repairs: repairs, engine: engine, validator: validator)
+            let json = try await conformingReply(to: prompt, system: system, maxTokens: tokens, repairs: repairs,
+                                                 engine: engine, validator: validator,
+                                                 grammar: schemaGrammar(for: validator, engine: engine))
             continuation.yield(json)
         } else {
             try await engine.generate(prompt: prompt, systemPrompt: profile.instructions, maxTokens: tokens) { delta in
@@ -203,14 +233,16 @@ extension AuraLocal: AuraProfileEngine {
 
 extension AuraSession {
     /// Generate, validate, and re-prompt with the violations until a reply conforms or the repairs run out.
-    private static func conformingReply(to prompt: String, system: String, maxTokens: Int, repairs: Int,
-                                        engine: any AuraProfileEngine,
-                                        validator: OutputSchemaValidator) async throws -> String {
+    private func conformingReply(to prompt: String, system: String, maxTokens: Int, repairs: Int,
+                                 engine: any AuraProfileEngine, validator: OutputSchemaValidator,
+                                 grammar: String?) async throws -> String {
+        var grammar = grammar
         var request = prompt
         var attempt = 0
         while true {
             try Task.checkCancellation()
-            let output = try await bufferedReply(to: request, system: system, maxTokens: maxTokens, engine: engine)
+            let output = try await bufferedReply(to: request, system: system, maxTokens: maxTokens, engine: engine,
+                                                 grammar: &grammar)
             try Task.checkCancellation()              // a cancelled decode may return early instead of throwing
             let failure: OutputSchemaError
             switch validator.check(output) {
@@ -219,17 +251,39 @@ extension AuraSession {
             }
             guard attempt < repairs else { throw failure }
             attempt += 1
-            request = repairPrompt(for: prompt, after: failure)
+            request = Self.repairPrompt(for: prompt, after: failure)
         }
     }
 
-    private static func bufferedReply(to prompt: String, system: String, maxTokens: Int,
-                                      engine: any AuraProfileEngine) async throws -> String {
+    /// A refused grammar (unsupported backend, or a GBNF llama.cpp rejects) falls back to an unconstrained
+    /// generation in the same attempt, and `grammar` is cleared so later attempts skip it.
+    private func bufferedReply(to prompt: String, system: String, maxTokens: Int,
+                               engine: any AuraProfileEngine, grammar: inout String?) async throws -> String {
         var reply = ""
+        if let gbnf = grammar, let constrained = engine as? any ConstrainedProfileEngine {
+            let constraint = GenerationConstraint.grammar(gbnf: gbnf, root: OutputSchemaGrammar.rootRule)
+            do {
+                try await constrained.generate(prompt: prompt, systemPrompt: system, maxTokens: maxTokens,
+                                               constraint: constraint) { delta in
+                    reply += delta
+                }
+                return reply
+            } catch is GenerationConstraintError {
+                grammarRefused = true
+                grammar = nil
+                reply = ""
+            }
+        }
         try await engine.generate(prompt: prompt, systemPrompt: system, maxTokens: maxTokens) { delta in
             reply += delta
         }
         return reply
+    }
+
+    private func schemaGrammar(for validator: OutputSchemaValidator, engine: any AuraProfileEngine) -> String? {
+        guard usesSchemaGrammar, !grammarRefused, profile.tools.isEmpty,
+              engine is any ConstrainedProfileEngine else { return nil }
+        return validator.grammar
     }
 
     private static func systemPrompt(_ instructions: String, schema: String) -> String {

@@ -28,6 +28,16 @@ final class OutputSchemaValidatorTests: XCTestCase {
 
     private func paths(_ found: [OutputSchemaViolation]) -> [String] { found.map(\.path) }
 
+    func testValidatorExposesItsGrammar() throws {
+        let person = try compile(#"{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}"#)
+        let grammar = try XCTUnwrap(person.grammar)
+        XCTAssertTrue(grammar.hasPrefix("root ::= "))
+        XCTAssertTrue(grammar.contains(#"s1 ::= "\"name\"" ws ":" ws jstring"#))
+        XCTAssertTrue(grammar.hasSuffix(OutputSchemaGrammar.baseRules))
+        XCTAssertNil(try compile("false").grammar)
+        XCTAssertEqual(try compile("{}").grammar, "root ::= jvalue\n" + OutputSchemaGrammar.baseRules)
+    }
+
     // MARK: Keywords
 
     func testTypeAcceptsSingleNamesAndArrays() throws {

@@ -31,7 +31,7 @@ Research notes, not a shipped feature: [Distributed inference](docs/guide/distri
 - **Multilingual dense RAG (opt-in)** — `AutoEmbeddingProvider(embeddingModelAt:)` swaps TF-IDF for multilingual-e5-small via Core ML; the index re-embeds itself when the provider changes.
 - **On-device image generation** — `CoreMLDiffusionEngine` (AuraImageGen) runs Core ML Stable Diffusion 2.1 base on iPhone and Mac after a one-time ~1.07 GB download, or a Core ML SD 1.x/2.x folder from Hugging Face that `CoreMLDiffusionInspector` judges runnable; FLUX + LoRA via mflux on macOS. See [Image Generation](#image-generation).
 - **Stops when an iOS app backgrounds** — running MLX, llama.cpp and Core ML generations are cancelled and throw `GenerationInterrupted` with the text so far; an opt-in `DeviceConditions` guard stops on critical heat. See [Background Lifecycle](#background-lifecycle-ios).
-- **Constrained and structured output** — a GGUF loaded in full takes `constraint: .json` or a GBNF grammar; `AuraSession` checks replies against a profile's `OutputSchema` and re-prompts with the violations (validation and repair, not constrained decoding). See [Structured output](docs/api/core.md#structured-output).
+- **Constrained and structured output** — a GGUF loaded in full takes `constraint: .json` or a GBNF grammar; `AuraSession` constrains decoding on a GGUF loaded in full with a grammar built from a profile's `OutputSchema` (profiles without tools) and still validates and repairs, re-prompting with the violations; MLX and layer-streaming validate and repair only. See [Structured output](docs/api/core.md#structured-output).
 - **Model downloads** — `ModelDownloads` fetches GGUF and MLX models without loading them, resumes `.partial` files across relaunches (restarting when the file's ETag changes), sends the Keychain Hugging Face token and checks free space; `DownloadRecords` keeps them across launches. See [Downloading without loading](docs/guide/models.md#downloading-without-loading).
 
 ---
@@ -1248,7 +1248,7 @@ AuraCore
 ├── GGUFModelDownloader     →  HuggingFace downloads with resume + @Published progress
 ├── Downloads/              →  ModelDownloads (resumable GGUF + MLX, ETag, HF token, free space) · DownloadRecords
 ├── Lifecycle/              →  GenerationInterrupted · DeviceConditions
-├── AuraSession             →  profile-driven turns; OutputSchema validated + repaired
+├── AuraSession             →  profile-driven turns; OutputSchema grammar (GGUF) + validated + repaired
 │
 ├── Hybrid/ + Remote/       →  HybridEscalator, EscalationRouter, providers, CostLedger
 ├── SystemTools/            →  Vision · NaturalLanguage · SoundAnalysis · Core ML · Create ML tools, SystemToolRegistry

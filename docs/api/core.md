@@ -550,6 +550,7 @@ init(conversationID: UUID = UUID(),
 let conversationID: UUID
 private(set) var profile: AuraProfile
 var maxRepairAttempts: Int = 2     // re-prompts after a reply that breaks profile.outputSchema
+var usesSchemaGrammar: Bool = true // GGUF in full, no tools: decode under a grammar built from outputSchema
 
 func switchProfile(to newProfile: AuraProfile) async throws
 func stream(_ prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<String, Error>
@@ -597,21 +598,22 @@ common profiles.
 
 ### Structured output
 
-With `outputSchema` set, `AuraSession` enforces the schema by **validation and repair**, not
-constrained decoding, so the model can still write anything and the session checks what comes
-back. AuraLocal has no JSON-Schema-to-GBNF converter, MLX exposes only a raw `LogitProcessor` hook,
-and the `AuraProfileEngine` a session drives takes no constraint. On a GGUF model,
-`AuraLocal.chat(_:constraint: .json)` (see [Constrained Generation](#constrained-generation)) guarantees
-JSON syntax, but not your schema.
+With `outputSchema` set, `AuraSession` enforces the schema by **validation and repair** on every
+backend. On a GGUF model loaded in full (`LlamaCppBackend`), and for a profile without tools, it also
+**constrains decoding** with a GBNF grammar that AuraLocal builds from the compiled schema (see
+[Schema grammars](#schema-grammars) below). Elsewhere the model can write anything, and the session
+checks what comes back.
 
 1. `init` and `switchProfile` compile the schema before building an engine. A schema that does not
    compile throws `OutputSchemaError` and leaves the current profile and engine untouched. A
    `switchProfile` that fails to build the new engine has already torn the old one down; the
    session recovers on the next successful `switchProfile`.
 2. `stream` appends the schema to the system prompt with an instruction to reply with a single
-   JSON value, buffers the whole reply, and looks for a conforming JSON value in it (see below).
+   JSON value, decodes under the schema grammar when it applies, buffers the whole reply, and looks
+   for a conforming JSON value in it (see below).
 3. A reply that breaks the schema is sent back with the original prompt and the list of
-   violations, up to `maxRepairAttempts` times. Each repair is a full extra generation.
+   violations, up to `maxRepairAttempts` times. Each repair is a full extra generation, under the
+   grammar too.
 4. The stream yields **one** element, the conforming JSON text, or finishes throwing
    `OutputSchemaError.violations(output:violations:)` for the last reply.
 
@@ -687,6 +689,50 @@ Parsing is strict RFC 8259: trailing commas, comments, single quotes, `NaN` and 
 names make a candidate not JSON, so the text `conformingJSON` returns reads the same in any
 conforming parser. Nesting deeper than 512 levels is rejected. Numbers compare as exact decimals:
 `9007199254740993` does not equal `9007199254740992`, and `1e400` is a valid number.
+
+#### Schema grammars
+
+For a profile with an `outputSchema` and no tools, every generation, repairs included, runs under the
+schema's grammar on the dedicated client described in [Constrained Generation](#constrained-generation).
+The grammar applies when the session's engine is an `AuraLocal` (the default `liveEngine` returns one);
+an engine of your own keeps validation only. It does not apply, and the session validates and repairs
+only, when:
+
+- the model runs on MLX or layer-streaming. Their `GenerationConstraintError.unsupportedBackend` is not
+  an error here: the same attempt runs unconstrained, and the session stops asking for the grammar until
+  a `switchProfile` rebuilds the engine. A grammar llama.cpp rejects (`invalidGrammar`) is handled the same
+  way;
+- the profile has tools, because the constrained client runs without them;
+- `usesSchemaGrammar` is `false`;
+- the schema admits no value (`false`, `minLength` above `maxLength`, …), so there is no grammar.
+
+The grammar admits only JSON syntax and narrows it by what GBNF can express:
+
+| Enforced by the grammar | Left to validation |
+|-------------------------|--------------------|
+| `type`, including arrays of types; `enum`, `const` | `maximum`, `exclusiveMaximum` |
+| `properties`, `required`, `additionalProperties`, `items` | Any other part of `minimum` and `exclusiveMinimum` |
+| `minItems`, `maxItems`, `minLength`, `maxLength` up to 64 | Those bounds above 64 |
+| No minus sign under a `minimum` or `exclusiveMinimum` of 0 or more; for an integer, no `0` under an `exclusiveMinimum` of 0 or more or a `minimum` of 1 or more | `oneOf` exclusivity, `allOf` with several branches |
+| `anyOf` or `oneOf` as alternatives, and a one-branch `allOf`, in a schema with no other keywords | Combinators next to other keywords |
+
+Objects carry only their declared properties, even when `additionalProperties` allows more: required
+ones first, in `required` order, then the optional ones sorted by name. That order can differ from the
+one the model would write unprompted, which may cost answer quality. An object admits any members
+instead when it has more than 16 properties and none required, or when its combinators name a
+property it does not declare (unless `additionalProperties` is `false`). A property, `items` or
+`additionalProperties` schema that a combinator next to it also constrains admits any value. A free-form
+object can repeat a member name, which validation then rejects. A grammar of more than 512 rules or 64 KiB
+admits any JSON value.
+
+Numbers have no digit limit. A string admits no `\u` escape of a UTF-16 surrogate, so each character
+it admits is one Unicode scalar, as `minLength` and `maxLength` count them; a character outside the
+Basic Multilingual Plane is written as UTF-8.
+
+Each constrained generation builds a dedicated llama.cpp client and samples the grammar over the whole
+vocabulary; [Schema grammars]({{ '/guide/backends' | relative_url }}#schema-grammars) in the backends guide
+has measured costs. A reasoning model cannot open a `<think>` block under the grammar; set
+`usesSchemaGrammar = false` for one that needs it.
 
 {: .warning }
 > Validation checks shape, not truth: a conforming reply can still hold wrong values. A small model
