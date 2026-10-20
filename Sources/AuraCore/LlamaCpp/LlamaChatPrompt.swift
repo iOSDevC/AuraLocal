@@ -155,7 +155,8 @@ struct LlamaPromptRenderer: Sendable {
     private enum ToolTurnStyle {
         /// Assistant `tool_calls` and `tool` turns, which templates with tool support render in their own format.
         case native
-        /// Calls as `<tool_call>` text and the last result as an assistant `<tool_response>`, as LocalLLMClient sends.
+        /// Each round as one assistant turn: its calls as `<tool_call>` text, its results as `<tool_response>` (the
+        /// wrapping LocalLLMClient gives the last result).
         case text
     }
 
@@ -326,11 +327,53 @@ struct LlamaPromptRenderer: Sendable {
                                  at: 0)
             }
         }
-        if style == .text, lastIsTool, let index = processed.indices.last {
-            processed[index]["role"] = LlamaChatMessage.Speaker.assistant.rawValue
-            processed[index]["content"] = Self.wrappingToolResponse(processed[index]["content"])
+        return style == .text ? Self.foldingToolRounds(processed) : processed
+    }
+
+    /// Each round (its calls and results) becomes one assistant turn: alternation templates such as Gemma 3's raise
+    /// on a `tool` role and on two assistant turns in a row.
+    private static func foldingToolRounds(_ messages: [[String: any Sendable]]) -> [[String: any Sendable]] {
+        let assistant = LlamaChatMessage.Speaker.assistant.rawValue
+        var folded: [[String: any Sendable]] = []
+        for (index, message) in messages.enumerated() {
+            var entry = message
+            if entry["role"] as? String == LlamaChatMessage.Speaker.tool.rawValue {
+                entry["role"] = assistant
+                entry["content"] = index == messages.count - 1
+                    ? wrappingToolResponse(entry["content"]) : taggingToolResponse(entry["content"])
+            }
+            if entry["role"] as? String == assistant, let previous = folded.last,
+               previous["role"] as? String == assistant {
+                folded[folded.count - 1]["content"] = joining(previous["content"], entry["content"])
+            } else {
+                folded.append(entry)
+            }
         }
-        return processed
+        return folded
+    }
+
+    private static func joining(_ first: (any Sendable)?, _ second: (any Sendable)?) -> any Sendable {
+        if var parts = first as? [[String: String]], !parts.isEmpty {
+            parts[0]["text"] = joinedLines(text(of: first), text(of: second))
+            return parts
+        }
+        return joinedLines(text(of: first), text(of: second))
+    }
+
+    private static func text(of content: (any Sendable)?) -> String {
+        (content as? String) ?? (content as? [[String: String]])?.first?["text"] ?? ""
+    }
+
+    private static func joinedLines(_ first: String, _ second: String) -> String {
+        first.isEmpty ? second : second.isEmpty ? first : first + "\n" + second
+    }
+
+    private static func taggingToolResponse(_ content: (any Sendable)?) -> any Sendable {
+        if var parts = content as? [[String: String]], let text = parts.first?["text"] {
+            parts[0]["text"] = "<tool_response>\n\(text)\n</tool_response>"
+            return parts
+        }
+        return "<tool_response>\n\((content as? String) ?? "")\n</tool_response>"
     }
 
     private static func systemIndex(in messages: [[String: any Sendable]]) -> Int? {

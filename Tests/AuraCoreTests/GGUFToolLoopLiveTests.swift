@@ -69,9 +69,10 @@ final class GGUFToolLoopLiveTests: XCTestCase {
         guard let call = turn.results.first?.call else { throw XCTSkip("the model made no tool call") }
 
         XCTAssertTrue(reply.prompt.contains("<|im_start|>assistant\n<tool_call>\n{\"name\": \"echo\", \"arguments\": "
-                                            + call.arguments + "}\n</tool_call><|im_end|>"), reply.prompt)
-        XCTAssertTrue(reply.prompt.contains("<|im_start|>assistant\n<tool_response>\n"), reply.prompt)
-        XCTAssertFalse(reply.prompt.contains("<|im_start|>tool"), "the only result is sent as an assistant turn")
+                                            + call.arguments + "}\n</tool_call>\n<tool_response>\n"), reply.prompt)
+        XCTAssertEqual(reply.prompt.components(separatedBy: "<|im_start|>assistant\n").count - 1, 2,
+                       "the round is one assistant turn, then the generation prompt")
+        XCTAssertFalse(reply.prompt.contains("<|im_start|>tool"), "the result is sent in the round's assistant turn")
     }
 
     func testChainUpToThreeRounds() async throws {
