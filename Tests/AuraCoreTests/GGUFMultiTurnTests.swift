@@ -308,7 +308,8 @@ final class GGUFMultiTurnTests: XCTestCase {
 
     /// Each cut reply decodes on to end of generation before the next turn starts; a small window bounds that wait.
     func testToolTurnsCutShortLeaveTheNextTurnHealthy() async throws {
-        let engine = try await makeToolEngine(context: 1024)
+        // Greedy: a sampled 4-token cut can be all whitespace or a held-back <tool_call> start, leaving no visible text.
+        let engine = try await makeToolEngine(context: 1024, temperature: 0)
         let requests = (0..<3).map { [LlamaChatMessage.user("Write a long story number \($0).")] }
         for request in requests {
             let cut = try await engine.respond(to: request, maxTokens: 4, shouldStop: nil) { _ in }
