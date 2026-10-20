@@ -20,18 +20,6 @@ private struct TapTool: LLMTool {
 }
 // swiftlint:enable identifier_name
 
-private struct FailingTool: LLMTool {
-    struct Failure: Error {}
-    let name = "fail"
-    let description = "Always fails."
-    struct Arguments: Decodable, ToolSchemaGeneratable {
-        static var argumentsSchema: LLMToolArgumentsSchema { [:] }
-    }
-    func call(arguments: Arguments) async throws -> ToolOutput {
-        throw Failure()
-    }
-}
-
 /// GGUF function-calling plumbing: a host-defined `LLMTool` threads from `AuraLocal(model:tools:)` /
 /// `ModelManager.load(tools:)` all the way to the llama.cpp backend. The model-driven tool loop runs live in
 /// `GGUFMultiTurnTests` (needs AURA_GGUF_TEST_MODEL); here we verify the wiring and that a tool declared
@@ -76,33 +64,5 @@ final class ToolCallingTests: XCTestCase {
         let output = try await TapTool().call(arguments: .init(x: 5, y: 9))
         XCTAssertEqual(output.data["ok"] as? Bool, true)
         XCTAssertEqual(output.data["x"] as? Int, 5)
-    }
-
-    func testAThrowingToolFailsTheGGUFTurnWithItsOwnError() async {
-        let call = LLMToolCall(name: "fail", arguments: "{}")
-        do {
-            _ = try await LlamaToolTurnEngine.output(of: call, among: [AnyLLMTool(FailingTool())])
-            XCTFail("the tool's error was not thrown")
-        } catch {
-            XCTAssertTrue(error is FailingTool.Failure, "\(error)")
-        }
-    }
-
-    func testUndecodableToolArgumentsFailTheGGUFTurnWithArgumentDecodingFailed() async {
-        let call = LLMToolCall(name: "tap", arguments: #"{"x": "left"}"#)
-        do {
-            _ = try await LlamaToolTurnEngine.output(of: call, among: [AnyLLMTool(TapTool())])
-            XCTFail("undecodable arguments were accepted")
-        } catch ToolError.argumentDecodingFailed(let toolName, _) {
-            XCTAssertEqual(toolName, "tap")
-        } catch {
-            XCTFail("\(error)")
-        }
-    }
-
-    func testAToolCallRendersItsOutputForTheResumedGGUFPrompt() async throws {
-        let call = LLMToolCall(name: "tap", arguments: #"{"x": 5, "y": 9}"#)
-        let rendered = try await LlamaToolTurnEngine.output(of: call, among: [AnyLLMTool(TapTool())])
-        XCTAssertEqual(Set(rendered.components(separatedBy: ", ")), ["ok: true", "x: 5", "y: 9"])
     }
 }

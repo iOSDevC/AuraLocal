@@ -29,6 +29,9 @@ final class LayerStreamingBackend: InferenceBackend {
     private let memoryManager: MemoryBudgetManager
     private let tools: [any LLMTool]
     private(set) var lastGenerationStats: GenerationStats?
+    var toolLoop = ToolLoopOptions.default
+    var onToolEvent: (@MainActor (ToolEvent) -> Void)?
+    private(set) var lastToolTurn: ToolTurnSummary?
 
     var isLoaded: Bool { engine != nil }
     /// Tool names registered for function-calling — a testable view of what was threaded in (empty = none).
@@ -128,16 +131,20 @@ final class LayerStreamingBackend: InferenceBackend {
             let memoryManager = memoryManager
 
             lastGenerationStats = nil
+            lastToolTurn = nil
+            let loop = ToolLoopContext(options: toolLoop, onEvent: onToolEvent)
             let reply = try await engine.measuredTurn(
                 conversation,
                 maxTokens: safeMaxTokens,
                 backend: .layerStreaming,
                 source: .llamaStream(toolsRegistered: !tools.isEmpty),
+                toolLoop: loop,
                 // Stop early if memory becomes critical
                 shouldStop: { produced in produced % 32 == 0 && memoryManager.isUnderPressure },
                 onToken: onToken
             )
             lastGenerationStats = reply.stats
+            lastToolTurn = reply.tools
             return reply.text
         }
     }
@@ -197,3 +204,5 @@ final class LayerStreamingBackend: InferenceBackend {
         #endif
     }
 }
+
+extension LayerStreamingBackend: ToolLoopHost {}

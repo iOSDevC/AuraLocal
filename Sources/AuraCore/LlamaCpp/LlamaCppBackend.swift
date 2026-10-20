@@ -28,6 +28,9 @@ final class LlamaCppBackend: InferenceBackend {
     let sampling: SamplingSettings
     private let tools: [any LLMTool]
     private(set) var lastGenerationStats: GenerationStats?
+    var toolLoop = ToolLoopOptions.default
+    var onToolEvent: (@MainActor (ToolEvent) -> Void)?
+    private(set) var lastToolTurn: ToolTurnSummary?
 
     var isLoaded: Bool { engine != nil }
     /// Tool names registered for function-calling — a testable view of what was threaded in (empty = none).
@@ -65,8 +68,8 @@ final class LlamaCppBackend: InferenceBackend {
 
         let parameter = loadParameter()
 
-        // With `tools` the engine runs LocalLLMClient's tool-calling loop, so the generate calls below invoke tools
-        // and feed their results back transparently.
+        // With `tools` the engine runs the tool loop (`toolLoop`), so the generate calls below invoke tools and feed
+        // their results back transparently.
         engine = try await GGUFTurnEngines.load(url: ggufURL, parameter: parameter, tools: tools)
         loadedFileURL = ggufURL
 
@@ -115,6 +118,7 @@ final class LlamaCppBackend: InferenceBackend {
             // unload() (e.g. ModelManager.evict) may have run while this call was queued.
             guard self.engine != nil, let loadedFileURL else { throw AuraError.modelNotLoaded }
             lastGenerationStats = nil
+            lastToolTurn = nil
             let reply = try await Self.generateOnDedicatedClient(
                 url: loadedFileURL,
                 parameter: parameter,
@@ -162,14 +166,18 @@ final class LlamaCppBackend: InferenceBackend {
             try Task.checkCancellation()
             guard let engine else { throw AuraError.modelNotLoaded }
             lastGenerationStats = nil
+            lastToolTurn = nil
+            let loop = ToolLoopContext(options: toolLoop, onEvent: onToolEvent)
             let reply = try await engine.measuredTurn(
                 conversation,
                 maxTokens: maxTokens,
                 backend: .llamaCpp,
                 source: .llamaStream(toolsRegistered: !tools.isEmpty),
+                toolLoop: loop,
                 onToken: onToken
             )
             lastGenerationStats = reply.stats
+            lastToolTurn = reply.tools
             return reply.text
         }
     }
@@ -307,6 +315,8 @@ final class LlamaCppBackend: InferenceBackend {
         #endif
     }
 }
+
+extension LlamaCppBackend: ToolLoopHost {}
 
 // MARK: - GenerationConstraint → LocalLLMClient
 

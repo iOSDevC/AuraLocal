@@ -12,11 +12,17 @@ struct LlamaChatMessage: Sendable, Equatable {
 
     var role: Speaker
     var content: String
+    /// Calls this assistant turn made; rendered natively by templates with tool support, as <tool_call> text otherwise.
+    var toolCalls: [LLMToolCall] = []
 
     static func system(_ content: String) -> LlamaChatMessage { .init(role: .system, content: content) }
     static func user(_ content: String) -> LlamaChatMessage { .init(role: .user, content: content) }
     static func assistant(_ content: String) -> LlamaChatMessage { .init(role: .assistant, content: content) }
     static func tool(_ content: String) -> LlamaChatMessage { .init(role: .tool, content: content) }
+
+    static func assistant(_ content: String, toolCalls: [LLMToolCall]) -> LlamaChatMessage {
+        .init(role: .assistant, content: content, toolCalls: toolCalls)
+    }
 
     /// `[["role": …, "content": …]]` as `InferenceBackend.generate(messages:)` receives it; an unknown or missing
     /// role is user text.
@@ -42,6 +48,8 @@ enum LlamaChatNormalizer {
     /// - Assistant turns before the first user turn join the system text; alternation templates raise on them.
     /// - Empty assistant turns (a failed reply) are dropped.
     /// - Consecutive user or assistant turns merge.
+    ///
+    /// An assistant turn that made tool calls is kept as it is: never dropped, joined or merged.
     static func normalize(_ messages: [LlamaChatMessage]) -> [LlamaChatMessage] {
         var systemParts: [String] = []
         var turns: [LlamaChatMessage] = []
@@ -49,12 +57,13 @@ enum LlamaChatNormalizer {
             switch message.role {
             case .system:
                 if !isBlank(message.content) { systemParts.append(message.content) }
-            case .assistant where isBlank(message.content):
+            case .assistant where message.toolCalls.isEmpty && isBlank(message.content):
                 continue
-            case .assistant where !turns.contains(where: { $0.role == .user }):
+            case .assistant where message.toolCalls.isEmpty && !turns.contains(where: { $0.role == .user }):
                 systemParts.append(message.content)
             case .user, .assistant:
-                if let last = turns.last, last.role == message.role {
+                if let last = turns.last, last.role == message.role, last.toolCalls.isEmpty,
+                   message.toolCalls.isEmpty {
                     turns[turns.count - 1].content = last.content + "\n\n" + message.content
                 } else {
                     turns.append(message)
@@ -142,9 +151,20 @@ struct LlamaPromptRenderer: Sendable {
         return .text
     }
 
+    /// How a tool round reaches the template.
+    private enum ToolTurnStyle {
+        /// Assistant `tool_calls` and `tool` turns, which templates with tool support render in their own format.
+        case native
+        /// Calls as `<tool_call>` text and the last result as an assistant `<tool_response>`, as LocalLLMClient sends.
+        case text
+    }
+
     /// Tries LocalLLMClient's message shape first, then plain strings, then the system prompt folded into the
     /// first user turn. A render only counts when every message's text reaches the prompt: some templates drop the
     /// system prompt silently, and Llama 3 text templates blank assistant turns sent as parts.
+    ///
+    /// A tool round renders natively when the template mentions `tools`; if every native attempt throws, the
+    /// attempts run again with the text form.
     func render(_ messages: [LlamaChatMessage]) throws -> String {
         let normalized = LlamaChatNormalizer.normalize(messages)
         guard let template, let parsed else { return Self.transcript(normalized) }
@@ -162,11 +182,23 @@ struct LlamaPromptRenderer: Sendable {
             attempts.append((Self.foldingSystemIntoFirstUser(normalized), .text))
         }
 
+        let nativeTools = template.contains("tools")
+        if nativeTools && Self.hasToolRounds(normalized),
+           let rendered = try? render(attempts, with: compiled, nativeTools: nativeTools, style: .native) {
+            return rendered
+        }
+        return try render(attempts, with: compiled, nativeTools: nativeTools, style: .text)
+    }
+
+    // MARK: Rendering
+
+    private func render(_ attempts: [(messages: [LlamaChatMessage], shape: ContentShape)], with compiled: Template,
+                        nativeTools: Bool, style: ToolTurnStyle) throws -> String {
         var lastFailure = "no attempt rendered"
         for (index, attempt) in attempts.enumerated() {
             do {
-                let rendered = try render(attempt.messages, with: compiled, nativeTools: template.contains("tools"),
-                                          shape: attempt.shape)
+                let rendered = try render(attempt.messages, with: compiled, nativeTools: nativeTools,
+                                          shape: attempt.shape, style: style)
                 let isLast = index == attempts.count - 1
                 if isLast || Self.keepsEveryMessage(attempt.messages, in: rendered) {
                     return rendered
@@ -179,12 +211,14 @@ struct LlamaPromptRenderer: Sendable {
         throw RenderError.templateFailed(lastFailure)
     }
 
-    // MARK: Rendering
+    private static func hasToolRounds(_ messages: [LlamaChatMessage]) -> Bool {
+        messages.contains { $0.role == .tool || !$0.toolCalls.isEmpty }
+    }
 
     private func render(_ messages: [LlamaChatMessage], with compiled: Template, nativeTools: Bool,
-                        shape: ContentShape) throws -> String {
-        let payload = try toolProcessed(messages.map { Self.payload(for: $0, shape: shape) },
-                                        nativeSupport: nativeTools, shape: shape)
+                        shape: ContentShape, style: ToolTurnStyle) throws -> String {
+        let payload = try toolProcessed(try messages.map { try Self.payload(for: $0, shape: shape, style: style) },
+                                        nativeSupport: nativeTools, shape: shape, style: style)
         var context: [String: Value] = [
             "add_generation_prompt": .boolean(true),
             "messages": try Value(any: payload),
@@ -202,8 +236,59 @@ struct LlamaPromptRenderer: Sendable {
         return try compiled.render(context, environment: environment)
     }
 
-    private static func payload(for message: LlamaChatMessage, shape: ContentShape) -> [String: any Sendable] {
-        ["role": message.role.rawValue, "content": content(message.content, role: message.role, shape: shape)]
+    private static func payload(for message: LlamaChatMessage, shape: ContentShape,
+                                style: ToolTurnStyle) throws -> [String: any Sendable] {
+        guard !message.toolCalls.isEmpty else {
+            return ["role": message.role.rawValue, "content": content(message.content, role: message.role, shape: shape)]
+        }
+        switch style {
+        case .native:
+            return ["role": message.role.rawValue, "content": content(message.content, role: message.role, shape: shape),
+                    "tool_calls": try nativeCalls(message.toolCalls)]
+        case .text:
+            let text = callTranscript(text: message.content, calls: message.toolCalls)
+            return ["role": message.role.rawValue, "content": content(text, role: message.role, shape: shape)]
+        }
+    }
+
+    /// The OpenAI shape chat templates read, with `arguments` as an object so `tojson` writes it back verbatim.
+    private static func nativeCalls(_ calls: [LLMToolCall]) throws -> Value {
+        let entries: [Any?] = try calls.map { call in
+            ["type": "function", "id": call.id,
+             "function": ["name": call.name, "arguments": try nativeArguments(call.arguments)] as [String: Any?]]
+                as [String: Any?]
+        }
+        return try Value(any: entries)
+    }
+
+    /// Native values, not `JSONSerialization`'s: its `NSNumber` booleans would reach the template as integers.
+    private static func nativeArguments(_ arguments: String) throws -> [String: Any?] {
+        guard case .object(let members)? = JSONValue.parse(arguments) else {
+            throw RenderError.templateFailed("tool call arguments are not a JSON object")
+        }
+        return members.mapValues(nativeValue)
+    }
+
+    private static func nativeValue(_ value: JSONValue) -> Any? {
+        switch value {
+        case .null: return nil
+        case .bool(let flag): return flag
+        case .number(let number):
+            if let integer = number.intValue { return integer }
+            return Double(number.description)
+        case .string(let text): return text
+        case .array(let elements): return elements.map(nativeValue)
+        case .object(let members): return members.mapValues(nativeValue)
+        }
+    }
+
+    /// The format the injected tool instructions ask the model to write.
+    static func callTranscript(text: String, calls: [LLMToolCall]) -> String {
+        let blocks = calls.map { call in
+            let arguments = LlamaChatNormalizer.isBlank(call.arguments) ? "{}" : call.arguments
+            return "<tool_call>\n{\"name\": \(JSONValue.quote(call.name)), \"arguments\": \(arguments)}\n</tool_call>"
+        }
+        return text + (text.isEmpty ? "" : "\n") + blocks.joined(separator: "\n")
     }
 
     private static func content(_ text: String, role: LlamaChatMessage.Speaker, shape: ContentShape) -> any Sendable {
@@ -217,8 +302,8 @@ struct LlamaPromptRenderer: Sendable {
 
     /// `StandardToolInstructionProcessor.processMessages`, which LocalLLMClient applies whenever tools exist. A system
     /// message it has to add gets the template's content shape; LocalLLMClient always uses parts there.
-    private func toolProcessed(_ messages: [[String: any Sendable]], nativeSupport: Bool,
-                               shape: ContentShape) throws -> [[String: any Sendable]] {
+    private func toolProcessed(_ messages: [[String: any Sendable]], nativeSupport: Bool, shape: ContentShape,
+                               style: ToolTurnStyle) throws -> [[String: any Sendable]] {
         guard !tools.isEmpty else { return messages }
         var processed = messages
         let toolsJSON = try tools.toOAICompatJSONString(options: [])
@@ -241,7 +326,7 @@ struct LlamaPromptRenderer: Sendable {
                                  at: 0)
             }
         }
-        if lastIsTool, let index = processed.indices.last {
+        if style == .text, lastIsTool, let index = processed.indices.last {
             processed[index]["role"] = LlamaChatMessage.Speaker.assistant.rawValue
             processed[index]["content"] = Self.wrappingToolResponse(processed[index]["content"])
         }
@@ -311,7 +396,11 @@ struct LlamaPromptRenderer: Sendable {
     /// LocalLLMClient falls back to a Gemma-style template without role markers; a labelled transcript keeps the
     /// speakers apart.
     static func transcript(_ messages: [LlamaChatMessage]) -> String {
-        let lines = messages.map { "\($0.role.rawValue.capitalized): \($0.content)" }
+        let lines = messages.map { message in
+            let content = message.toolCalls.isEmpty ? message.content
+                : callTranscript(text: message.content, calls: message.toolCalls)
+            return "\(message.role.rawValue.capitalized): \(content)"
+        }
         return (lines + ["Assistant:"]).joined(separator: "\n\n")
     }
 
