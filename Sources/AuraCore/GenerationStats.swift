@@ -71,7 +71,8 @@ public struct GenerationStats: Sendable, Hashable {
         return Double(generatedTokens - 1) / decodeTime
     }
 
-    /// ``promptTokens`` divided by ``promptTime``. Estimated unless ``source`` is ``Provenance/runtime``.
+    /// ``promptTokens`` divided by ``promptTime``. Estimated unless ``source`` is ``Provenance/runtime``. On an MLX
+    /// prompt-cache hit ``promptTime`` covers only the prefilled tokens, so this overstates prefill speed.
     public var prefillTokensPerSecond: Double? {
         guard promptTokens > 0, promptTime > 0 else { return nil }
         return Double(promptTokens) / promptTime

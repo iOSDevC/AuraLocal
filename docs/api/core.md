@@ -320,7 +320,8 @@ public struct GenerationStats: Sendable, Hashable {
     let timeToFirstToken: TimeInterval // from when the backend starts the request; includes template + tokenization
     let decodeTime: TimeInterval       // first generated token to last
     var decodeTokensPerSecond: Double?  // (generatedTokens − 1) ÷ decodeTime; nil below two tokens
-    var prefillTokensPerSecond: Double? // promptTokens ÷ promptTime
+    var prefillTokensPerSecond: Double? // promptTokens ÷ promptTime; on an MLX prompt-cache hit promptTime covers
+                                        // only the prefilled tokens, so this overstates prefill speed
 }
 ```
 

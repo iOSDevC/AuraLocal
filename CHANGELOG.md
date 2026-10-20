@@ -43,7 +43,8 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   next prompt prefills only the tokens it does not share with it (prefill over an 8-turn conversation with Qwen3
   0.6B: 0.46–0.61 s against 1.44–1.61 s). The cache stays in memory until `unload()` or an eviction. A greedy
   reply can differ from a full prefill's after a few dozen tokens, as with any change of prefill split; on a hit
-  `lastGenerationStats.promptTime` covers only the tokens prefilled. MLX stats are timed by AuraLocal around
+  `lastGenerationStats.promptTime` covers only the tokens prefilled, so `prefillTokensPerSecond` overstates
+  prefill speed, and AuraExample's model evaluation no longer shows it. MLX stats are timed by AuraLocal around
   mlx-swift-lm's token iterator instead of read from `GenerateResult`.
 - **Behaviour change (GGUF tools):** calls a model makes after `maxToolRounds` rounds (default 1, as many rounds as
   before) are reported as `ToolEvent.roundLimitReached` and in `ToolTurnSummary.skipped` instead of being dropped
