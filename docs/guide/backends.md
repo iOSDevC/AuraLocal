@@ -211,16 +211,20 @@ let llm = try await ModelManager.shared.load(.llama3_1_8b_gguf)
 ### Multi-turn conversations (GGUF)
 
 Both llama.cpp backends treat every call (`chat`, `stream`, `chat(_:in:)`, `stream(_:in:)`, `generate(messages:)`)
-as one self-contained turn: it starts from an empty KV cache and an empty decode batch, and the model stays loaded.
-The pinned LocalLLMClient (0.5.0) never cleared the cache when a new prompt did not extend the cached one, so the
-cache grew every turn until the context overflowed (around turn 8 at 1024 tokens) and later turns failed or
-aborted; the fix it needs upstream is prepared as `contrib/localllmclient/0004`.
+as one turn over the whole conversation, and the model stays loaded. A turn whose rendered prompt starts with exactly
+the text the KV cache holds from the turn before decodes only the rest; any other turn starts from an empty KV cache
+and an empty decode batch (see **Reusing the KV cache** below). The pinned LocalLLMClient (0.5.0) never cleared the
+cache when a new prompt did not extend the cached one, so the cache grew every turn until the context overflowed
+(around turn 8 at 1024 tokens) and later turns failed or aborted; the fix it needs upstream is prepared as
+`contrib/localllmclient/0004`. AuraLocal compares the text itself and clears the cache on every miss.
 
 - **Roles:** the history is rendered with the GGUF's `tokenizer.chat_template` and special tokens (`bos_token`,
   `eos_token`, …), read from the file the way llama.cpp resolves them, with the same Jinja engine and message shapes
   LocalLLMClient's `.chat` input uses. A single `chat(_:systemPrompt:)` call sends the system prompt as a system
   turn, not as text inside the user turn. A GGUF without a template gets a `System:` / `User:` / `Assistant:`
-  transcript.
+  transcript. One trailing newline at the end of the template is dropped, as Python Jinja (Hugging Face's and
+  llama.cpp's renderers) does and swift-jinja does not: Qwen2.5's prompt ends `<|im_start|>assistant\n`, where it
+  used to end with a second newline.
 - **What every template accepts:** all system turns (a `summarizeAndPrune` summary included) merge, in order, into
   one leading system turn; assistant turns before the first user turn join the system text; consecutive user or
   assistant turns merge; empty assistant turns are dropped. A template that rejects a system role (Gemma 2) or
@@ -237,42 +241,83 @@ aborted; the fix it needs upstream is prepared as `contrib/localllmclient/0004`.
   `maxTokens`, with a margin, since it is an estimate (about 4 characters per token). Trimming is not reported in
   `lastContextOverflow`. A system turn plus newest user turn that alone exceed the context throw
   `LLMError.failedToDecode` (`context size exceeded`).
-- **Cost:** the whole history is prefilled on every turn, so prefill time grows linearly with it: 1.28 s for a
-  3038-token history with Qwen2.5-0.5B Q4_K_M on an M1 Pro (about 0.42 ms per token, measured with other builds
-  running); larger models cost proportionally more. The previous path paid the same, since its prompt cache never
-  matched.
+- **Reusing the KV cache:** after a reply that ended by itself (end of generation, or a full context), the cache
+  holds that turn's prompt and the reply. The next turn keeps it when its rendered prompt starts with exactly that
+  text, byte for byte, and goes on with one of the model's special tokens (`<|im_end|>` on ChatML templates, read
+  from the GGUF's token types): only the rest is decoded. llama.cpp's tokenizer splits on special tokens first, so
+  the rest tokenizes as it would at the end of the whole prompt (checked against the model's own tokenizer on
+  Qwen2.5 and SmolLM2). Anything else re-prefills the whole prompt after an empty cache, as before:
+  - a reply cut by `maxTokens`, `shouldStop`, cancellation or backgrounding, or a turn that failed;
+  - a history that does not carry the reply exactly as it was returned (AuraLocal's history methods store it as
+    returned);
+  - a history whose start changed: a turn on which the overflow trimming drops more of the oldest history than the
+    turn before re-prefills. `chat(_:in:)`'s `maxContextTokens` window snaps its oldest kept turn to a stride of up
+    to 4 turns, so its start stays put between moves and only the turns where it moves miss;
+  - templates that rewrite earlier assistant turns (Qwen3 strips their `<think>` blocks);
+  - a GGUF without special-token types, and any error while decoding the rest (an overflowing context included).
+
+  Constrained calls run on a client of their own and leave the cache as it was. A reused turn keeps the reply's
+  tokens as sampled and as llama.cpp computed them one at a time; a full prefill re-tokenizes the reply text
+  (usually, not always, to the same tokens) and computes it in one batch, so at temperature 0 a reused turn can now
+  and then pick a different token than a full prefill would. Measured at temperature 0: on Qwen2.5-0.5B Q4_K_M,
+  identical replies in two 10-turn conversations and 1 different reply in the 17 reused turns of a 22-turn
+  conversation at a 1024 context, whose prompt was the same tokens either way (so there the computation made the
+  difference); on SmolLM2-360M, identical replies in all three (`GGUFPromptReuseLiveTests`).
+- **Cost:** a full prefill grows linearly with the history: 1.28 s for a 3038-token history with Qwen2.5-0.5B
+  Q4_K_M on an M1 Pro (about 0.42 ms per token, measured with other builds running); larger models cost
+  proportionally more. A reused turn decodes only its new part: after a system prompt of about 2,400 tokens, the
+  time to the first piece stayed at 48–81 ms over 10 turns instead of 759–887 ms, and the 10 turns took 8.5 s
+  instead of 15.2 s (same model and machine, 16–20 new tokens per turn instead of 2,487–2,842;
+  `GGUFPromptReuseLiveTests`).
 - **Cut replies:** a reply ended by `maxTokens`, cancellation or backgrounding leaves the next turn unaffected. The
   decode runs in a task of its own, so the call returns at once; the next turn waits until that decode has stopped
   (at most one token, or the end of a prefill) and flushes the token it left queued.
-- **With tools** a turn runs on a LocalLLMClient `LlamaClient` (its tool-call parser), with the same rendering and
-  the same clean start, in **rounds**. A round is every call one reply asks for: the calls run in the order the
+- **With tools** a turn runs in **rounds**. A round is every call one reply asks for: the calls run in the order the
   model wrote them, then the model replies again with their results. The turn ends at a reply that asks for no
   tools, at a cut reply, or at a reply that asks for tools after `toolLoop.maxToolRounds` rounds (default 1, as many
   rounds as before); those last calls do not run and are reported as `ToolEvent.roundLimitReached` and in
-  `lastToolTurn.skipped`. Every round shares the turn's `maxTokens` and prefills the whole conversation again, so
-  each round costs a full prefill (see
-  [Tool calling]({{ '/api/core' | relative_url }}#tool-calling-gguf-and-mlx)).
+  `lastToolTurn.skipped`. Every round shares the turn's `maxTokens` (see
+  [Tool calling]({{ '/api/core' | relative_url }}#tool-calling-gguf-and-mlx)). Which code reads the calls depends on how the
+  model is asked to write them:
+  - **`<tool_call>` JSON** (`<tool_call>{"name": …, "arguments": {…}}</tool_call>`): templates without tool support,
+    which get it from the injected tool instructions, and templates that write a call that way, such as Qwen2.5's
+    (checked at load by rendering a sample call). The turn runs on AuraLocal's own context, like a turn
+    without tools, and AuraLocal's parser reads the calls: every call in a reply runs, two to the same tool included;
+    a `<tool_call>` block that is not such an object stays in the visible text; arguments reach the tool as JSON with
+    sorted keys. The round joins the conversation as the reply exactly as the model wrote it, its `<tool_call>` text
+    included, followed by one tool turn per result. On a template that renders tool turns natively (Qwen2.5's), the
+    next reply's prompt then goes on from the reply at a special token and extends the KV cache (see
+    **Reusing the KV cache**). That holds while another round may run: the reply after the last allowed round (at
+    the default of 1, the reply after the first round) is sent without the tool instructions and re-prefills. On a
+    template without tool support (SmolLM2's, Gemma 3's), each round's results join the reply's assistant turn after
+    a newline, not a special token, so every round re-prefills. A turn with rounds leaves nothing the next turn can
+    reuse, since the conversation keeps only its answer.
+    `maxTokens` counts every token the model writes, its calls included. A cut reply stops its decode, as without
+    tools.
+  - **Other formats** (for example Llama 3.1's, Mistral's and Gemma 4's, and templates that write arguments as XML)
+    run on a LocalLLMClient `LlamaClient` and its parser, with the same rendering and a clean start for every round:
+    each round prefills the whole conversation again. LocalLLMClient keeps only the first call per tool name in one
+    reply (`LlamaClient.swift:119-124` in 0.5.0), and `maxTokens` counts only the visible text. The client decodes
+    in a task nobody can cancel, so a reply cut short returns at once but the **next** turn waits until that decode
+    reaches the end of generation or fills the context (seconds on a 0.5B model). After `unload()` (an eviction
+    too) the model stays in memory until that decode ends, so a reload in the meantime holds two copies, and a
+    process that exits before it ends aborts in `ggml_metal_device_free`.
   - **Errors:** a tool that throws, arguments that do not decode and an unknown tool name reach the model as
     `{"error": "…"}` and the turn goes on. `ToolLoopOptions(toolErrors: .failTurn)` makes the turn throw instead:
     the tool's own error, LocalLLMClient's `ToolError.argumentDecodingFailed`, or `LLMError.invalidParameter`.
     Cancelling the turn while a tool runs cancels the tool's task and throws `CancellationError`.
   - **What the model sees:** a tool's output as JSON with sorted keys (`key: value` pairs sorted by key when the
     output holds a value JSON cannot, such as a `Date`). With a chat template that mentions `tools` (Qwen2.5's, for
-    example) a round is sent in the template's own format: the reply's calls as an assistant turn with `tool_calls`,
-    each result as a `tool` turn. Other templates, and any whose native rendering throws, get each round as one
-    assistant turn: the reply's calls as `<tool_call>` text, then each result wrapped in `<tool_response>` (the
-    wrapping LocalLLMClient gives a result), so templates that require alternating user and assistant turns, such
-    as Gemma 3's, accept it. The call turn is AuraLocal's: LocalLLMClient's own resume sends only the results. On a
-    template that does not mention `tools`, only the first reply's prompt lists the tools and the call format; later
-    rounds do not repeat them, so a chain that moves on to another tool in a later round needs a template with
-    native tool support.
+    example) each result is a `tool` turn in the template's own format; on the LocalLLMClient path the reply's calls
+    are an assistant turn with `tool_calls`. Other templates, and any whose native rendering throws, get each round
+    as one assistant turn: the reply's calls as `<tool_call>` text, then each result wrapped in `<tool_response>`
+    (the wrapping LocalLLMClient gives a result), so templates that require alternating user and assistant turns,
+    such as Gemma 3's, accept it. LocalLLMClient's own resume sends only the results. After a result, the tool
+    instructions (the call format and the tools, with sorted keys) are sent again only while another round may run;
+    on a template that does not mention `tools` they are its only list of the tools, so a chain can move on to
+    another tool in a later round.
   - **Limits:** every round's prompt is trimmed like the first, but the newest user turn and the rounds after it
     always stay, so tool output too large for the context fails the turn with `LLMError.failedToDecode`.
-    LocalLLMClient keeps only the first call per tool name in one reply (`LlamaClient.swift:119-124` in 0.5.0).
-    The client decodes in a task nobody can cancel, so a reply cut short returns at once but the **next** turn
-    waits until that decode reaches the end of generation or fills the context (seconds on a 0.5B model).
-    After `unload()` (an eviction too) the model stays in memory until that decode ends, so a reload in the
-    meantime holds two copies, and a process that exits before it ends aborts in `ggml_metal_device_free`.
 - **Not reset:** the sampler's repetition-penalty window and random state carry over between turns (no public reset
   in LocalLLMClient 0.5.0; see `contrib/localllmclient/0003`). At temperature 0 they have no effect.
 

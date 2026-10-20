@@ -54,7 +54,20 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   supports tools, the resumed prompt carries the model's call as an assistant turn and each result as a `tool` turn
   in the template's own format; with other templates each round is sent as one assistant turn, the model's call as
   `<tool_call>` text followed by every result in `<tool_response>` (before, only the results were sent, and only
-  the last one as an assistant turn), so templates that require alternating roles, such as Gemma 3's, render it.
+  the last one as an assistant turn), so templates that require alternating roles, such as Gemma 3's, render it;
+  after a result the tool instructions are sent again while another round may run (before, only the first reply's
+  prompt carried them, so on a template without tool support a later round had no list of the tools).
+- **Behaviour change (GGUF tools):** models asked to write calls as `<tool_call>` JSON (templates without tool
+  support, and templates that write calls that way, such as Qwen2.5's) run on AuraLocal's own llama.cpp context and
+  tool-call parser instead of LocalLLMClient's `LlamaClient`: every call in a reply runs (LocalLLMClient kept only
+  the first per tool name); a `<tool_call>` block that is not a JSON object with a `name` stays in the reply text
+  instead of vanishing; arguments reach the tool as JSON with sorted keys; a round goes back to the model as the
+  reply it wrote, `<tool_call>` text included; `maxTokens` counts the calls' tokens too; and a reply cut short no
+  longer makes the next turn wait for its decode to finish. Other call formats keep the `LlamaClient` path.
+- **Behaviour change (GGUF):** when a chat template ends with a newline, the prompt no longer does: AuraLocal drops
+  one trailing newline from the template, as Python Jinja (Hugging Face's and llama.cpp's renderers) does, so
+  Qwen2.5's prompt ends `<|im_start|>assistant\n` instead of `<|im_start|>assistant\n\n`. Replies at temperature 0
+  can differ from before.
 - **Behaviour change:** AuraUI's `TextChatTab`, `VisionTab` and `OCRTab` and AuraDocs' `DocsTab` no longer download
   a model without asking. While a model they need is not on disk they show `ModelDownloadPlaceholder` with
   **Download**; models already on disk load as before. `DocsTab` used to download Qwen3 1.7B and FastVLM (~2 GB)
@@ -147,7 +160,15 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   (Dolphin 8B to `dphn/`, so it downloads again).
 - The context window follows the model's KV cost and the memory left after its weights, capped at what the
   weights support; memory on macOS is measured instead of assumed.
-- Every GGUF turn starts from an empty KV cache and re-prefills the history.
+- A GGUF turn whose rendered prompt starts with exactly the last turn's prompt and reply, and goes on with a special
+  token, decodes only what it adds; any other turn starts from an empty KV cache and re-prefills the history, and so
+  does every turn after a reply that was cut. Tool rounds on templates with native tool turns (Qwen2.5's) reuse the
+  cache the same way while another round may run; on templates without tool support each round's results join the
+  reply's assistant turn, so every round re-prefills. After a ~2,400-token system prompt, Qwen2.5-0.5B's time to the
+  first token stayed near 50 ms instead of about 800 ms (M1 Pro). A reused turn keeps the reply's tokens as sampled
+  and as llama.cpp computed them one at a time; a full prefill re-tokenizes the reply text (usually, not always, to
+  the same tokens) and computes it in one batch, so at temperature 0 a reused turn can now and then pick a different
+  token.
 - `aura ask` uses a local llama-server or Ollama by default, or OpenAI, Anthropic or a custom endpoint when named.
 
 ### Fixed
@@ -175,6 +196,8 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   `aura` tarball now carries the SwiftPM resource bundles and the license texts.
 - GGUF tool turns: a resumed prompt that outgrew the context failed the turn; every round's prompt now drops the
   oldest exchanges, as the first one does.
+- GGUF tool instructions listed the tools as JSON with its keys in a different order on every render; the keys are
+  sorted now.
 
 ### Removed
 

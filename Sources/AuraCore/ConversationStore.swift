@@ -250,9 +250,8 @@ public actor ConversationStore {
     /// let context = try await store.contextWindow(for: conv.id, maxTokens: 2048)
     /// let messages = context.map { ["role": $0.role.rawValue, "content": $0.content] }
     /// ```
-    /// How many turns the context window's oldest-kept boundary stays put before it moves. Meant to keep
-    /// a cached prompt prefix matching, it saves no prefill now (GGUF turns prefill the whole history)
-    /// and only drops up to this many minus one extra turns of history.
+    /// How many turns the context window's oldest-kept boundary stays put before it moves, so the GGUF
+    /// KV cache stays reusable between moves; it drops up to this many minus one extra turns of history.
     static let contextAnchorStride = 4
 
     public func contextWindow(for conversationID: UUID, maxTokens: Int = 2048) throws -> [Turn] {
@@ -296,8 +295,8 @@ public actor ConversationStore {
 
         // History is being evicted, so the prompt's PREFIX (its oldest kept turn) moves. Snapping the
         // boundary up to a multiple of `contextAnchorStride` keeps it byte-identical for that many
-        // turns, which only pays off on a backend that reuses a cached prefix; none does now (GGUF
-        // turns prefill the whole history). Snapping UP never exceeds the budget; the cost is
+        // turns, so the GGUF engine keeps its KV cache and decodes only the new turns until the
+        // boundary moves. Snapping UP never exceeds the budget; the cost is
         // dropping up to stride-1 extra turns of history.
         // Never let anchoring eat more than a quarter of the turns that actually fit: on a small
         // window the stride collapses to 1 (i.e. exact, unanchored behaviour) instead of gutting

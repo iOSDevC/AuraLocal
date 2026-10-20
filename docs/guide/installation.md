@@ -108,7 +108,7 @@ AuraLocal pulls in six dependencies automatically — you do not need to add the
 | [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) 3.31.3 or later | MLX GPU inference for `.mlx` models |
 | [mlx-swift](https://github.com/ml-explore/mlx-swift) 0.31.3 up to, not including, 0.31.5 | The MLX arrays and Metal kernels under mlx-swift-lm. 0.31.5 does not build for iOS (mlx-swift #436) and 0.31.6 is the version in an open report of an app hanging before `main()` on iOS 27 (#485); a resolve without AuraLocal's lockfile gets 0.31.4 |
 | [swift-transformers](https://github.com/huggingface/swift-transformers) 1.3.0 or later | Tokenizers for MLX models and for the Core ML text-embedding tool (multilingual-e5) |
-| [swift-jinja](https://github.com/huggingface/swift-jinja) 2.3.5 or later | Renders each GGUF model's chat template, so every llama.cpp turn starts from an empty KV cache with real roles |
+| [swift-jinja](https://github.com/huggingface/swift-jinja) 2.3.5 or later | Renders each GGUF model's chat template, so llama.cpp turns get real roles and AuraLocal decides itself when the KV cache can be kept |
 | [ml-stable-diffusion](https://github.com/apple/ml-stable-diffusion) 1.1.1 (exact) | Core ML Stable Diffusion for `AuraImageGen` on iOS and macOS (not linked on visionOS) |
 
 ---

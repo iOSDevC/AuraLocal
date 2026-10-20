@@ -199,8 +199,8 @@ When each engine actually stops:
 - **llama.cpp** (full load and streaming, constrained JSON / GBNF calls included): the call returns at once.
   LocalLLMClient has already paused the decode on `willResignActive`; per its source, that decode runs one
   more token after the app becomes active and then stops. The next chat turn on that model waits for it (with
-  tools, for the decode to reach the end of generation); a constrained call runs on its own context and can
-  overlap that token. A prompt being prefilled cannot be interrupted.
+  tools on LocalLLMClient's `LlamaClient`, for the decode to reach the end of generation); a constrained call runs
+  on its own context and can overlap that token. A prompt being prefilled cannot be interrupted.
 - **Core ML Stable Diffusion:** at the next denoising step. Loading the model and the final decode cannot
   be interrupted.
 

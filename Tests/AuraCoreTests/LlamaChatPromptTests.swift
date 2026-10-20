@@ -208,6 +208,85 @@ final class LlamaChatPromptTests: XCTestCase {
         XCTAssertFalse(rendered.contains("If you decide to invoke"), "instructions only precede a fresh request")
     }
 
+    func testWhileRoundsRemainTheToolInstructionsFollowAResultToo() throws {
+        let renderer = LlamaPromptRenderer(template: Self.chatML, tools: [AnyLLMTool(EchoTool())])
+        let round: [LlamaChatMessage] = [.user("Echo hi, then echo bye"),
+                                         .assistant("<tool_call>\n{\"name\": \"echo\", \"arguments\": {}}\n</tool_call>"),
+                                         .tool(#"{"text":"hi"}"#)]
+        let next = try renderer.render(round, toolRoundsRemain: true)
+        XCTAssertTrue(next.hasPrefix("<|im_start|>system\nIf you decide to invoke"), next)
+        XCTAssertTrue(next.contains(#""name":"echo""#), "a template without tool support lists the tools only there")
+        XCTAssertEqual(try renderer.render([.user("Echo hi")]).prefix(while: { $0 != "[" }),
+                       next.prefix(while: { $0 != "[" }), "the same instructions as the first reply's")
+        XCTAssertFalse(try renderer.render(round, toolRoundsRemain: false).contains("If you decide to invoke"),
+                       "the reply after the last round is steered to answer")
+    }
+
+    func testTheToolListIsTheSameEveryRender() throws {
+        let renderer = LlamaPromptRenderer(template: Self.chatML, tools: [AnyLLMTool(EchoTool())])
+        let request: [LlamaChatMessage] = [.user("Echo hi")]
+        let first = try renderer.render(request)
+        for _ in 0..<5 { XCTAssertEqual(try renderer.render(request), first) }
+        XCTAssertTrue(first.contains(#"[{"function":{"description":"Echo text.","name":"echo","parameters":"#), first)
+    }
+
+    func testATemplatesTrailingNewlineIsDroppedAsJinjaDoes() throws {
+        let rendered = try LlamaPromptRenderer(template: Self.chatML + "\n").render([.user("Hi")])
+        XCTAssertTrue(rendered.hasSuffix("<|im_start|>assistant\n"), rendered.debugDescription)
+        XCTAssertFalse(rendered.hasSuffix("\n\n"), "a reply's turn renders as `assistant\\n` + text, so the prompt must too")
+        XCTAssertEqual(LlamaPromptRenderer.patched("A\r\n"), "A")
+        XCTAssertEqual(LlamaPromptRenderer.patched("A\n\n"), "A\n", "only one, like Jinja")
+    }
+
+    func testWithoutToolsKeepsThePatchedTemplate() throws {
+        let renderer = LlamaPromptRenderer(template: Self.chatML + "\n\n", tools: [AnyLLMTool(EchoTool())])
+        XCTAssertEqual(renderer.withoutTools.template, Self.chatML + "\n")
+        XCTAssertEqual(try renderer.withoutTools.render([.user("Hi")]),
+                       try LlamaPromptRenderer(template: Self.chatML + "\n\n").render([.user("Hi")]))
+    }
+
+    /// Whether the next round can keep the KV cache (``GGUFPromptReuse``) depends on how the template takes a result.
+    func testOnlyANativeToolTurnLetsTheNextRoundExtendTheReply() throws {
+        let reuse = GGUFPromptReuse(boundaries: ["<|im_start|>", "<|im_end|>"])
+        let request: [LlamaChatMessage] = [.user("Echo hi")]
+        let reply = "<tool_call>\n{\"name\": \"echo\", \"arguments\": {\"text\": \"hi\"}}\n</tool_call>"
+        let round = request + [.assistant(reply), .tool(#"{"text":"hi"}"#)]
+
+        let native = LlamaPromptRenderer(template: Self.taggedChatML, tools: [AnyLLMTool(EchoTool())])
+        let resident = try native.render(request, toolRoundsRemain: true) + reply
+        let rest = reuse.suffix(of: try native.render(round, toolRoundsRemain: true), after: resident)
+        XCTAssertEqual(rest?.hasPrefix("<|im_end|>\n<|im_start|>tool\n"), true, rest ?? "missed")
+
+        let text = LlamaPromptRenderer(template: Self.chatML, tools: [AnyLLMTool(EchoTool())])
+        let held = try text.render(request, toolRoundsRemain: true) + reply
+        let next = try text.render(round, toolRoundsRemain: true)
+        XCTAssertTrue(next.hasPrefix(held + "\n<tool_response>"), next)
+        XCTAssertNil(reuse.suffix(of: next, after: held), "the result joins the reply's turn after a newline")
+    }
+
+    /// Qwen2.5's way of writing a call.
+    private static let taggedChatML = """
+    {%- if tools %}{{- 'TOOLS|' }}{%- endif %}{%- for message in messages %}\
+    {%- if message.role == 'assistant' and message.tool_calls %}{{- '<|im_start|>assistant' }}\
+    {%- for tool_call in message.tool_calls %}{{- '\\n<tool_call>\\n{"name": "' + tool_call.function.name \
+    + '", "arguments": ' + (tool_call.function.arguments | tojson) + '}\\n</tool_call>' }}{%- endfor %}\
+    {{- '<|im_end|>\\n' }}{%- else %}{{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' }}\
+    {%- endif %}{%- endfor %}{%- if add_generation_prompt %}{{- '<|im_start|>assistant\\n' }}{%- endif %}
+    """
+
+    func testTheTaggedCallFormatIsReadFromTheTemplate() {
+        let tools = [AnyLLMTool(EchoTool())]
+        XCTAssertTrue(LlamaPromptRenderer(template: Self.taggedChatML, tools: tools).asksForTaggedToolCalls)
+        XCTAssertTrue(LlamaPromptRenderer(template: Self.chatML, tools: tools).asksForTaggedToolCalls,
+                      "without tool support the injected instructions ask for <tool_call> JSON")
+        XCTAssertTrue(LlamaPromptRenderer(template: nil, tools: tools).asksForTaggedToolCalls)
+        XCTAssertFalse(LlamaPromptRenderer(template: Self.nativeChatML, tools: tools).asksForTaggedToolCalls,
+                       "a template with its own call format keeps LocalLLMClient's parser")
+        let refusing = "{%- if tools %}{%- endif %}{%- for message in messages %}{%- if message.tool_calls %}"
+            + "{{ raise_exception('no calls') }}{%- endif %}{{- message.content }}{%- endfor %}"
+        XCTAssertFalse(LlamaPromptRenderer(template: refusing, tools: tools).asksForTaggedToolCalls)
+    }
+
     /// ChatML that renders `tool_calls` and keeps the `tool` role, the way Qwen2.5's template does.
     private static let nativeChatML = """
     {%- if tools %}{{- 'TOOLS|' }}{%- endif %}{%- for message in messages %}\

@@ -93,9 +93,10 @@ enum LlamaChatNormalizer {
 
 // MARK: - LlamaPromptRenderer
 
-/// Renders a conversation with the GGUF's own chat template the way LocalLLMClient's `.chat` input does (same
-/// Jinja engine, context variables, message shapes and tool instructions), so the text a turn decodes is what
-/// `LLMSession` would have decoded for the same roles.
+/// Renders a conversation with the GGUF's own chat template with the same Jinja engine, context variables, message
+/// shapes and tool instructions as LocalLLMClient's `.chat` input, except that the template is ``patched(_:)`` (one
+/// trailing newline dropped, Qwen2.5's doubled braces repaired), the tool list in the instructions has sorted keys,
+/// and the instructions can follow a tool result (`toolRoundsRemain`).
 struct LlamaPromptRenderer: Sendable {
     /// `nil` renders a role-labelled transcript.
     let template: String?
@@ -115,10 +116,8 @@ struct LlamaPromptRenderer: Sendable {
 
     init(template: String?, specialTokens: [String: String] = [:], tools: [AnyLLMTool] = []) {
         let source = template.map(Self.patched)
-        self.template = source
-        self.specialTokens = specialTokens
-        self.tools = tools
-        parsed = source.map { text in Result<Template, any Error> { try Template(text) } }
+        self.init(patchedTemplate: source, specialTokens: specialTokens, tools: tools,
+                  parsed: source.map { text in Result<Template, any Error> { try Template(text) } })
     }
 
     init(metadata: GGUFChatMetadata, tools: [any LLMTool]) {
@@ -126,9 +125,19 @@ struct LlamaPromptRenderer: Sendable {
                   tools: tools.map { AnyLLMTool($0) })
     }
 
+    /// `patched` is not idempotent (it drops a trailing newline), so a renderer built from another keeps its source.
+    private init(patchedTemplate: String?, specialTokens: [String: String], tools: [AnyLLMTool],
+                 parsed: Result<Template, any Error>?) {
+        template = patchedTemplate
+        self.specialTokens = specialTokens
+        self.tools = tools
+        self.parsed = parsed
+    }
+
     /// Same template and tokens, no tool instructions: what a constrained call sends.
     var withoutTools: LlamaPromptRenderer {
-        tools.isEmpty ? self : LlamaPromptRenderer(template: template, specialTokens: specialTokens)
+        tools.isEmpty ? self
+            : LlamaPromptRenderer(patchedTemplate: template, specialTokens: specialTokens, tools: [], parsed: parsed)
     }
 
     /// How message content reaches the template. LocalLLMClient picks one per template family.
@@ -167,39 +176,71 @@ struct LlamaPromptRenderer: Sendable {
     /// A tool round renders natively when the template mentions `tools`; if every native attempt throws, the
     /// attempts run again with the text form.
     func render(_ messages: [LlamaChatMessage]) throws -> String {
+        try render(messages, toolRoundsRemain: false)
+    }
+
+    /// As ``render(_:)``. After a tool result the tool instructions are sent again only while `toolRoundsRemain`
+    /// (another round may still run); on a template without tool support they are the only listing of the tools.
+    func render(_ messages: [LlamaChatMessage], toolRoundsRemain: Bool) throws -> String {
         let normalized = LlamaChatNormalizer.normalize(messages)
-        guard let template, let parsed else { return Self.transcript(normalized) }
-        let compiled: Template
-        do {
-            compiled = try parsed.get()
-        } catch {
-            throw RenderError.templateFailed(String(describing: error))
-        }
-
-        let preferred = Self.contentShape(for: template)
-        var attempts: [(messages: [LlamaChatMessage], shape: ContentShape)] = [(normalized, preferred)]
-        if preferred != .text { attempts.append((normalized, .text)) }
-        if normalized.first?.role == .system {
-            attempts.append((Self.foldingSystemIntoFirstUser(normalized), .text))
-        }
-
+        guard let template, parsed != nil else { return Self.transcript(normalized) }
+        let compiled = try compiledTemplate()
+        let attempts = Self.attempts(for: normalized, template: template)
         let nativeTools = template.contains("tools")
         if nativeTools && Self.hasToolRounds(normalized),
-           let rendered = try? render(attempts, with: compiled, nativeTools: nativeTools, style: .native) {
+           let rendered = try? render(attempts, with: compiled, nativeTools: nativeTools, style: .native,
+                                      keepsInstructions: toolRoundsRemain) {
             return rendered
         }
-        return try render(attempts, with: compiled, nativeTools: nativeTools, style: .text)
+        return try render(attempts, with: compiled, nativeTools: nativeTools, style: .text,
+                          keepsInstructions: toolRoundsRemain)
+    }
+
+    /// Whether the model is asked to write calls as `<tool_call>{"name": …, "arguments": …}</tool_call>`
+    /// (``ToolCallTagParser``): by the injected instructions when the template has no tool support (or there is no
+    /// template), by the template itself when it renders a call that way.
+    var asksForTaggedToolCalls: Bool {
+        guard let template, parsed != nil, template.contains("tools") else { return true }
+        let probe = LLMToolCall(id: "probe", name: "aura_probe_tool", arguments: #"{"probe":1}"#)
+        let messages = LlamaChatNormalizer.normalize([.user("Probe."), .assistant("", toolCalls: [probe])])
+        guard let compiled = try? compiledTemplate(),
+              let rendered = try? withoutTools.render(Self.attempts(for: messages, template: template), with: compiled,
+                                                      nativeTools: true, style: .native, keepsInstructions: false)
+        else { return false }
+        var parser = ToolCallTagParser()
+        _ = parser.consume(rendered)
+        return parser.calls.contains { $0.name == probe.name }
     }
 
     // MARK: Rendering
 
+    private func compiledTemplate() throws -> Template {
+        guard let parsed else { throw RenderError.templateFailed("the model has no chat template") }
+        do {
+            return try parsed.get()
+        } catch {
+            throw RenderError.templateFailed(String(describing: error))
+        }
+    }
+
+    private static func attempts(for normalized: [LlamaChatMessage],
+                                 template: String) -> [(messages: [LlamaChatMessage], shape: ContentShape)] {
+        let preferred = contentShape(for: template)
+        var attempts: [(messages: [LlamaChatMessage], shape: ContentShape)] = [(normalized, preferred)]
+        if preferred != .text { attempts.append((normalized, .text)) }
+        if normalized.first?.role == .system {
+            attempts.append((foldingSystemIntoFirstUser(normalized), .text))
+        }
+        return attempts
+    }
+
     private func render(_ attempts: [(messages: [LlamaChatMessage], shape: ContentShape)], with compiled: Template,
-                        nativeTools: Bool, style: ToolTurnStyle) throws -> String {
+                        nativeTools: Bool, style: ToolTurnStyle, keepsInstructions: Bool) throws -> String {
         var lastFailure = "no attempt rendered"
         for (index, attempt) in attempts.enumerated() {
             do {
                 let rendered = try render(attempt.messages, with: compiled, nativeTools: nativeTools,
-                                          shape: attempt.shape, style: style)
+                                          shape: attempt.shape, style: style, keepsInstructions: keepsInstructions)
                 let isLast = index == attempts.count - 1
                 if isLast || Self.keepsEveryMessage(attempt.messages, in: rendered) {
                     return rendered
@@ -217,9 +258,10 @@ struct LlamaPromptRenderer: Sendable {
     }
 
     private func render(_ messages: [LlamaChatMessage], with compiled: Template, nativeTools: Bool,
-                        shape: ContentShape, style: ToolTurnStyle) throws -> String {
+                        shape: ContentShape, style: ToolTurnStyle, keepsInstructions: Bool) throws -> String {
         let payload = try toolProcessed(try messages.map { try Self.payload(for: $0, shape: shape, style: style) },
-                                        nativeSupport: nativeTools, shape: shape, style: style)
+                                        nativeSupport: nativeTools, shape: shape, style: style,
+                                        keepsInstructions: keepsInstructions)
         var context: [String: Value] = [
             "add_generation_prompt": .boolean(true),
             "messages": try Value(any: payload),
@@ -302,12 +344,14 @@ struct LlamaPromptRenderer: Sendable {
     }
 
     /// `StandardToolInstructionProcessor.processMessages`, which LocalLLMClient applies whenever tools exist. A system
-    /// message it has to add gets the template's content shape; LocalLLMClient always uses parts there.
+    /// message it has to add gets the template's content shape; LocalLLMClient always uses parts there. Unlike it,
+    /// `keepsInstructions` keeps the instructions after a tool result too.
     private func toolProcessed(_ messages: [[String: any Sendable]], nativeSupport: Bool, shape: ContentShape,
-                               style: ToolTurnStyle) throws -> [[String: any Sendable]] {
+                               style: ToolTurnStyle, keepsInstructions: Bool) throws -> [[String: any Sendable]] {
         guard !tools.isEmpty else { return messages }
         var processed = messages
-        let toolsJSON = try tools.toOAICompatJSONString(options: [])
+        // Sorted: the instructions are rendered again every round, and the same tools must give the same text.
+        let toolsJSON = try tools.toOAICompatJSONString(options: [.sortedKeys])
         let lastIsTool = processed.last?["role"] as? String == LlamaChatMessage.Speaker.tool.rawValue
 
         if nativeSupport {
@@ -318,7 +362,7 @@ struct LlamaPromptRenderer: Sendable {
                                   "tools": toolsJSON], at: 0)
             }
         }
-        if !lastIsTool {
+        if !lastIsTool || keepsInstructions {
             let instructions = Self.toolInstructions(toolsJSON)
             if let index = Self.systemIndex(in: processed) {
                 processed[index]["content"] = Self.appending(instructions, to: processed[index]["content"])
@@ -449,10 +493,14 @@ struct LlamaPromptRenderer: Sendable {
 
     /// Qwen2.5 GGUFs escape the tool-call example as `{{"name": …}}` inside a string literal, which renders the
     /// braces doubled; small models copy them and no tool call parses.
+    /// One trailing newline goes too, as in Python Jinja (swift-jinja keeps it): Qwen's generation prompt ended
+    /// `assistant\n\n`, which no later prompt extends.
     static func patched(_ template: String) -> String {
-        template.replacingOccurrences(
+        let repaired = template.replacingOccurrences(
             of: #"{{\"name\": <function-name>, \"arguments\": <args-json-object>}}"#,
             with: #"{\"name\": <function-name>, \"arguments\": <args-json-object>}"#
         )
+        guard let last = repaired.last, last == "\n" || last == "\r\n" || last == "\r" else { return repaired }
+        return String(repaired.dropLast())
     }
 }

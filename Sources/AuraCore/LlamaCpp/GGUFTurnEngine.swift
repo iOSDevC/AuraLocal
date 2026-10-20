@@ -5,8 +5,9 @@ import Synchronization
 
 // MARK: - GGUFTurnEngine
 
-/// Runs one GGUF chat turn at a time over a whole conversation, on a model loaded once. Every turn starts from an
-/// empty KV cache and decode batch, so it never inherits tokens from the turn before.
+/// Runs one GGUF chat turn at a time over a whole conversation, on a model loaded once. A turn whose prompt extends
+/// exactly what the KV cache holds decodes only the new part (``GGUFPromptReuse``); any other turn starts from an empty
+/// KV cache and decode batch, so it never inherits tokens from the turn before.
 ///
 /// Not reentrant: the backends serialise turns with a ``DecodeGate``. A turn that returns early (cancelled, or
 /// stopped by `shouldStop`) can leave its decode finishing in the background; the next turn waits for it.
@@ -16,6 +17,10 @@ protocol GGUFTurnEngine: AnyObject {
     /// No decode of this engine is running and no LocalLLMClient task holds its model, so dropping the engine
     /// frees the model right away.
     var isIdle: Bool { get }
+    /// Messages the last prefill rendered, after normalisation and trimming.
+    var lastHistory: [LlamaChatMessage] { get }
+    /// Contexts or clients rebuilt (a model reload) because a failed prefill could not be flushed.
+    var rebuildCount: Int { get }
 
     /// Streams the reply to `messages` through `onPiece`. Stops after `maxTokens` pieces, when `shouldStop` returns
     /// `true` for the pieces so far, or when the task is cancelled; then it returns the text so far. An engine with
@@ -37,6 +42,9 @@ struct GGUFTurnReply: Sendable {
     let history: [LlamaChatMessage]
     /// What the tool loop did; `nil` for an engine without tools.
     var tools: ToolTurnSummary? = nil
+    /// The text the last prefill decoded: the end of `prompt` when the KV cache already held the rest; `nil` means
+    /// all of `prompt`.
+    var prefilled: String? = nil
 }
 
 extension GGUFTurnEngine {
@@ -70,31 +78,68 @@ extension GGUFTurnEngine {
             fullText += piece
             onToken(fullText)
         }
-        let stats = meter.stats(backend: backend, source: source, prompt: reply.prompt, output: reply.text)
+        let stats = meter.stats(backend: backend, source: source, prompt: reply.prefilled ?? reply.prompt,
+                                output: reply.text)
         return (reply.text, stats, reply.tools)
     }
 }
 
 @MainActor
 enum GGUFTurnEngines {
-    /// Loads the model once, off the main actor. Tools need LocalLLMClient's tool-call parser, which only a
-    /// `LlamaClient` owns; without tools the engine drives a bare `Context`.
+    /// Loads the model once, off the main actor. Without tools, or with tools the model writes as `<tool_call>` JSON,
+    /// the engine drives a bare `Context` and keeps its KV cache between turns and rounds; other tool-call formats
+    /// need LocalLLMClient's parser, which only a `LlamaClient` owns.
     static func load(url: URL, parameter: LlamaClient.Parameter, tools: [any LLMTool]) async throws
         -> any GGUFTurnEngine {
-        let renderer = await renderer(for: url, tools: tools)
-        if tools.isEmpty {
-            return LlamaTurnEngine(renderer: renderer, core: try await LlamaTurnCore.load(url: url, parameter: parameter))
+        try await engine(url: url, parameter: parameter, plan: await plan(url: url, tools: tools))
+    }
+
+    /// The engine ``load(url:parameter:tools:)`` builds for `renderer`.
+    static func engine(url: URL, parameter: LlamaClient.Parameter,
+                       renderer: LlamaPromptRenderer) async throws -> any GGUFTurnEngine {
+        try await engine(url: url, parameter: parameter, plan: await plan(for: renderer, boundaries: nil))
+    }
+
+    private static func engine(url: URL, parameter: LlamaClient.Parameter, plan: Plan) async throws
+        -> any GGUFTurnEngine {
+        if plan.ownsContext {
+            let core = try await LlamaTurnCore.load(url: url, parameter: parameter, boundaries: plan.boundaries)
+            return LlamaTurnEngine(renderer: plan.renderer, core: core)
         }
-        let client = try await LlamaToolTurnEngine.makeClient(url: url, parameter: parameter, tools: renderer.tools)
-        return LlamaToolTurnEngine(url: url, parameter: parameter, renderer: renderer, client: client)
+        let client = try await LlamaToolTurnEngine.makeClient(url: url, parameter: parameter,
+                                                              tools: plan.renderer.tools)
+        return LlamaToolTurnEngine(url: url, parameter: parameter, renderer: plan.renderer, client: client)
+    }
+
+    /// What picking an engine needs from the file.
+    struct Plan: Sendable {
+        let renderer: LlamaPromptRenderer
+        /// The vocabulary's special-token texts; `nil` reads them from the file when the context loads.
+        let boundaries: [String]?
+        /// No tools, or tools written as `<tool_call>` JSON: the engine drives its own `Context`.
+        let ownsContext: Bool
+    }
+
+    /// Worked out off the main actor: finding the special tokens walks the whole vocabulary, and parsing the
+    /// template and probing its call format grow with the template.
+    nonisolated static func plan(url: URL, tools: [any LLMTool]) async -> Plan {
+        let metadata = try? GGUFChatMetadata.read(from: url)
+        return await plan(for: renderer(for: metadata, tools: tools), boundaries: metadata?.controlTokenTexts ?? [])
+    }
+
+    nonisolated static func plan(for renderer: LlamaPromptRenderer, boundaries: [String]?) async -> Plan {
+        Plan(renderer: renderer, boundaries: boundaries,
+             ownsContext: renderer.tools.isEmpty || renderer.asksForTaggedToolCalls)
     }
 
     /// The template and special tokens llama.cpp itself uses. Metadata this parser rejects but llama.cpp loads
     /// falls back to a labelled transcript rather than failing the load.
     nonisolated static func renderer(for url: URL, tools: [any LLMTool]) async -> LlamaPromptRenderer {
-        guard let metadata = try? GGUFChatMetadata.read(from: url) else {
-            return LlamaPromptRenderer(template: nil, tools: tools.map { AnyLLMTool($0) })
-        }
+        renderer(for: try? GGUFChatMetadata.read(from: url), tools: tools)
+    }
+
+    nonisolated static func renderer(for metadata: GGUFChatMetadata?, tools: [any LLMTool]) -> LlamaPromptRenderer {
+        guard let metadata else { return LlamaPromptRenderer(template: nil, tools: tools.map { AnyLLMTool($0) }) }
         return LlamaPromptRenderer(metadata: metadata, tools: tools)
     }
 
@@ -122,9 +167,15 @@ final class DecodeActivity: Sendable {
 
 // MARK: - LlamaTurnEngine
 
-/// Drives the model's one `Context` with `.plain` semantics: reset the KV cache and batch, prefill the rendered
-/// conversation, sample. The decode runs in a task of its own, so a cancelled caller returns at once even while
+/// Drives the model's one `Context` with `.plain` semantics: when the rendered prompt extends what the KV cache holds
+/// (``GGUFPromptReuse``) decode only the rest, otherwise reset the KV cache and batch and prefill the whole
+/// conversation; then sample. The decode runs in a task of its own, so a cancelled caller returns at once even while
 /// LocalLLMClient has the generator parked (it pauses on `willResignActive`).
+///
+/// With tools the model writes its calls as `<tool_call>` JSON (``LlamaPromptRenderer/asksForTaggedToolCalls``) and
+/// ``ToolCallTagParser`` reads them. Each reply that asks for tools is a round: ``ToolLoopDriver`` runs its calls,
+/// and the reply exactly as the model wrote it, tags included, joins the conversation with one tool turn per result,
+/// so the next reply's prompt extends what the KV cache holds.
 @MainActor
 final class LlamaTurnEngine: GGUFTurnEngine {
     let renderer: LlamaPromptRenderer
@@ -132,10 +183,35 @@ final class LlamaTurnEngine: GGUFTurnEngine {
     private var core: LlamaTurnCore
     private var decoder: Task<Void, Never>?
     private let activity = DecodeActivity()
-    /// Messages the last prefill rendered, after normalisation and trimming.
     private(set) var lastHistory: [LlamaChatMessage] = []
-    /// Contexts rebuilt (a model reload) because a reset failed.
     private(set) var rebuildCount = 0
+    /// Off, every prompt is prefilled in full; for comparisons.
+    var reusesPromptCache = true
+    /// The text the KV cache holds, known only after a reply that ended by itself (end of generation or a full
+    /// window); `nil` after a cut, cancelled or failed one.
+    private var resident: String?
+    /// Prefills that decoded only the end of their prompt, and the prompt bytes the last prefill found in the cache.
+    private(set) var reusedPrefills = 0
+    private(set) var lastReusedBytes = 0
+
+    /// Pieces across every round of a turn, which share `maxTokens`, and the text a reader sees.
+    private struct Budget {
+        let limit: Int
+        var produced = 0
+        var text = ""
+
+        var remaining: Int { limit - produced }
+    }
+
+    private struct Streamed {
+        let history: [LlamaChatMessage]
+        let prompt: String
+        let prefilled: String?
+        /// Everything the model wrote, tool-call tags included.
+        let raw: String
+        /// The calls a reply that ended by itself made; `nil` for a cut reply.
+        let calls: [LLMToolCall]?
+    }
 
     init(renderer: LlamaPromptRenderer, core: LlamaTurnCore) {
         self.renderer = renderer
@@ -147,7 +223,6 @@ final class LlamaTurnEngine: GGUFTurnEngine {
     /// The context, for tests that read its KV position while the engine is idle.
     var contextForTesting: LocalLLMClientLlama.Context? { core.currentContext }
 
-    /// Without tools `toolLoop` has nothing to run.
     func respond(
         to messages: [LlamaChatMessage],
         maxTokens: Int,
@@ -158,7 +233,60 @@ final class LlamaTurnEngine: GGUFTurnEngine {
         try await waitForDecoder()
         try Task.checkCancellation()
 
-        let request = LlamaTurnCore.Request(messages: messages, maxTokens: maxTokens, renderer: renderer)
+        var budget = Budget(limit: maxTokens)
+        var history = LlamaChatNormalizer.normalize(messages)
+        guard !renderer.tools.isEmpty else {
+            let reply = try await stream(history, toolRoundsRemain: false, budget: &budget, shouldStop: shouldStop,
+                                         onPiece: onPiece)
+            return GGUFTurnReply(text: budget.text, prompt: reply.prompt, history: reply.history,
+                                 prefilled: reply.prefilled)
+        }
+
+        let limit = max(0, toolLoop.options.maxToolRounds)
+        var rounds = 0
+        var replies = 0
+        var last: Streamed?
+        let driver = ToolLoopDriver(tools: renderer.tools, context: toolLoop)
+        let summary = try await driver.run(
+            reply: {
+                if replies > 0 {
+                    try await waitForDecoder()
+                    try Task.checkCancellation()
+                }
+                replies += 1
+                let streamed = try await stream(history, toolRoundsRemain: rounds < limit, budget: &budget,
+                                                shouldStop: shouldStop, onPiece: onPiece)
+                history = streamed.history
+                last = streamed
+                return streamed.calls
+            },
+            record: { _, results in
+                rounds += 1
+                history += Self.roundMessages(reply: last?.raw ?? "", results: results)
+            }
+        )
+        return GGUFTurnReply(text: budget.text, prompt: last?.prompt ?? "", history: last?.history ?? [],
+                             tools: summary, prefilled: last?.prefilled)
+    }
+
+    /// One round as the conversation records it: the reply as the model wrote it, then one tool turn per result.
+    static func roundMessages(reply: String, results: [ToolCallResult]) -> [LlamaChatMessage] {
+        [.assistant(reply)] + results.map { .tool($0.output) }
+    }
+
+    /// One reply, decoded by the core in a task of its own. With tools, the pieces pass through a
+    /// ``ToolCallTagParser`` and only the text outside calls reaches `onPiece`.
+    private func stream(
+        _ messages: [LlamaChatMessage],
+        toolRoundsRemain: Bool,
+        budget: inout Budget,
+        shouldStop: ((Int) -> Bool)?,
+        onPiece: (String) -> Void
+    ) async throws -> Streamed {
+        let held = reusesPromptCache ? resident : nil
+        resident = nil
+        let request = LlamaTurnCore.Request(messages: messages, maxTokens: budget.remaining, renderer: renderer,
+                                            toolRoundsRemain: toolRoundsRemain, resident: held)
         let (events, sink) = AsyncThrowingStream<LlamaTurnCore.Event, any Error>.makeStream()
         let core = self.core
         let activity = self.activity
@@ -170,23 +298,45 @@ final class LlamaTurnEngine: GGUFTurnEngine {
         self.decoder = decoder
         defer { decoder.cancel() }
 
-        var text = ""
-        var produced = 0
+        var parser = renderer.tools.isEmpty ? nil : ToolCallTagParser()
+        var raw = ""
         var prefilled: LlamaTurnCore.Prefill?
+        var completed = false
         reading: for try await event in events {
             switch event {
             case .prefilled(let report):
                 prefilled = report
-                lastHistory = report.history
-                if report.rebuilt { rebuildCount += 1 }
+                record(report)
             case .piece(let piece):
-                text += piece
-                produced += 1
-                onPiece(piece)
-                if let shouldStop, shouldStop(produced) { break reading }
+                raw += piece
+                budget.produced += 1
+                if parser == nil {
+                    show(piece, in: &budget, onPiece: onPiece)
+                } else if let visible = parser?.consume(piece), !visible.isEmpty {
+                    show(visible, in: &budget, onPiece: onPiece)
+                }
+                if let shouldStop, shouldStop(budget.produced) { break reading }
+            case .completed:
+                completed = true
             }
         }
-        return GGUFTurnReply(text: text, prompt: prefilled?.prompt ?? "", history: prefilled?.history ?? [])
+        let ended = completed && !Task.isCancelled
+        if let rest = parser?.finish(includingOpenCall: ended), !rest.isEmpty { show(rest, in: &budget, onPiece: onPiece) }
+        if ended, let prefilled { resident = prefilled.prompt + raw }
+        return Streamed(history: prefilled?.history ?? [], prompt: prefilled?.prompt ?? "",
+                        prefilled: prefilled?.decoded, raw: raw, calls: ended ? parser?.calls ?? [] : nil)
+    }
+
+    private func record(_ report: LlamaTurnCore.Prefill) {
+        lastHistory = report.history
+        if report.rebuilt { rebuildCount += 1 }
+        lastReusedBytes = report.reused
+        if report.reused > 0 { reusedPrefills += 1 }
+    }
+
+    private func show(_ text: String, in budget: inout Budget, onPiece: (String) -> Void) {
+        budget.text += text
+        onPiece(text)
     }
 
     /// Waits for the decode a cut or cancelled turn left running.
@@ -206,11 +356,16 @@ final class LlamaTurnCore: @unchecked Sendable {
     private let loadParameters: LlamaClient.Parameter
     private var liveContext: LocalLLMClientLlama.Context?
     private var fitter: GGUFPromptFitter
+    private let reuse: GGUFPromptReuse
 
     struct Request: Sendable {
         let messages: [LlamaChatMessage]
         let maxTokens: Int
         let renderer: LlamaPromptRenderer
+        /// Passed to ``LlamaPromptRenderer/render(_:toolRoundsRemain:)``.
+        var toolRoundsRemain = false
+        /// The text the KV cache holds, when the reply before ended by itself; `nil` starts from an empty cache.
+        var resident: String? = nil
     }
 
     struct Prefill: Sendable {
@@ -218,23 +373,36 @@ final class LlamaTurnCore: @unchecked Sendable {
         let prompt: String
         /// The context had to be rebuilt first.
         let rebuilt: Bool
+        /// Bytes at the start of `prompt` the KV cache already held; 0 after a full prefill.
+        let reused: Int
+
+        var decoded: String {
+            reused == 0 ? prompt : String(decoding: prompt.utf8.dropFirst(reused), as: UTF8.self)
+        }
     }
 
     enum Event: Sendable {
         case prefilled(Prefill)
         case piece(String)
+        /// The reply ended by itself (end of generation or a full window): the KV cache holds exactly the prompt and
+        /// every piece, and no token is left queued.
+        case completed
     }
 
-    private init(url: URL, parameter: LlamaClient.Parameter) throws {
+    private init(url: URL, parameter: LlamaClient.Parameter, reuse: GGUFPromptReuse) throws {
         modelFile = url
         loadParameters = parameter
         liveContext = try LocalLLMClientLlama.Context(url: url, parameter: parameter)
         fitter = GGUFPromptFitter(windowSize: parameter.context)
+        self.reuse = reuse
     }
 
-    /// Loads the model off the main actor.
-    static func load(url: URL, parameter: LlamaClient.Parameter) async throws -> LlamaTurnCore {
-        try LlamaTurnCore(url: url, parameter: parameter)
+    /// Loads the model off the main actor. `boundaries` are the vocabulary's special-token texts, read from the file
+    /// when `nil`.
+    static func load(url: URL, parameter: LlamaClient.Parameter, boundaries: [String]? = nil) async throws
+        -> LlamaTurnCore {
+        let texts = boundaries ?? (try? GGUFChatMetadata.read(from: url))?.controlTokenTexts ?? []
+        return try LlamaTurnCore(url: url, parameter: parameter, reuse: GGUFPromptReuse(boundaries: texts))
     }
 
     var currentContext: LocalLLMClientLlama.Context? { liveContext }
@@ -243,9 +411,8 @@ final class LlamaTurnCore: @unchecked Sendable {
         do {
             // A turn cancelled before it got here (e.g. while queued) skips the prefill too.
             guard !Task.isCancelled else { return events.finish() }
-            let (context, rebuilt) = try preparedContext()
-            let (history, prompt) = try prefill(request, into: context)
-            events.yield(.prefilled(Prefill(history: history, prompt: prompt, rebuilt: rebuilt)))
+            let (context, report) = try prepared(request)
+            events.yield(.prefilled(report))
 
             var produced = 0
             let pieces = LocalLLMClientLlama.Generator(context: context)
@@ -254,6 +421,8 @@ final class LlamaTurnCore: @unchecked Sendable {
                 produced += 1
                 if produced >= request.maxTokens || Task.isCancelled { break }
             }
+            // A break leaves the last sampled token queued; the generator ending on its own does not.
+            if produced < request.maxTokens && !Task.isCancelled { events.yield(.completed) }
             events.finish()
         } catch {
             events.finish(throwing: error)
@@ -267,6 +436,29 @@ final class LlamaTurnCore: @unchecked Sendable {
         context.clear()
         try context.decode()
         context.clear()
+    }
+
+    /// The context with the request's prompt decoded: only its new part when the cache holds the rest, otherwise in
+    /// full after a reset.
+    private func prepared(_ request: Request) throws -> (context: LocalLLMClientLlama.Context, report: Prefill) {
+        let render = { (messages: [LlamaChatMessage]) throws -> String in
+            try request.renderer.render(messages, toolRoundsRemain: request.toolRoundsRemain)
+        }
+        let (history, prompt) = try fitter.fitted(LlamaChatNormalizer.normalize(request.messages),
+                                                  replyBudget: request.maxTokens, render: render)
+        if let resident = request.resident, let context = liveContext,
+           let suffix = reuse.suffix(of: prompt, after: resident), Self.decoded(suffix, into: context) {
+            return (context, Prefill(history: history, prompt: prompt, rebuilt: false, reused: resident.utf8.count))
+        }
+        let (context, rebuilt) = try preparedContext()
+        let fitted = try prefill(history, prompt: prompt, budget: request.maxTokens, render: render, into: context)
+        return (context, Prefill(history: fitted.history, prompt: fitted.prompt, rebuilt: rebuilt, reused: 0))
+    }
+
+    /// A failure (an overflowed window among them) can leave part of `suffix` decoded and a chunk queued; the full
+    /// prefill that follows resets both.
+    private static func decoded(_ suffix: String, into context: LocalLLMClientLlama.Context) -> Bool {
+        (try? context.decode(text: suffix)) != nil
     }
 
     /// A context whose reset fails is replaced, which reloads the model; the old one is freed first.
@@ -284,10 +476,10 @@ final class LlamaTurnCore: @unchecked Sendable {
         return (fresh, true)
     }
 
-    private func prefill(_ request: Request,
+    private func prefill(_ fitted: [LlamaChatMessage], prompt fittedPrompt: String, budget: Int,
+                         render: ([LlamaChatMessage]) throws -> String,
                          into context: LocalLLMClientLlama.Context) throws -> (history: [LlamaChatMessage], prompt: String) {
-        var (history, prompt) = try fitter.fitted(LlamaChatNormalizer.normalize(request.messages),
-                                                  replyBudget: request.maxTokens, render: request.renderer.render)
+        var (history, prompt) = (fitted, fittedPrompt)
         while true {
             do {
                 try context.decode(text: prompt)
@@ -300,8 +492,7 @@ final class LlamaTurnCore: @unchecked Sendable {
                     liveContext = nil
                     throw error
                 }
-                guard let shorter = try fitter.shortened(history, replyBudget: request.maxTokens,
-                                                         render: request.renderer.render) else { throw error }
+                guard let shorter = try fitter.shortened(history, replyBudget: budget, render: render) else { throw error }
                 (history, prompt) = shorter
             }
         }
@@ -310,10 +501,11 @@ final class LlamaTurnCore: @unchecked Sendable {
 
 // MARK: - LlamaToolTurnEngine
 
-/// The tool-calling turn: LocalLLMClient's parser on a `LlamaClient`, fed `.plain` prompts (which clear the KV cache)
-/// rendered with real roles. Each reply that asks for tools is a round: ``ToolLoopDriver`` runs its calls, the round
-/// (the reply's calls and their results) joins the conversation, and the whole conversation is prefilled again for
-/// the next reply, up to ``ToolLoopOptions/maxToolRounds`` rounds.
+/// The tool-calling turn for call formats other than `<tool_call>` JSON (``LlamaPromptRenderer/asksForTaggedToolCalls``):
+/// LocalLLMClient's parser on a `LlamaClient`, fed `.plain` prompts (which clear the KV cache) rendered with real roles.
+/// Each reply that asks for tools is a round: ``ToolLoopDriver`` runs its calls, the round (the reply's calls and
+/// their results) joins the conversation, and the whole conversation is prefilled again for the next reply, up to
+/// ``ToolLoopOptions/maxToolRounds`` rounds.
 ///
 /// `LlamaClient.responseStream` decodes in a task nobody can cancel. A reply cut by `maxTokens`, `shouldStop` or
 /// cancellation returns at once, but the next turn waits until that decode reaches end of generation or fills the
@@ -379,6 +571,8 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
         var history = LlamaChatNormalizer.normalize(messages)
         var sent: (history: [LlamaChatMessage], prompt: String) = (history, "")
         var replies = 0
+        let limit = max(0, toolLoop.options.maxToolRounds)
+        var rounds = 0
         let driver = ToolLoopDriver(tools: renderer.tools, context: toolLoop)
         let summary = try await driver.run(
             reply: {
@@ -388,13 +582,15 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
                 }
                 replies += 1
                 progress.roundText = ""
-                let streamed = try await stream(history, progress: &progress, shouldStop: shouldStop, onPiece: onPiece)
+                let streamed = try await stream(history, toolRoundsRemain: rounds < limit, progress: &progress,
+                                                shouldStop: shouldStop, onPiece: onPiece)
                 history = streamed.history
                 sent = (streamed.history, streamed.prompt)
                 guard case .finished(let calls) = streamed.outcome else { return nil }
                 return calls
             },
             record: { calls, results in
+                rounds += 1
                 history += Self.roundMessages(text: progress.roundText, calls: calls, results: results)
             }
         )
@@ -412,11 +608,16 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
     /// that rendered; trimming drops whole exchanges before the newest user turn, never the rounds after it.
     private func stream(
         _ messages: [LlamaChatMessage],
+        toolRoundsRemain: Bool,
         progress: inout Progress,
         shouldStop: ((Int) -> Bool)?,
         onPiece: (String) -> Void
     ) async throws -> (outcome: Outcome, history: [LlamaChatMessage], prompt: String) {
-        var (history, prompt) = try fitter.fitted(messages, replyBudget: progress.limit, render: renderer.render)
+        let renderer = self.renderer
+        let render = { (messages: [LlamaChatMessage]) throws -> String in
+            try renderer.render(messages, toolRoundsRemain: toolRoundsRemain)
+        }
+        var (history, prompt) = try fitter.fitted(messages, replyBudget: progress.limit, render: render)
         let chunks: AsyncThrowingStream<StreamingChunk, any Error>
         while true {
             let client = try await liveClient()
@@ -427,7 +628,7 @@ final class LlamaToolTurnEngine: GGUFTurnEngine {
                 await discardQueuedTokens(of: client)
                 guard fitter.learn(from: error, promptBytes: prompt.utf8.count),
                       let shorter = try fitter.shortened(history, replyBudget: progress.limit,
-                                                         render: renderer.render) else { throw error }
+                                                         render: render) else { throw error }
                 (history, prompt) = shorter
             }
         }

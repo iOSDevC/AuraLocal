@@ -96,8 +96,11 @@ public extension AuraLocal {
     /// so the next `chat(_:in:)` or `stream(_:in:)` on this instance waits for them, and for any stream still
     /// generating, before it stores its prompt.
     ///
-    /// On a GGUF instance with tools the reply is cut and stored at once, but llama.cpp keeps decoding until the end
-    /// of generation or a full context window, and the next turn on that instance waits for it.
+    /// On a GGUF instance whose tool-call format runs on LocalLLMClient's `LlamaClient` (for example Llama 3.1's) the
+    /// reply is cut and stored at once, but llama.cpp keeps decoding until the end of generation or a full context
+    /// window, and the next turn on that instance waits for it. With `<tool_call>` JSON templates (Qwen2.5's, and
+    /// templates without tool support) the decode stops as without tools: after at most one more token, or when a
+    /// running prefill ends.
     ///
     /// ```swift
     /// for try await token in llm.stream("Tell me more", in: conv.id) {

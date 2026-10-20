@@ -34,8 +34,10 @@ Playground sheet (Private Cloud Compute from iOS 27) and FLUX + LoRA on macOS.
 
 [Conversations & History]({{ '/guide/conversations' | relative_url }}) stores multi-turn chats in SQLite with
 full-text search. Cancelling the task that runs a `stream(_:in:)` loop cancels the generation and saves the text
-generated so far as the reply, or removes the user turn when there was none; on a GGUF model loaded with tools,
-llama.cpp keeps decoding until generation ends, and the next turn waits for it
+generated so far as the reply, or removes the user turn when there was none; on a GGUF model loaded with tools
+whose call format runs on LocalLLMClient's `LlamaClient` (for example Llama 3.1's or Mistral's), llama.cpp keeps
+decoding until generation ends, and the next turn waits for it; with `<tool_call>` JSON templates (Qwen2.5's, and
+templates without tool support) the decode stops as without tools
 ([Multi-Turn Chat]({{ '/guide/conversations' | relative_url }}#multi-turn-chat)).
 
 ## Download models and keep them

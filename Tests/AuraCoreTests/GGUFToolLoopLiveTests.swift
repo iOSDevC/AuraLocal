@@ -66,13 +66,38 @@ final class GGUFToolLoopLiveTests: XCTestCase {
         report("text form", reply: reply.text, turn: turn, events: events, prompt: reply.prompt)
         assertInvariants(turn, events: events, limit: 1, log: log)
         try await waitUntilIdle(engine)
-        guard let call = turn.results.first?.call else { throw XCTSkip("the model made no tool call") }
+        guard turn.results.first != nil else { throw XCTSkip("the model made no tool call") }
 
-        XCTAssertTrue(reply.prompt.contains("<|im_start|>assistant\n<tool_call>\n{\"name\": \"echo\", \"arguments\": "
-                                            + call.arguments + "}\n</tool_call>\n<tool_response>\n"), reply.prompt)
+        // The round's call is the reply as the model wrote it, the <tool_call> block included.
+        let call = try XCTUnwrap(reply.history.first { $0.role == .assistant }?.content)
+        XCTAssertTrue(call.contains("<tool_call>"), call)
+        XCTAssertTrue(reply.prompt.contains("<|im_start|>assistant\n" + call + "\n<tool_response>\n"), reply.prompt)
         XCTAssertEqual(reply.prompt.components(separatedBy: "<|im_start|>assistant\n").count - 1, 2,
                        "the round is one assistant turn, then the generation prompt")
         XCTAssertFalse(reply.prompt.contains("<|im_start|>tool"), "the result is sent in the round's assistant turn")
+    }
+
+    /// Without tool support the instructions are the only list of tools, so they stay while another round may run.
+    func testTextFormRoundsKeepTheToolListWhileRoundsRemain() async throws {
+        let url = try modelURL()
+        let metadata = try GGUFChatMetadata.read(from: url)
+        let log = CallLog()
+        let tools: [any LLMTool] = [SecretTool(log: log), EchoTool(log: log)]
+        let renderer = LlamaPromptRenderer(template: Self.plainChatML, specialTokens: metadata.specialTokens,
+                                           tools: tools.map { AnyLLMTool($0) })
+        let engine = try await makeToolEngine(tools: tools, renderer: renderer)
+        let events = EventLog()
+        let reply = try await engine.respond(
+            to: [.user("First call get_secret to learn the secret word. Then call echo with that word.")],
+            maxTokens: 192, toolLoop: context(ToolLoopOptions(maxToolRounds: 3), events), shouldStop: nil) { _ in }
+        let turn = try XCTUnwrap(reply.tools)
+        report("text form, 3 rounds", reply: reply.text, turn: turn, events: events, prompt: reply.prompt)
+        assertInvariants(turn, events: events, limit: 3, log: log)
+        try await waitUntilIdle(engine)
+        guard turn.rounds > 0 else { throw XCTSkip("the model made no tool call") }
+        let listsTools = reply.prompt.contains("If you decide to invoke")
+            && reply.prompt.contains(#""description":"Return the secret word.""#)
+        XCTAssertEqual(listsTools, turn.rounds < 3, "the last prompt lists the tools exactly when a round could still run")
     }
 
     func testChainUpToThreeRounds() async throws {
@@ -267,14 +292,16 @@ final class GGUFToolLoopLiveTests: XCTestCase {
         return URL(fileURLWithPath: path)
     }
 
+    /// The engine a load picks for the model's call format.
     private func makeToolEngine(tools: [any LLMTool], context: Int = 4096,
-                                renderer custom: LlamaPromptRenderer? = nil) async throws -> LlamaToolTurnEngine {
+                                renderer custom: LlamaPromptRenderer? = nil) async throws -> any GGUFTurnEngine {
         let url = try modelURL()
         let settings = LlamaClient.Parameter(context: context, batch: min(context, 2048), temperature: 0, topP: 0.95)
         var renderer = await GGUFTurnEngines.renderer(for: url, tools: tools)
         if let custom { renderer = custom }
-        let client = try await LlamaToolTurnEngine.makeClient(url: url, parameter: settings, tools: renderer.tools)
-        return LlamaToolTurnEngine(url: url, parameter: settings, renderer: renderer, client: client)
+        let engine = try await GGUFTurnEngines.engine(url: url, parameter: settings, renderer: renderer)
+        print("tool engine: \(type(of: engine))")
+        return engine
     }
 
     private func loadModel(tools: [any LLMTool]) async throws -> AuraLocal {
@@ -290,12 +317,12 @@ final class GGUFToolLoopLiveTests: XCTestCase {
         return llm
     }
 
-    private func toolEngine(of llm: AuraLocal) throws -> LlamaToolTurnEngine {
+    private func toolEngine(of llm: AuraLocal) throws -> any GGUFTurnEngine {
         let backend = try XCTUnwrap(llm.engine.backend as? LlamaCppBackend)
-        return try XCTUnwrap(backend.turnEngine as? LlamaToolTurnEngine)
+        return try XCTUnwrap(backend.turnEngine)
     }
 
-    private func lastPrompt(of engine: LlamaToolTurnEngine) throws -> String {
+    private func lastPrompt(of engine: any GGUFTurnEngine) throws -> String {
         try engine.renderer.render(engine.lastHistory)
     }
 
