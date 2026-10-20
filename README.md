@@ -595,8 +595,8 @@ Each constrained call runs on its own short-lived llama.cpp client; see
 [Constrained generation](docs/guide/backends.md#constrained-generation-gguf-only) for the cost and the limits.
 
 Every GGUF turn renders the conversation with the model's own chat template (real system, user and assistant
-roles) and starts from an empty KV cache; see
-[Multi-turn conversations (GGUF)](docs/guide/backends.md#multi-turn-conversations-gguf).
+roles). A turn that extends the last one's prompt and reply decodes only what it adds; any other turn starts from an
+empty KV cache; see [Multi-turn conversations (GGUF)](docs/guide/backends.md#multi-turn-conversations-gguf).
 
 ### Text Models — MLX (GPU, Apple Silicon)
 
@@ -1211,7 +1211,7 @@ AuraLocal is designed for Swift 6 strict concurrency:
 | `AuraLocal` | `@MainActor` | Wraps MLX/llama.cpp callbacks that fire on main thread |
 | `AuraEngine` | `@MainActor` | Delegates to `InferenceBackend` protocol |
 | `MLXBackend` | `@MainActor` | Owns MLX model container and GPU state |
-| `LlamaCppBackend` | `@MainActor` | Owns one GGUF turn engine (a llama.cpp context, or a `LlamaClient` when tools are registered) and starts every turn from an empty KV cache |
+| `LlamaCppBackend` | `@MainActor` | Owns one GGUF turn engine (a llama.cpp context, or a `LlamaClient` for tool-call formats other than `<tool_call>` JSON); a turn that extends the last one reuses its KV cache, any other starts from an empty one |
 | `LayerStreamingBackend` | `@MainActor` | Same per-turn context, plus `MemoryBudgetManager` |
 | `MemoryBudgetManager` | `@MainActor` | Reads `os_proc_available_memory()` and publishes pressure state |
 | `BackgroundLifecycle` | `@MainActor` | Cancels running generations on UIApplication background notifications; published `isPaused` |

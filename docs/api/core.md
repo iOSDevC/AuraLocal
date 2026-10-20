@@ -240,12 +240,14 @@ print(llm.lastToolTurn?.rounds ?? 0)
   [AuraSession](#aurasession)).
 
 {: .warning }
-> GGUF only: tools on an MLX model throw `ModelConfigurationError.toolsUnsupported(.mlx)`. Every round prefills the
-> whole conversation again, so a turn with three rounds costs about three prefills. LocalLLMClient keeps only the
-> first call per tool name in one reply, and a tool's output is not capped: a large one makes the oldest exchanges
-> drop out of the window, or overflows it. The native tool-turn format has been checked on Qwen2.5 only. On a
-> template that does not mention `tools`, only the first reply's prompt lists the tools, so chaining to another
-> tool in a later round needs a template with tool support. See
+> GGUF only: tools on an MLX model throw `ModelConfigurationError.toolsUnsupported(.mlx)`. Models asked to write
+> calls as `<tool_call>` JSON (Qwen2.5's template, and any template without tool support) run on AuraLocal's own
+> parser: every call in a reply runs, and a round's reply joins the conversation as the model wrote it, so the next
+> reply decodes only what the round added while another round may run; the reply after the last allowed round
+> prefills the whole conversation. Other formats run on LocalLLMClient's parser, which keeps only the first call per
+> tool name in one reply, and every round prefills the whole conversation again. A tool's output is not capped: a
+> large one makes the oldest exchanges drop out of the window, or overflows it. The native tool-turn format has been
+> checked on Qwen2.5 only. See
 > [Multi-turn conversations]({{ '/guide/backends' | relative_url }}#multi-turn-conversations-gguf).
 
 ### History Methods
@@ -316,9 +318,9 @@ public struct GenerationStats: Sendable, Hashable {
 | Backend | `source` | Prompt tokens | Output tokens | Durations |
 |---|---|---|---|---|
 | `MLXBackend` | `.runtime` | exact | exact | runtime prefill; decode and TTFT from AuraLocal's clock (first token callback to last) |
-| `LlamaCppBackend`, no tools; constrained calls | `.measured` | estimated from the rendered prompt | one per streamed piece (one per sampled token in LocalLLMClient 0.5.0) | AuraLocal's clock |
+| `LlamaCppBackend`, no tools; constrained calls | `.measured` | estimated from the text prefilled: the rendered prompt, or only its new part when the KV cache was reused | one per streamed piece (one per sampled token in LocalLLMClient 0.5.0) | AuraLocal's clock |
 | `LlamaCppBackend` / `LayerStreamingBackend` with tools | `.estimated` | estimated | estimated | AuraLocal's clock |
-| `LayerStreamingBackend`, no tools | `.measured` | estimated | one per streamed piece | AuraLocal's clock |
+| `LayerStreamingBackend`, no tools | `.measured` | estimated from the text prefilled, as above | one per streamed piece | AuraLocal's clock |
 | Remote (`HybridEscalator`) | — | — | — | no stats; provider-reported usage is in `HybridEscalator.Result.usage` |
 
 LocalLLMClient 0.5.0 exposes no tokenizer or prompt count, so llama.cpp prompt counts stay estimates. A constrained
