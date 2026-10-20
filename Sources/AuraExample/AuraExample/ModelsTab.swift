@@ -12,7 +12,7 @@ import AuraImageGen
 
 struct ModelsTab: View {
     let imageState: ImageGenState
-    /// Library and Agents load their models through `ModelManager`, which downloads MLX snapshots itself.
+    /// Library and Agents load their models through `ModelManager`; a load reads the files Delete removes.
     @ObservedObject private var loader = ModelManager.shared
     @State private var items: [StoredModel] = []
     @State private var freeBytes: Int64?
