@@ -28,18 +28,22 @@ final class AppState: ObservableObject {
     let store   = ConversationStore.shared
     let library = DocumentLibrary.shared
     private var crewStorage: AnyObject?
+    private var isSettingUp = false
     @available(iOS 26, macOS 26, *)
     var crew: AgentCrew? { crewStorage as? AgentCrew }
 
     // MARK: - Setup
 
     func setup() async {
-        guard !isReady else { return }
+        // The tab's `.task` and the placeholder's `onReady` can both call this once the models are on disk.
+        guard !isReady, !isSettingUp else { return }
         let needed = Self.neededModels()
         guard needed.notDownloaded.isEmpty else {
             modelsToDownload = needed
             return
         }
+        isSettingUp = true
+        defer { isSettingUp = false }
         modelsToDownload = []
 
         do {
