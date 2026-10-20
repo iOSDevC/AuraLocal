@@ -222,9 +222,8 @@ struct HubFileTransfer: Sendable {
         Self.log.info("\(path, privacy: .public) complete · \(finalSize) bytes\(verified, privacy: .public)")
     }
 
-    /// Moves a finished `partial` to `destination` once it is still the file this download wrote: there, and
-    /// `expectedSize` bytes. Otherwise another writer moved, deleted or rewrote it, and
-    /// ``DownloadConflictError/partialChanged(path:)`` is thrown instead of a raw file-system error.
+    /// Re-checks that `partial` is still the `expectedSize` bytes this download wrote, so a file another writer took
+    /// fails with ``DownloadConflictError/partialChanged(path:)`` instead of a raw file-system error.
     static func promote(_ partial: URL, to destination: URL, expectedSize: Int64, path: String) throws {
         let actual = fileSize(at: partial)
         guard actual == expectedSize else {

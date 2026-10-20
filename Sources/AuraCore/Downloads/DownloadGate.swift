@@ -4,21 +4,8 @@ import os
 
 // MARK: - DownloadGate
 
-/// One writer at a time per download destination: in this process through a queue, and across processes that share
-/// the storage root (on macOS the `aura` CLI, apps without App Sandbox and `swift test`) through
-/// ``DownloadFileLock``, taken once the queue lets a caller in.
-///
-/// A download holds the path that owns its `.partial` files. Everything that writes into a Hugging Face snapshot
-/// (the MLX load path, ``ModelDownloads/download(_:auth:progress:)`` for MLX and
-/// ``ModelDownloads/downloadFolder(repoID:revision:folder:include:auth:progress:)``) holds the `snapshots/main`
-/// folder; a GGUF or ``ChunkedDownloader`` download holds its file. In this process two paths also conflict when one
-/// contains the other; across processes only an identical path does, which that rule makes enough for AuraLocal's
-/// own downloads, since none of their paths nests in another's.
-///
-/// Callers run in arrival order, each through its whole body, so a later caller finds the finished file or marker
-/// and returns without a transfer. Nothing is shared between them: cancelling a queued caller only takes it out of
-/// the queue, and cancelling the running one stops its own transfer, leaving the `.partial` the next one resumes.
-/// Not reentrant: a body must not ask for a path that overlaps the one it holds.
+/// One writer per destination: a snapshot download holds `snapshots/main`, a file download its file; overlapping paths
+/// wait in this process, identical ones across processes (``DownloadFileLock``). Not reentrant for overlapping paths.
 actor DownloadGate {
     static let shared = DownloadGate()
 
@@ -42,9 +29,8 @@ actor DownloadGate {
         self.lockRetryInterval = lockRetryInterval
     }
 
-    /// Runs `body` while holding `destination`, after every earlier caller for an overlapping path is done, and
-    /// releases it however `body` ends. `body` runs on the caller's actor and receives whether an earlier caller
-    /// with the same `request` (a string naming what is fetched) finished successfully while this one waited.
+    /// Runs `body` once every earlier caller for an overlapping path is done. `body` learns whether one with the same
+    /// `request` (a string naming what is fetched) succeeded while this one waited.
     func exclusive<T>(
         _ destination: URL,
         request: String? = nil,
@@ -158,9 +144,8 @@ actor DownloadGate {
 
 // MARK: - DownloadFileLock
 
-/// An advisory `flock(2)` on `<destination>.lock`, so two processes sharing the storage root never write the same
-/// `.partial`. The kernel drops it when the holder exits, so a lock file a crash left behind is simply locked again.
-/// Waiting polls a non-blocking `flock` with an async sleep and never blocks a thread.
+/// An advisory `flock(2)` on `<destination>.lock` for processes sharing the storage root. The kernel drops it with
+/// the holder, so a crash leaves nothing stale; waiting polls a non-blocking `flock` so no thread blocks.
 struct DownloadFileLock: Sendable {
     let lockFile: URL
     private let descriptor: Int32
@@ -205,9 +190,13 @@ struct DownloadFileLock: Sendable {
         }
     }
 
-    /// Unlinks the lock file while still holding it, so a process that opened the old file starts over, then unlocks.
+    /// Unlinks the lock file while still holding it, so a process that opened it starts over. A file recreated after a
+    /// delete removed this one belongs to another holder and stays.
     func release() {
-        unlink(lockFile.path(percentEncoded: false))
+        let path = lockFile.path(percentEncoded: false)
+        if Self.isLinked(descriptor, at: path) {
+            unlink(path)
+        }
         flock(descriptor, LOCK_UN)
         close(descriptor)
         Self.removeEmpty(createdFolders)

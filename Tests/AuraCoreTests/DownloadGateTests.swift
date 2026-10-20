@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Synchronization
 import Testing
@@ -217,6 +218,28 @@ final class DownloadGateTests {
         #expect(Self.exists(base))
     }
 
+    @Test func releasingAfterTheLockFileWasReplacedLeavesTheNewHolderLocked() async throws {
+        let destination = base.appending(path: "m.gguf")
+        let first = try await DownloadFileLock.acquire(for: destination, retryInterval: .milliseconds(5))
+        // Stands in for a delete that removed the folder holding the lock file.
+        unlink(first.lockFile.path(percentEncoded: false))
+        let second = try await DownloadFileLock.acquire(for: destination, retryInterval: .milliseconds(5))
+
+        first.release()
+
+        #expect(Self.exists(second.lockFile))
+        let acquired = Flag()
+        let third = Task {
+            let lock = try await DownloadFileLock.acquire(for: destination, retryInterval: .milliseconds(5))
+            acquired.set()
+            return lock
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!acquired.isSet, "a third caller got the lock while the second still held it")
+        second.release()
+        try await third.value.release()
+    }
+
     #if os(macOS)
     /// A real second process: `flock` held by Perl, then dropped by the kernel when it exits.
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: "/usr/bin/perl")))
@@ -327,6 +350,23 @@ final class DownloadGuardEntryPointTests {
 
     private static func payload(_ count: Int) -> Data {
         Data((0..<count).map { UInt8($0 % 251) })
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        FileIntegrity.hex(SHA256.hash(data: data))
+    }
+
+    /// Publishes `body`'s SHA-256 for `file`, which `GGUFModelDownloader` and `ModelDownloads` then verify.
+    private func serveGGUF(_ repo: String, _ file: String, body: Data) {
+        hub.serve("\(repo)/resolve/main/\(file)", body: body)
+        let entry: [String: Any] = ["type": "file", "path": file, "size": body.count,
+                                    "lfs": ["oid": Self.sha256(body), "size": body.count]]
+        hub.serve("api/models/\(repo)/paths-info/main",
+                  body: (try? JSONSerialization.data(withJSONObject: [entry])) ?? Data())
+    }
+
+    private static func chunked() -> ChunkedDownloader {
+        ChunkedDownloader(session: stubSession, concurrentChunks: 2, chunkThresholdMB: 10, auth: NoDownloadAuth())
     }
 
     private static func model(repoID: String, gguf file: String?) throws -> Model {
@@ -505,6 +545,63 @@ final class DownloadGuardEntryPointTests {
         }
     }
 
+    @MainActor
+    @Test func cancelAlsoEndsACallOfTheSameDownloaderStillWaiting() async throws {
+        try await Self.withStorageRootRepo { repo in
+            hub.serve("\(repo)/resolve/main/m.gguf", body: Self.payload(4000))
+            let model = try Self.model(repoID: repo, gguf: "m.gguf")
+            let file = model.cacheDirectory.appending(path: "m.gguf")
+            let downloader = GGUFModelDownloader(auth: NoDownloadAuth(),
+                                                 sessionConfiguration: Self.stubConfiguration(),
+                                                 checksumSession: Self.stubSession)
+            let running = Task { try await downloader.download(model: model) { _ in } }
+            #expect(await eventually { await downloader.isDownloading })
+            let waiting = Task { try await downloader.download(model: model) { _ in } }
+            #expect(await eventually { await DownloadGate.shared.waitingCount(at: file) == 1 })
+
+            downloader.cancel()
+
+            await #expect(throws: CancellationError.self) { try await running.value }
+            await #expect(throws: CancellationError.self) { try await waiting.value }
+            // The cancelled transfer may not have reached the stub; the waiting call must never start one.
+            try await Task.sleep(for: .milliseconds(200))
+            #expect(transfers(of: "\(repo)/resolve/main/m.gguf") <= 1)
+        }
+    }
+
+    /// 32 MB, so hashing outlasts the hop that delivers "Verifying" and `cancel()` lands mid-hash.
+    @MainActor
+    @Test func cancellingTheLoadPathWhileItVerifiesHandsTheFileOnIntact() async throws {
+        try await Self.withStorageRootRepo { repo in
+            let body = Data(repeating: 7, count: 32 << 20)
+            serveGGUF(repo, "m.gguf", body: body)
+            let model = try Self.model(repoID: repo, gguf: "m.gguf")
+            let file = model.cacheDirectory.appending(path: "m.gguf")
+            let downloader = GGUFModelDownloader(auth: NoDownloadAuth(),
+                                                 sessionConfiguration: Self.stubConfiguration(),
+                                                 checksumSession: Self.stubSession)
+            let loading = Task {
+                try await downloader.download(model: model) { message in
+                    if message.hasPrefix("Verifying") { downloader.cancel() }
+                }
+            }
+            #expect(await eventually { await downloader.isDownloading })
+            let transfer = self.transfer()
+            let storageRoot = ModelStorage.rootDirectory
+            let fetching = Task {
+                try await ModelDownloads.download(model, transfer: transfer, root: storageRoot) { _, _ in }
+            }
+            #expect(await eventually { await DownloadGate.shared.waitingCount(at: file) == 1 })
+
+            await #expect(throws: CancellationError.self) { try await loading.value }
+            let fetched = try await fetching.value
+
+            #expect(Self.samePath(fetched, file))
+            #expect(try Data(contentsOf: fetched) == body)
+            #expect(transfers(of: "\(repo)/resolve/main/m.gguf") == 1)
+        }
+    }
+
     // MARK: ChunkedDownloader
 
     @Test func twoChunkedDownloadsToOneFileTransferItOnce() async throws {
@@ -523,6 +620,57 @@ final class DownloadGuardEntryPointTests {
 
         #expect(try Data(contentsOf: destination) == body)
         #expect(transfers(of: "stub/chunked/resolve/main/blob.bin") == 1)
+    }
+
+    @Test func aChunkedDownloadReplacesAFileAlreadyThere() async throws {
+        let url = try #require(URL(string: "https://huggingface.co/stub/chunked-old/resolve/main/blob.bin"))
+        let body = Self.payload(3000)
+        hub.serve("stub/chunked-old/resolve/main/blob.bin", body: body)
+        let destination = root.appending(path: "blob.bin")
+        try Data("an older copy".utf8).write(to: destination)
+
+        try await Self.chunked().download(from: url, to: destination, fileName: "blob.bin") { _ in }
+
+        #expect(try Data(contentsOf: destination) == body)
+        #expect(transfers(of: "stub/chunked-old/resolve/main/blob.bin") == 1)
+    }
+
+    @Test func chunkedDownloadsWithDifferentHashesToOneFileBothSucceed() async throws {
+        let url = try #require(URL(string: "https://huggingface.co/stub/chunked-hash/resolve/main/blob.bin"))
+        let body = Self.payload(3000)
+        hub.serve("stub/chunked-hash/resolve/main/blob.bin", body: body)
+        let destination = root.appending(path: "blob.bin")
+        let sha256 = Self.sha256(body)
+
+        async let checked: Void = Self.chunked().download(from: url, to: destination, fileName: "blob.bin",
+                                                          expectedSHA256: sha256) { _ in }
+        async let unchecked: Void = Self.chunked().download(from: url, to: destination, fileName: "blob.bin") { _ in }
+        _ = try await (checked, unchecked)
+
+        #expect(try Data(contentsOf: destination) == body)
+        #expect((1...2).contains(transfers(of: "stub/chunked-hash/resolve/main/blob.bin")))
+    }
+
+    /// The test holds the lock file through its own descriptor, as another process would, and finishes the file.
+    @Test(arguments: [true, false])
+    func aChunkedDownloadThatWaitedForAnotherProcessSucceeds(withHash: Bool) async throws {
+        let url = try #require(URL(string: "https://huggingface.co/stub/chunked-peer/resolve/main/blob.bin"))
+        let body = Self.payload(3000)
+        hub.serve("stub/chunked-peer/resolve/main/blob.bin", body: body)
+        let destination = root.appending(path: "blob.bin")
+        let otherProcess = try await DownloadFileLock.acquire(for: destination, retryInterval: .milliseconds(5))
+        let downloading = Task {
+            try await Self.chunked().download(from: url, to: destination, fileName: "blob.bin",
+                                              expectedSHA256: withHash ? Self.sha256(body) : nil) { _ in }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        try body.write(to: destination)
+        otherProcess.release()
+
+        try await downloading.value
+
+        #expect(try Data(contentsOf: destination) == body)
+        #expect(transfers(of: "stub/chunked-peer/resolve/main/blob.bin") == (withHash ? 0 : 1))
     }
 }
 

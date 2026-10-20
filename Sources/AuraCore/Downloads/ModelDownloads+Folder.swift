@@ -19,9 +19,8 @@ extension ModelDownloads {
     /// `folder` throws ``ModelDownloadError/unsupported(_:)`` before anything is written. An `include` entry that
     /// matches no file throws ``ModelDownloadError/notFound(repoID:path:)``.
     ///
-    /// Downloads into the same repo run one at a time, in this process and in others sharing the storage root, so
-    /// two folders of one repo download one after the other; a later call for a finished folder returns it without
-    /// a transfer.
+    /// Downloads into one repo run one at a time, also across processes sharing the storage root; a later call for a
+    /// finished folder returns it without a transfer.
     public static func downloadFolder(repoID: String, revision: String, folder: String, include: [String],
                                       auth: any DownloadAuthorizing = NoDownloadAuth(),
                                       progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {

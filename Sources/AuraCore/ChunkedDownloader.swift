@@ -98,8 +98,8 @@ public actor ChunkedDownloader {
     ///     `nil` (the default) skips the check; nothing else tells this downloader what the bytes should be.
     ///   - onProgress: Called periodically with download progress.
     ///
-    /// Downloads to the same `destination` run one at a time, in this process and in others. A call that waited in
-    /// this process for another with the same `url` and `expectedSHA256` returns that file without a transfer.
+    /// Downloads to the same `destination` run one at a time, in this process and in others. A file already there is
+    /// kept when a call this one waited for fetched the same `url` and hash, or when it hashes to `expectedSHA256`.
     public func download(
         from url: URL,
         to destination: URL,
@@ -107,17 +107,24 @@ public actor ChunkedDownloader {
         expectedSHA256: String? = nil,
         onProgress: @Sendable @escaping (DownloadProgress) -> Void
     ) async throws {
-        let request = "\(url.absoluteString) \(expectedSHA256?.lowercased() ?? "")"
+        let expected = expectedSHA256?.lowercased()
+        let request = "\(url.absoluteString) \(expected ?? "")"
         try await DownloadGate.shared.exclusive(destination, request: request) { peerFinished in
             let finished = try? FileManager.default.attributesOfItem(atPath: destination.path(percentEncoded: false))
-            if peerFinished, let size = finished?[.size] as? Int64 {
+            if let size = finished?[.size] as? Int64, peerFinished || Self.matches(destination, expected) {
                 onProgress(DownloadProgress(bytesDownloaded: size, totalBytes: size, fileName: fileName))
                 return
             }
             try await transfer(from: url, to: destination, fileName: fileName, onProgress: onProgress)
-            guard let expectedSHA256 else { return }
-            try FileIntegrity.verify(destination, expectedSHA256: expectedSHA256.lowercased(), path: fileName)
+            guard let expected else { return }
+            try FileIntegrity.verify(destination, expectedSHA256: expected, path: fileName)
         }
+    }
+
+    /// Covers a file another process or a call with another hash finished while this one waited.
+    private static func matches(_ file: URL, _ expectedSHA256: String?) -> Bool {
+        guard let expectedSHA256 else { return false }
+        return (try? FileIntegrity.reusable(file, expectedSHA256: expectedSHA256)) ?? false
     }
 
     private func transfer(
@@ -213,6 +220,8 @@ public actor ChunkedDownloader {
             throw DownloadError.httpError(http.statusCode, fileName)
         }
 
+        // The gate holds `destination`, so a file there is an older copy; moveItem would fail on it.
+        try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: tempURL, to: destination)
 
         let size = (try? FileManager.default.attributesOfItem(atPath: destination.path(percentEncoded: false))[.size] as? Int64) ?? 0

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 // MARK: - GGUFModelDownloader
 
@@ -13,9 +14,8 @@ import Foundation
 ///   earlier version left in Caches instead of downloading it again.
 /// - Hashes a Hugging Face download against the SHA-256 published for it before moving it into place; a mismatch
 ///   deletes it and fails with ``ModelIntegrityError/checksumMismatch(path:expected:actual:)``.
-/// - Waits while another download writes the same file (another downloader, ``ModelDownloads`` or another process
-///   sharing the storage root), then returns the finished file without a transfer. A paused download keeps the file
-///   reserved until it is resumed and finishes, or is cancelled.
+/// - Waits while another download writes the same file (any downloader, ``ModelDownloads``, another process), then
+///   returns the finished file without a transfer. A paused download keeps the file reserved until it ends.
 @MainActor
 public final class GGUFModelDownloader: ObservableObject {
 
@@ -39,6 +39,8 @@ public final class GGUFModelDownloader: ObservableObject {
     /// Bumped on every `pause()`. The resume-data callback captures its generation and drops if a newer
     /// pause/resume has since happened — so a late callback from an old pause can't clobber current state.
     private var pauseGeneration = 0
+    /// Bumped on every `cancel()`, so it also ends calls still queued for the file and drops late delegate results.
+    private var cancelGeneration = 0
     /// Adds the Keychain Hugging Face token to requests for `huggingface.co` only.
     private let auth: any DownloadAuthorizing
     private let sessionConfiguration: URLSessionConfiguration
@@ -102,8 +104,10 @@ public final class GGUFModelDownloader: ObservableObject {
         }
 
         // Another downloader, ModelDownloads or another process may be writing this file's .partial.
+        let generation = cancelGeneration
         return try await DownloadGate.shared.exclusive(destinationURL) { _ in
-            try await downloadHolding(model, from: hfURL, to: destinationURL, onProgress: onProgress)
+            try await downloadHolding(model, from: hfURL, to: destinationURL, generation: generation,
+                                      onProgress: onProgress)
         }
     }
 
@@ -112,8 +116,10 @@ public final class GGUFModelDownloader: ObservableObject {
         _ model: Model,
         from hfURL: URL,
         to destinationURL: URL,
+        generation: Int,
         onProgress: @escaping @MainActor (String) -> Void
     ) async throws -> URL {
+        try checkNotCancelled(since: generation)
         // The download this call waited for may have finished the file.
         if let existing = model.resolvedFileURL, FileManager.default.fileExists(atPath: existing.path) {
             onProgress("\(model.displayName) already downloaded")
@@ -124,6 +130,7 @@ public final class GGUFModelDownloader: ObservableObject {
 
         // Looked up before the single-flight check: no suspension may separate that check from claiming the slot.
         let expectedSHA256 = try await checksums.publishedSHA256(of: hfURL)
+        try checkNotCancelled(since: generation)
 
         // Single-flight: this downloader owns one continuation. A second download() while one is in flight
         // (running OR paused) must not orphan the first awaiter — reject it instead of overwriting the slot.
@@ -188,21 +195,29 @@ public final class GGUFModelDownloader: ObservableObject {
         task.resume()
     }
 
-    /// Cancel and abandon the current download — fails the awaiting `download(...)` with a cancellation.
+    /// Cancel and abandon the current download — fails the awaiting `download(...)` with a cancellation, and any
+    /// call of this downloader still waiting for its file.
     public func cancel() {
+        cancelGeneration &+= 1
         isPaused = false
         isDownloading = false
         resumeData = nil
         downloadTask?.cancel()
         downloadTask = nil
-        // Fail the awaiting call ourselves; the delegate's later cancellation callback is then a no-op.
+        let session = delegateSession
+        delegateSession = nil
         if let continuation {
             self.continuation = nil
             self.context = nil
-            continuation.resume(throwing: CancellationError())
+            // Failed once the session's last callback returns: until then a file being verified may still be
+            // promoted, and the next writer must not take the file before that.
+            if let delegate = session?.delegate as? DownloadDelegate {
+                delegate.cancel { continuation.resume(throwing: CancellationError()) }
+            } else {
+                continuation.resume(throwing: CancellationError())
+            }
         }
-        delegateSession?.invalidateAndCancel()
-        delegateSession = nil
+        session?.invalidateAndCancel()
     }
 
     // MARK: - Private
@@ -216,6 +231,7 @@ public final class GGUFModelDownloader: ObservableObject {
         onProgress: @escaping @MainActor (String) -> Void
     ) async throws -> URL {
         context = DownloadContext(url: url, destination: destination, modelName: modelName, onProgress: onProgress)
+        let generation = cancelGeneration
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             let delegate = DownloadDelegate(
@@ -240,12 +256,16 @@ public final class GGUFModelDownloader: ObservableObject {
                         }
                     }
                 },
-                onFinished: { [weak self] url in Task { @MainActor [weak self] in self?.finish(.success(url)) } },
-                onError: { [weak self] error in Task { @MainActor [weak self] in self?.finish(.failure(error)) } },
+                onFinished: { [weak self] url in
+                    Task { @MainActor [weak self] in self?.finish(.success(url), generation: generation) }
+                },
+                onError: { [weak self] error in
+                    Task { @MainActor [weak self] in self?.finish(.failure(error), generation: generation) }
+                },
                 onCancelled: { _ in
                     // A cancellation reaches the delegate from pause() — resume data is captured by pause()'s
-                    // own (generation-guarded) resume-data closure — or from cancel(), which already failed the
-                    // continuation. Either way there is nothing to resolve here.
+                    // own (generation-guarded) resume-data closure — or from cancel(), which hands the
+                    // continuation to the delegate. Either way there is nothing to resolve here.
                 }
             )
             let session = URLSession(configuration: sessionConfiguration, delegate: delegate, delegateQueue: nil)
@@ -257,14 +277,21 @@ public final class GGUFModelDownloader: ObservableObject {
     }
 
     /// Resolve the awaiting `download(...)` exactly once and tear down the session.
-    private func finish(_ result: Result<URL, Error>) {
-        guard let continuation else { return }
+    private func finish(_ result: Result<URL, Error>, generation: Int) {
+        // A cancelled transfer's late result must not resolve a download started after the cancel.
+        guard generation == cancelGeneration, let continuation else { return }
         self.continuation = nil
         self.context = nil
         isPaused = false   // a pause that raced this finish must not strand isPaused=true on an idle downloader
         delegateSession?.finishTasksAndInvalidate()
         delegateSession = nil
         continuation.resume(with: result)
+    }
+
+    /// A queued call holds no continuation or task, so `cancel()` reaches it only through the generation.
+    private func checkNotCancelled(since generation: Int) throws {
+        try Task.checkCancellation()
+        guard generation == cancelGeneration else { throw CancellationError() }
     }
 
     private func huggingFaceURL(repo: String, filename: String) -> URL? {
@@ -295,6 +322,8 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     let onFinished: @Sendable (URL) -> Void
     let onError: @Sendable (Error) -> Void
     let onCancelled: @Sendable (Data?) -> Void
+    /// Set by `cancel(then:)`: what to run once the session is invalidated.
+    private let cancellation = Mutex<(@Sendable () -> Void)?>(nil)
 
     init(
         destination: URL,
@@ -316,6 +345,19 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
         self.onFinished = onFinished
         self.onError = onError
         self.onCancelled = onCancelled
+    }
+
+    /// Stops a finished file from being promoted; `then` runs after the session's last callback has returned.
+    func cancel(then: @escaping @Sendable () -> Void) {
+        cancellation.withLock { $0 = then }
+    }
+
+    private var isCancelled: Bool {
+        cancellation.withLock { $0 != nil }
+    }
+
+    func urlSession(_ session: URLSession, didBecomeInvalidWithError error: (any Error)?) {
+        cancellation.withLock { $0 }?()
     }
 
     func urlSession(
@@ -343,10 +385,13 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
             try? FileManager.default.removeItem(at: staged)
             try FileManager.default.moveItem(at: location, to: staged)
             let stagedSize = HubFileTransfer.fileSize(at: staged) ?? 0
+            // A cancelled download leaves the staged file to the next caller, which verifies it again.
+            guard !isCancelled else { return }
             if let expectedSHA256 {
                 onVerifying()
                 try FileIntegrity.verify(staged, expectedSHA256: expectedSHA256, path: destination.lastPathComponent)
             }
+            guard !isCancelled else { return }
             try HubFileTransfer.promote(staged, to: destination, expectedSize: stagedSize,
                                         path: destination.lastPathComponent)
             onFinished(destination)

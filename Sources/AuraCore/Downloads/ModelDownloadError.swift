@@ -76,10 +76,8 @@ public enum ModelDownloadError: LocalizedError, Equatable, Sendable {
 /// A download whose `.partial` file another writer changed before it was moved into place. A separate enum rather
 /// than a new ``ModelDownloadError`` case, so existing exhaustive switches over that enum in apps keep compiling.
 public enum DownloadConflictError: LocalizedError, Equatable, Sendable {
-    /// The finished `.partial` of `path` was gone or no longer had the size just written when it was about to be moved
-    /// into place: another download of the same file, in this process or another one, moved, deleted or rewrote it.
-    /// AuraLocal's own downloads wait for each other, so this points at another tool or an older build writing the
-    /// same folder. Nothing was moved into place; downloading again resumes or restarts the file.
+    /// The finished `.partial` of `path` was gone or resized before it was moved into place, by a writer outside
+    /// AuraLocal's guard (another tool, an older build). Nothing was replaced; downloading again resumes or restarts.
     case partialChanged(path: String)
 
     public var errorDescription: String? {

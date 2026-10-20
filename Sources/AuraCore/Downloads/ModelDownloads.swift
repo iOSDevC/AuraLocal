@@ -84,9 +84,8 @@ public enum ModelDownloads {
     /// snapshot folder; one still in Caches from an earlier version is returned as is. `progress` receives (bytes
     /// on disk, total bytes). Cancel the calling task to stop; the partial file is kept for the next call.
     ///
-    /// Downloads of the same file or snapshot run one at a time, whichever API started them and in whichever
-    /// process sharing the storage root: a later call waits, then returns the finished model without a transfer.
-    /// Cancelling a waiting call stops only that call.
+    /// Downloads of one file or snapshot run one at a time, from any API or process sharing the storage root: a later
+    /// call waits, then returns the finished model without a transfer. Cancelling a waiting call stops only that call.
     public static func download(_ model: Model,
                                 auth: any DownloadAuthorizing = KeychainDownloadAuth(),
                                 progress: @escaping @Sendable (Int64, Int64) -> Void) async throws -> URL {
