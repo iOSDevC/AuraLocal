@@ -25,8 +25,9 @@ public struct ModelCapabilities: OptionSet, Sendable, Hashable {
     /// An image model with a ``Model/defaultDocumentPrompt``, which ``AuraLocal/extractDocument(_:maxTokens:)``
     /// needs.
     public static let documentExtraction = ModelCapabilities(rawValue: 1 << 2)
-    /// Its backend runs a tool-calling loop when loaded with tools. Only the llama.cpp backends do, so only GGUF
-    /// models have it; an MLX model loaded with tools throws ``ModelConfigurationError/toolsUnsupported(_:)``.
+    /// Its backend runs a tool-calling loop when loaded with tools: every GGUF model, and MLX text models where MLX
+    /// runs (not the iOS Simulator). An MLX vision or document model loaded with tools throws
+    /// ``ModelConfigurationError/toolsUnsupported(_:)``.
     public static let tools = ModelCapabilities(rawValue: 1 << 3)
 }
 

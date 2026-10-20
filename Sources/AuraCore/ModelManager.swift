@@ -149,7 +149,9 @@ public final class ModelManager: ObservableObject {
     ///
     /// `temperature` and `topP` hold for the instance's lifetime; `nil` keeps the backend default, and temperature
     /// 0 is greedy. Each distinct setting is its own cached instance, a separate load of the model. `tools` need
-    /// a GGUF model. Both are checked before anything is downloaded and throw ``ModelConfigurationError``.
+    /// a GGUF model or an MLX text model. Both are checked before anything is downloaded and throw
+    /// ``ModelConfigurationError``. An MLX instance with tools runs on the weights of a cached instance of the same
+    /// model when there is one, instead of loading them again.
     public func load(
         _ model: Model,
         tools: [any LLMTool] = [],
@@ -268,6 +270,9 @@ public final class ModelManager: ObservableObject {
         tools: [any LLMTool] = [],
         onProgress: (@MainActor (String) -> Void)? = nil
     ) async throws -> AuraLocal {
+        if let shared = try await toolInstanceOnLoadedWeights(model, sampling: sampling, tools: tools) {
+            return shared
+        }
         // Refuse a model that can't fit even with streaming — BEFORE downloading gigabytes or
         // risking a jetsam kill mid-load. HardwareAnalyzer only *flags* .tooLarge; this is where
         // it's enforced, together with the models already resident.
@@ -318,6 +323,22 @@ public final class ModelManager: ObservableObject {
             settle(model, otherwise: .failed(error.localizedDescription))
             throw error
         }
+    }
+
+    /// An MLX instance with `tools` on the weights a cached instance of `model` holds: nothing to download, load or
+    /// evict. It keeps those weights in memory after that instance is evicted, until it is released too.
+    private func toolInstanceOnLoadedWeights(_ model: Model, sampling: SamplingSettings,
+                                             tools: [any LLMTool]) async throws -> AuraLocal? {
+        #if canImport(MLXLLM)
+        guard !tools.isEmpty,
+              let loaded = cache.first(where: { $0.key.base == model })?.value.engine.backend as? MLXBackend,
+              let backend = loaded.sharingWeights(sampling: sampling, tools: tools) else { return nil }
+        let instance = AuraLocal(engine: AuraEngine(model: model, backend: backend), sampling: sampling)
+        try await instance.engine.load { _ in }
+        return instance
+        #else
+        return nil
+        #endif
     }
 
     /// A load that fails or is cancelled leaves the model `.ready` while another setting of it is still cached.

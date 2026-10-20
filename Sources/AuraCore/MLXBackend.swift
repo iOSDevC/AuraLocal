@@ -1,6 +1,7 @@
 // MLX backend — compiled in only when the MLX products (mlx-swift-lm) are linked.
 #if canImport(MLXLLM)
 import Foundation
+import LocalLLMClientCore
 import MLX
 import MLXLLM
 import MLXVLM
@@ -21,8 +22,9 @@ import AppKit
 /// Loads the full model into unified memory via `LLMModelFactory` or `VLMModelFactory` and samples with
 /// mlx-swift-lm's `TokenIterator`. Best for models that fit entirely in device RAM (typically up to 4B on iOS).
 ///
-/// A text model's generations keep their KV cache, and the next one prefills only the tokens its prompt does not
-/// share with it (``MLXPromptCache``).
+/// A text model loaded with tools runs AuraLocal's tool loop (``ToolLoopDriver``), as the GGUF backends do. A text
+/// model's generations keep their KV cache, and the next one prefills only the tokens its prompt does not share
+/// with it (``MLXPromptCache``).
 @MainActor
 final class MLXBackend: InferenceBackend {
 
@@ -32,8 +34,14 @@ final class MLXBackend: InferenceBackend {
     private let model: Model
     /// Read when a generation starts; tests change `prefillStepSize` to reproduce a reused cache's prefill split.
     var parameters: GenerateParameters
+    private let tools: [AnyLLMTool]
+    /// The tools as chat templates receive them.
+    private let toolSpecs: [[String: any Sendable]]
     private(set) var lastGenerationStats: GenerationStats?
     private(set) var lastContextOverflow: ContextWindowOverflow?
+    var toolLoop = ToolLoopOptions.default
+    var onToolEvent: (@MainActor (ToolEvent) -> Void)?
+    private(set) var lastToolTurn: ToolTurnSummary?
     /// Replaced rather than emptied, so a decode still running keeps the one it started with.
     private var promptCache = MLXPromptCache()
     /// Off, every generation prefills its whole prompt (A/B tests). Changing it starts a new, empty cache.
@@ -42,6 +50,8 @@ final class MLXBackend: InferenceBackend {
     }
 
     var isLoaded: Bool { modelContainer != nil }
+    /// Tool names registered for function-calling (empty = none).
+    var registeredToolNames: [String] { tools.map(\.name) }
     /// Hits and misses of the current prompt cache; read between generations.
     var promptCacheStats: MLXPromptCache.ReuseStats { promptCache.stats }
 
@@ -49,8 +59,13 @@ final class MLXBackend: InferenceBackend {
 
     // MARK: - Init
 
-    /// `nil` sampling takes ``SamplingSettings/defaults(for:)``. Temperature 0 selects MLX's argmax sampler.
-    init(model: Model, sampling: SamplingSettings? = nil) {
+    /// `nil` sampling takes ``SamplingSettings/defaults(for:)``. Temperature 0 selects MLX's argmax sampler. `tools`
+    /// need a text model; ``BackendRouter`` refuses them for the others.
+    convenience init(model: Model, sampling: SamplingSettings? = nil, tools: [any LLMTool] = []) {
+        self.init(model: model, sampling: sampling, tools: tools.map { AnyLLMTool($0) }, weights: nil)
+    }
+
+    private init(model: Model, sampling: SamplingSettings?, tools: [AnyLLMTool], weights: ModelContainer?) {
         self.model = model
         let settings = sampling ?? .defaults(for: model)
         // Unbounded, the KV cache grows with every token until jetsam; the window makes MLX rotate it instead.
@@ -58,6 +73,21 @@ final class MLXBackend: InferenceBackend {
             maxKVSize: HardwareAnalyzer.recommendedContextWindow(for: model),
             temperature: settings.temperature,
             topP: settings.topP)
+        self.tools = tools
+        self.toolSpecs = tools.map { $0.toOAICompatJSON() }
+        self.modelContainer = weights
+    }
+
+    /// A backend with `tools` on the weights this one has loaded, so they are not loaded twice; `nil` before load.
+    /// The weights stay in memory while either backend holds them, and `ModelContainer` runs one generation at a time.
+    func sharingWeights(sampling: SamplingSettings, tools: [any LLMTool]) -> MLXBackend? {
+        guard let modelContainer else { return nil }
+        return MLXBackend(model: model, sampling: sampling, tools: tools.map { AnyLLMTool($0) },
+                          weights: modelContainer)
+    }
+
+    func sharesWeights(with other: MLXBackend) -> Bool {
+        modelContainer != nil && modelContainer === other.modelContainer
     }
 
     // MARK: - InferenceBackend
@@ -150,6 +180,12 @@ final class MLXBackend: InferenceBackend {
         guard let container = modelContainer else {
             throw AuraError.modelNotLoaded
         }
+        // Only text models have tools, and they never see the image.
+        guard tools.isEmpty else {
+            return try await respond(to: Self.messages(prompt: prompt, systemPrompt: nil), maxTokens: maxTokens,
+                                     onToken: onToken)
+        }
+
         var tempURL: URL?
         let capturedInput: UserInput
         if let img = image, let url = saveImageToTemp(img) {
@@ -188,7 +224,7 @@ final class MLXBackend: InferenceBackend {
 
     // MARK: - Core generation
 
-    /// One reply to `messages`.
+    /// One turn over `messages`: the tool loop when the backend has tools, otherwise one reply.
     private func respond(
         to messages: [[String: any Sendable]],
         maxTokens: Int,
@@ -196,6 +232,9 @@ final class MLXBackend: InferenceBackend {
     ) async throws -> String {
         guard let container = modelContainer else {
             throw AuraError.modelNotLoaded
+        }
+        guard tools.isEmpty else {
+            return try await toolTurn(messages, container: container, maxTokens: maxTokens, onToken: onToken)
         }
         let request = MLXDecodeRequest(budget: maxTokens, toolSpecs: nil, earlierText: "",
                                        reusesCache: reusesTextCache)
@@ -225,6 +264,92 @@ final class MLXBackend: InferenceBackend {
         return outcome.text
     }
 
+    // MARK: - Tool loop
+
+    /// Replies and rounds of tool calls, driven by ``ToolLoopDriver`` as on GGUF; every reply shares `maxTokens`.
+    /// Each reply renders the whole conversation again, and the prompt cache prefills only what it does not hold.
+    private func toolTurn(
+        _ messages: [[String: any Sendable]],
+        container: ModelContainer,
+        maxTokens: Int,
+        onToken: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        lastGenerationStats = nil
+        lastContextOverflow = nil
+        lastToolTurn = nil
+        let driver = ToolLoopDriver(tools: tools, context: ToolLoopContext(options: toolLoop, onEvent: onToolEvent))
+        var transcript = MLXToolTranscript(base: messages)
+        var replies: [MLXDecodeOutcome] = []
+        var parsedArguments: [String: ParsedArguments] = [:]
+        let summary = try await driver.run(
+            reply: {
+                let spent = replies.reduce(0) { $0 + $1.generatedTokens }
+                let reply = try await self.toolReply(over: transcript, container: container, budget: maxTokens - spent,
+                                                     earlierText: replies.map(\.text).joined(), onToken: onToken)
+                transcript.settle(on: reply.shape)
+                replies.append(reply.outcome)
+                guard reply.outcome.finished, !Task.isCancelled else { return nil }
+                let converted = MLXToolMessages.calls(from: reply.outcome.calls)
+                parsedArguments = converted.arguments
+                return converted.calls
+            },
+            record: { calls, results in
+                transcript.record(MLXToolRound(text: replies.last?.text ?? "", calls: calls,
+                                               arguments: parsedArguments, results: results))
+            }
+        )
+        lastGenerationStats = MLXDecodeOutcome.stats(of: replies)
+        lastContextOverflow = replies.compactMap(\.overflow).last
+        lastToolTurn = summary
+        return replies.map(\.text).joined()
+    }
+
+    private func toolReply(
+        over transcript: MLXToolTranscript,
+        container: ModelContainer,
+        budget: Int,
+        earlierText: String,
+        onToken: @escaping @MainActor (String) -> Void
+    ) async throws -> MLXToolReply {
+        let attempts = transcript.attempts
+        let specs = toolSpecs
+        let request = MLXDecodeRequest(budget: budget, toolSpecs: specs, earlierText: earlierText,
+                                       reusesCache: reusesTextCache)
+        let parameters = self.parameters
+        let promptCache = self.promptCache
+        return try await container.perform { (context: ModelContext) async throws -> MLXToolReply in
+            let started = ContinuousClock.now
+            let rendered = try await Self.firstRendering(of: attempts, tools: specs, context: context)
+            let outcome = try MLXDecodeLoop.run(rendered.input, request: request, context: context,
+                                                parameters: parameters, promptCache: promptCache, started: started,
+                                                onToken: onToken)
+            return MLXToolReply(shape: rendered.shape, outcome: outcome)
+        }
+    }
+
+    /// The native round shape first; a template that throws on it gets the text form.
+    nonisolated private static func firstRendering(
+        of attempts: [MLXRenderAttempt],
+        tools: [[String: any Sendable]],
+        context: ModelContext
+    ) async throws -> (shape: MLXToolTranscript.RoundShape, input: LMInput) {
+        var failure: (any Error)?
+        for attempt in attempts {
+            do {
+                let input = try await context.processor.prepare(input: userInput(attempt.messages, tools: tools))
+                return (attempt.shape, input)
+            } catch {
+                failure = error
+            }
+        }
+        throw failure ?? AuraError.invalidResponse("The chat template rendered nothing.")
+    }
+
+    nonisolated private static func userInput(_ messages: [[String: any Sendable]],
+                                              tools: [[String: any Sendable]]) -> UserInput {
+        UserInput(messages: messages, tools: tools)
+    }
+
     // MARK: - Helpers
 
     nonisolated static func messages(prompt: String, systemPrompt: String?) -> [[String: any Sendable]] {
@@ -252,6 +377,8 @@ final class MLXBackend: InferenceBackend {
         return url
     }
 }
+
+extension MLXBackend: ToolLoopHost {}
 
 // MARK: - HuggingFace Downloader (MLXLMCommon.Downloader)
 

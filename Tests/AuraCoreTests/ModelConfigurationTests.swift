@@ -30,8 +30,9 @@ private struct TapTool: LLMTool {
     var builds = 0
 }
 
-/// Tools on MLX and sampling values are refused before any download, engine build or teardown; resolved sampling
-/// reaches every backend. Nothing here loads weights or touches the network.
+/// Tools on MLX image models and sampling values are refused before any download, engine build or teardown; MLX text
+/// models with tools reach the MLX backend; resolved sampling reaches every backend. Nothing here loads weights or
+/// touches the network.
 @MainActor
 final class ModelConfigurationTests: XCTestCase {
 
@@ -54,20 +55,27 @@ final class ModelConfigurationTests: XCTestCase {
 
     // MARK: - Tools on MLX
 
-    func testModelManagerRefusesToolsForAnMLXModelBeforeLoading() async throws {
-        let mlx = try mlxText()
-        do {
-            _ = try await ModelManager.shared.load(mlx, tools: [TapTool()])
-            XCTFail("tools on an MLX model were accepted")
-        } catch let error as ModelConfigurationError {
-            XCTAssertEqual(error, .toolsUnsupported(.mlx))
-        }
-        XCTAssertEqual(ModelManager.shared.state(for: mlx), .idle)
-        XCTAssertFalse(ModelManager.shared.isLoaded(mlx))
+    private func mlxImageModels() throws -> [Model] {
+        [try mlxModel(.vision), try mlxModel(.visionSpecialized)]
     }
 
-    func testRouterGivesAnMLXModelWithToolsABackendThatThrowsOnLoad() async throws {
-        let backend = BackendRouter.selectBackend(for: try mlxText(), tools: [TapTool()])
+    func testModelManagerRefusesToolsForAnMLXImageModelBeforeLoading() async throws {
+        let tools: [any LLMTool] = [TapTool()]
+        for model in try mlxImageModels() {
+            do {
+                _ = try await ModelManager.shared.load(model, tools: tools)
+                XCTFail("tools on \(model.displayName) were accepted")
+            } catch let error as ModelConfigurationError {
+                XCTAssertEqual(error, .toolsUnsupported(.mlx))
+            }
+            XCTAssertEqual(ModelManager.shared.state(for: model), .idle)
+            XCTAssertFalse(ModelManager.shared.isLoaded(model))
+        }
+    }
+
+    func testRouterGivesAnMLXImageModelWithToolsABackendThatThrowsOnLoad() async throws {
+        let vision = try mlxModel(.vision)
+        let backend = BackendRouter.selectBackend(for: vision, tools: [TapTool()])
         XCTAssertTrue(backend is UnavailableBackend)
         do {
             try await backend.load { _ in }
@@ -75,33 +83,65 @@ final class ModelConfigurationTests: XCTestCase {
         } catch let error as ModelConfigurationError {
             XCTAssertEqual(error, .toolsUnsupported(.mlx))
         }
-        XCTAssertTrue(AuraLocal(model: try mlxText(), tools: [TapTool()]).engine.backend is UnavailableBackend)
+        XCTAssertTrue(AuraLocal(model: vision, tools: [TapTool()]).engine.backend is UnavailableBackend)
     }
 
-    func testToolSupportCheckAcceptsGGUFAndToolFreeMLX() throws {
+    #if canImport(MLXLLM) && !targetEnvironment(simulator)
+    func testRouterGivesAnMLXTextModelWithToolsTheMLXBackend() throws {
+        let backend = try XCTUnwrap(BackendRouter.selectBackend(for: try mlxText(), tools: [TapTool()]) as? MLXBackend)
+        XCTAssertEqual(backend.registeredToolNames, ["tap"])
+        let llm = AuraLocal(model: try mlxText(), tools: [TapTool()])
+        XCTAssertEqual((llm.engine.backend as? MLXBackend)?.registeredToolNames, ["tap"])
+        XCTAssertEqual((AuraLocal(model: try mlxText()).engine.backend as? MLXBackend)?.registeredToolNames, [])
+    }
+    #endif
+
+    func testToolSupportCheckAcceptsGGUFAndMLXTextAndRefusesMLXImageModels() throws {
         XCTAssertNoThrow(try BackendRouter.requireToolSupport([TapTool()], for: gguf))
         XCTAssertNoThrow(try BackendRouter.requireToolSupport([], for: try mlxText()))
-        XCTAssertThrowsError(try BackendRouter.requireToolSupport([TapTool()], for: try mlxText())) { error in
-            XCTAssertEqual(error as? ModelConfigurationError, .toolsUnsupported(.mlx))
+        #if canImport(MLXLLM) && !targetEnvironment(simulator)
+        XCTAssertNoThrow(try BackendRouter.requireToolSupport([TapTool()], for: try mlxText()))
+        #else
+        XCTAssertThrowsError(try BackendRouter.requireToolSupport([TapTool()], for: try mlxText()))
+        #endif
+        let tools: [any LLMTool] = [TapTool()]
+        for model in try mlxImageModels() {
+            XCTAssertNoThrow(try BackendRouter.requireToolSupport([], for: model))
+            XCTAssertThrowsError(try BackendRouter.requireToolSupport(tools, for: model)) { error in
+                XCTAssertEqual(error as? ModelConfigurationError, .toolsUnsupported(.mlx))
+            }
         }
     }
 
-    func testSessionRefusesAnMLXAgentProfileBeforeBuildingAnEngine() async throws {
+    func testSessionRefusesAnMLXImageAgentProfileBeforeBuildingAnEngine() async throws {
         let counter = BuildCounter()
-        let profile = AuraProfileCatalog.agent(model: try mlxText(), tools: [TapTool()])
+        let profile = AuraProfileCatalog.agent(model: try mlxModel(.vision), tools: [TapTool()])
         do {
             _ = try await AuraSession(profile: profile) { _ in
                 counter.builds += 1
                 return StubEngine()
             }
-            XCTFail("an MLX agent profile was accepted")
+            XCTFail("an MLX vision agent profile was accepted")
         } catch let error as ModelConfigurationError {
             XCTAssertEqual(error, .toolsUnsupported(.mlx))
         }
         XCTAssertEqual(counter.builds, 0)
     }
 
-    func testSwitchToAnMLXAgentProfileThrowsAndKeepsTheCurrentEngine() async throws {
+    #if canImport(MLXLLM) && !targetEnvironment(simulator)
+    func testSessionBuildsAnMLXTextAgentProfile() async throws {
+        let counter = BuildCounter()
+        let profile = AuraProfileCatalog.agent(model: try mlxText(), tools: [TapTool()])
+        let session = try await AuraSession(profile: profile) { _ in
+            counter.builds += 1
+            return StubEngine()
+        }
+        XCTAssertEqual(counter.builds, 1)
+        XCTAssertEqual(session.profile, profile)
+    }
+    #endif
+
+    func testSwitchToAnMLXImageAgentProfileThrowsAndKeepsTheCurrentEngine() async throws {
         let engine = StubEngine()
         let counter = BuildCounter()
         let chat = AuraProfileCatalog.chat(model: gguf)
@@ -110,8 +150,9 @@ final class ModelConfigurationTests: XCTestCase {
             return engine
         }
         do {
-            try await session.switchProfile(to: AuraProfileCatalog.agent(model: try mlxText(), tools: [TapTool()]))
-            XCTFail("an MLX agent profile was accepted")
+            try await session.switchProfile(to: AuraProfileCatalog.agent(model: try mlxModel(.vision),
+                                                                         tools: [TapTool()]))
+            XCTFail("an MLX vision agent profile was accepted")
         } catch let error as ModelConfigurationError {
             XCTAssertEqual(error, .toolsUnsupported(.mlx))
         }
