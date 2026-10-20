@@ -143,6 +143,7 @@ struct HubFileTransfer: Sendable {
     func size(of url: URL, repoID: String, path: String) async throws -> Int64 {
         var request = auth.request(for: url)
         request.httpMethod = "HEAD"
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")   // a compressed reply drops Content-Length
         let (_, response) = try await load(request, onBytes: nil)
         guard let http = response as? HTTPURLResponse else { throw ModelDownloadError.http(status: 0) }
         if let failure = ModelDownloadError(response: http, request: request, repoID: repoID, path: path) {
@@ -261,6 +262,7 @@ struct HubFileTransfer: Sendable {
     func makeRangeRequest(url: URL, from start: Int64, to end: Int64) -> URLRequest {
         var request = auth.request(for: url)
         request.setValue("bytes=\(start)-\(end)", forHTTPHeaderField: "Range")
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
         return request
     }
 

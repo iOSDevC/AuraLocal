@@ -55,6 +55,23 @@ struct AuraHFDownloaderTests {
         #expect(fixture.hasCompletionMarker)
     }
 
+    @Test("A size in the tree listing is used without a HEAD request, and transfers ask for uncompressed bytes")
+    func usesTreeSizeWithoutHead() async throws {
+        let fixture = try SnapshotDownloadFixture(handler: { request in
+            if request.url?.path.contains("/tree/") == true {
+                return .init(status: 200, data: Data("[{\"path\":\"model.safetensors\",\"type\":\"file\",\"size\":4}]".utf8))
+            }
+            // Hugging Face compresses text files and then omits Content-Length on HEAD.
+            if request.httpMethod == "HEAD" { return .init(status: 200, data: Data(), headers: [:]) }
+            return .standard(request)
+        })
+        _ = try await fixture.download()
+        #expect(fixture.hasCompletionMarker)
+        #expect(!fixture.requests.contains { $0.httpMethod == "HEAD" })
+        #expect(fixture.requests.filter { $0.value(forHTTPHeaderField: "Range") != nil }
+            .allSatisfy { $0.value(forHTTPHeaderField: "Accept-Encoding") == "identity" })
+    }
+
     @Test("An absent or negative HEAD size fails instead of treating the file as empty", arguments: [nil, "-1"] as [String?])
     func rejectsMissingHeadSize(size: String?) async throws {
         let fixture = try SnapshotDownloadFixture(handler: { request in

@@ -400,9 +400,10 @@ struct AuraHFDownloader: Downloader {
         struct F: Codable {
             let path: String?
             let type: String?
+            let size: Int64?
             let largeFile: LFSPointer?
             enum CodingKeys: String, CodingKey {
-                case path, type
+                case path, type, size
                 case largeFile = "lfs"
             }
         }
@@ -422,30 +423,23 @@ struct AuraHFDownloader: Downloader {
 
         try Task.checkCancellation()
 
-        // 2. HEAD per file for the real size. LFS files redirect to a CDN;
-        //    prefer the `x-linked-size` header over Content-Length (which for an
-        //    LFS pointer would be ~134 bytes and break the total).
+        // 2. Sizes come from the tree (an LFS entry's size is the real file's); HEAD only for an unsized entry.
         var sizes: [String: Int64] = [:]
+        for entry in entries {
+            if let path = entry.path, let size = entry.size, size >= 0 { sizes[path] = size }
+        }
         var totalBytes: Int64 = 0
         for name in files {
             try Task.checkCancellation()
-            var head = URLRequest(url: URL(string: "\(Self.base)/\(id)/resolve/\(rev)/\(name)")!)
-            head.httpMethod = "HEAD"
-            let (_, resp) = try await session.data(for: head)
-            guard let http = resp as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode) else {
-                throw AuraError.invalidResponse("Hugging Face size request failed for \(name)")
+            let size: Int64
+            if let listed = sizes[name] {
+                size = listed
+            } else {
+                size = try await remoteSize(of: name, id: id, rev: rev)
+                sizes[name] = size
             }
-            let linkedSizeHeader = http.value(forHTTPHeaderField: "x-linked-size")
-            let linkedSize = linkedSizeHeader.flatMap { Int64($0) }
-            let contentLength = http.expectedContentLength
-            let sizeHeader = linkedSizeHeader ?? http.value(forHTTPHeaderField: "Content-Length")
-            guard let sizeHeader, let sz = Int64(sizeHeader), sz >= 0 else {
-                throw AuraError.invalidResponse("Missing download size for \(name)")
-            }
-            sizes[name] = sz
-            totalBytes += sz
-            Self.log.info("HEAD \(name, privacy: .public): \(sz) bytes (x-linked-size=\(linkedSize.map(String.init) ?? "nil", privacy: .public), content-length=\(contentLength))")
+            totalBytes += size
+            Self.log.info("\(name, privacy: .public): \(size) bytes")
         }
         Self.log.info("total to download: \(totalBytes / 1_000_000) MB")
 
@@ -514,6 +508,23 @@ struct AuraHFDownloader: Downloader {
         try Data().write(to: completionMarker, options: .atomic)
         Self.log.info("snapshot complete — \(aggregated / 1_000_000) MB · marker written")
         return dir
+    }
+
+    /// HEAD size of one file. `identity` matters: Hugging Face compresses text files and then omits Content-Length.
+    private func remoteSize(of name: String, id: String, rev: String) async throws -> Int64 {
+        var head = URLRequest(url: URL(string: "\(Self.base)/\(id)/resolve/\(rev)/\(name)")!)
+        head.httpMethod = "HEAD"
+        head.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        let (_, resp) = try await session.data(for: head)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw AuraError.invalidResponse("Hugging Face size request failed for \(name)")
+        }
+        // LFS files redirect to a CDN; x-linked-size beats the pointer's ~134-byte Content-Length.
+        let header = http.value(forHTTPHeaderField: "x-linked-size") ?? http.value(forHTTPHeaderField: "Content-Length")
+        guard let header, let size = Int64(header), size >= 0 else {
+            throw AuraError.invalidResponse("Missing download size for \(name)")
+        }
+        return size
     }
 
     /// Downloads one file in 32 MB `Range` chunks, appending to a `.partial`
@@ -592,6 +603,7 @@ struct AuraHFDownloader: Downloader {
                     }
                     var request = URLRequest(url: url)
                     request.setValue("bytes=\(offset)-\(rangeEnd)", forHTTPHeaderField: "Range")
+                    request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")   // byte ranges of the stored file, not of a compressed reply
                     let (chunk, resp) = try await session.data(for: request)
                     guard let http = resp as? HTTPURLResponse else {
                         throw AuraError.invalidResponse("No HTTP response")
