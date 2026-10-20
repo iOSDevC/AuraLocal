@@ -10,7 +10,15 @@ struct VoiceTab: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let llm = vm.llm {
+                if !selectedModel.isDownloaded {
+                    ModelDownloadPlaceholder(
+                        "Download \(selectedModel.displayName)",
+                        message: "Voice chat listens, answers and speaks on this device.",
+                        models: [RequiredModel(selectedModel, purpose: "Answers what you say")]
+                    ) {
+                        Task { await vm.load(model: selectedModel) }
+                    }
+                } else if let llm = vm.llm {
                     VoiceChatView(
                         llm: llm,
                         conversationID: vm.conversationID
@@ -30,7 +38,7 @@ struct VoiceTab: View {
                         let uncensored = Model.uncensoredModels.filter { $0.category == .text && $0.isDownloaded }
                         ForEach(Model.textModels + uncensored, id: \.self) { m in
                             Button {
-                                Task { await vm.load(model: m) }
+                                selectedModel = m
                             } label: {
                                 Label(m.displayName, systemImage: m.isDownloaded ? "checkmark" : "arrow.down")
                             }
@@ -46,7 +54,10 @@ struct VoiceTab: View {
                     }
                 }
             }
-            .task { await vm.load(model: selectedModel) }
+            // A model on disk loads at once; a missing one waits for the placeholder's Download.
+            .task(id: selectedModel) {
+                if selectedModel.isDownloaded { await vm.load(model: selectedModel) }
+            }
         }
     }
     

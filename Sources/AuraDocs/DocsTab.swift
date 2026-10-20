@@ -8,22 +8,46 @@ import AuraCore
 ///
 /// Provides file import, indexing progress, document list with swipe-to-export/delete,
 /// and a grounded chat sheet powered by ``DocumentLibrary``.
+///
+/// It answers with ``DocsTab/neededModels``. When one is not on this device the tab shows a
+/// ``ModelDownloadPlaceholder`` and downloads nothing until the user taps Download; models already on disk load
+/// as soon as the tab appears.
 public struct DocsTab: View {
     /// One importer serves both pickers: two `.fileImporter`s on one view conflict.
     private enum ImportKind { case documents, embeddingModel }
+
+    /// The models the tab loads: Qwen3 1.7B answers, FastVLM reads images.
+    public static let neededModels = [
+        RequiredModel(.qwen3_1_7b, purpose: "Answers questions about your documents"),
+        RequiredModel(.fastVLM_0_5b_fp16, purpose: "Reads the text in images you add"),
+    ]
 
     @StateObject private var vm = DocsViewModel()
     @State private var showFilePicker  = false
     @State private var pendingImport   = ImportKind.documents
     @State private var showChat        = false
     @State private var showExportSheet = false
-    
-    public init() {}
+    private let autoDownload: Bool
+
+    /// - Parameter autoDownload: download missing models as soon as the tab appears, without asking, as the tab did
+    ///   before it showed a download placeholder.
+    public init(autoDownload: Bool = false) {
+        self.autoDownload = autoDownload
+    }
     
     public var body: some View {
         NavigationStack {
             Group {
-                if vm.documents.isEmpty && !vm.isIndexing {
+                if vm.awaitsDownload {
+                    ModelDownloadPlaceholder(
+                        "Download the Library models",
+                        message: "Library indexes your files and answers questions about them with models that "
+                            + "run on this device. Your documents never leave it.",
+                        models: Self.neededModels
+                    ) {
+                        Task { await vm.setup(autoDownload: autoDownload) }
+                    }
+                } else if vm.documents.isEmpty && !vm.isIndexing {
                     emptyState
                 } else {
                     documentList
@@ -81,7 +105,7 @@ public struct DocsTab: View {
             .sheet(isPresented: $showExportSheet) {
                 ExportSheet(vm: vm)
             }
-            .task { await vm.setup() }
+            .task { await vm.setup(autoDownload: autoDownload) }
         }
     }
     
@@ -536,6 +560,8 @@ final class DocsViewModel: ObservableObject {
     @Published var indexingProgress:  Double = 0
     @Published var exportedURLs:      [URL] = []
     @Published var isPreparingIndex   = false
+    /// A required model is not on disk and the tab waits for the user to download it.
+    @Published var awaitsDownload     = false
     @Published var embeddingBackend   = ""
     /// Why the installed embedding model is not in use, if it isn't.
     @Published var embeddingNote:     String?
@@ -546,12 +572,18 @@ final class DocsViewModel: ObservableObject {
     private var llm: AuraLocal?
     private var vlm: AuraLocal?
     private var isSetUp = false
+    private var isSettingUp = false
     
     // MARK: - Setup
     
-    func setup() async {
-        // `.task` runs again on every appearance; reloading would repeat the embedding warm-up.
-        guard !isSetUp else { return }
+    func setup(autoDownload: Bool) async {
+        // `.task` runs again on every appearance; reloading would repeat the embedding warm-up. The tab's `.task`
+        // and the placeholder's `onReady` can both call this when the models arrived while the tab was hidden.
+        guard !isSetUp, !isSettingUp else { return }
+        awaitsDownload = !autoDownload && !DocsTab.neededModels.notDownloaded.isEmpty
+        guard !awaitsDownload else { return }
+        isSettingUp = true
+        defer { isSettingUp = false }
         progress = "Loading model..."
         do {
             // Reuse already-loaded models from other tabs via ModelManager

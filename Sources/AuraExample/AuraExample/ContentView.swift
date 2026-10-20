@@ -116,34 +116,49 @@ struct AgentCrewInlineView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                Picker("Section", selection: $selectedSection) {
-                    ForEach(AgentSection.allCases) { section in
-                        Text(section.rawValue).tag(section)
-                    }
+            if appState.modelsToDownload.isEmpty {
+                sections
+            } else {
+                ModelDownloadPlaceholder(
+                    "Download the agents' models",
+                    message: "The agents search and read your documents with models that run on this Mac.",
+                    models: appState.modelsToDownload
+                ) {
+                    Task { await appState.setup() }
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal)
-                .padding(.top, 8)
-
-                switch selectedSection {
-                case .pipeline:
-                    PipelineTab()
-                        .environmentObject(appState)
-                case .documents:
-                    DocumentsTab()
-                        .environmentObject(appState)
-                case .history:
-                    HistoryTab()
-                        .environmentObject(appState)
-                }
-            }
-            .navigationTitle("Agent Crew")
-            .task { await appState.setup() }
-            .sheet(item: $consentGate.pending) { request in
-                ConsentSheet(request: request, gate: consentGate)
+                .navigationTitle("Agent Crew")
             }
         }
+        .task { await appState.setup() }
+        .sheet(item: $consentGate.pending) { request in
+            ConsentSheet(request: request, gate: consentGate)
+        }
+    }
+
+    private var sections: some View {
+        VStack(spacing: 0) {
+            Picker("Section", selection: $selectedSection) {
+                ForEach(AgentSection.allCases) { section in
+                    Text(section.rawValue).tag(section)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal)
+            .padding(.top, 8)
+
+            switch selectedSection {
+            case .pipeline:
+                PipelineTab()
+                    .environmentObject(appState)
+            case .documents:
+                DocumentsTab()
+                    .environmentObject(appState)
+            case .history:
+                HistoryTab()
+                    .environmentObject(appState)
+            }
+        }
+        .navigationTitle("Agent Crew")
     }
 }
 

@@ -7,14 +7,23 @@ import PhotosUI
 // §3.4: ViewThatFits for adaptive layout (wide vs. narrow).
 // §4.2: .hoverEffect() on interactive elements.
 
+/// Image analysis. A model that is not on this device shows a ``ModelDownloadPlaceholder`` in place of the run
+/// button until the user downloads it.
 public struct VisionTab: View {
     @StateObject private var vm = VisionViewModel()
     @State private var pickerItem: PhotosPickerItem?
     @State private var selectedModel: Model = .qwen35_0_8b
     @State private var runMode: AuraLocal.VisionRunMode = .standard
     @State private var customPrompt: String = "Describe this image in detail."
+    /// The downloaded-model fallback runs on the first appearance only, so a later one keeps the user's pick.
+    @State private var choseStartModel = false
+    private let autoDownload: Bool
 
-    public init() {}
+    /// - Parameter autoDownload: keep the run button for a model that is not downloaded and download it on the first
+    ///   run, as the tab did before it showed a download placeholder.
+    public init(autoDownload: Bool = false) {
+        self.autoDownload = autoDownload
+    }
 
     public var body: some View {
         // Read so the picker is rebuilt when a download finishes or a model is deleted.
@@ -32,6 +41,11 @@ public struct VisionTab: View {
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Vision")
             .background(Color.groupedBackground)
+        }
+        .onAppear {
+            guard !choseStartModel else { return }
+            choseStartModel = true
+            if !selectedModel.isDownloaded { selectedModel = preferredModel ?? selectedModel }
         }
         .onChange(of: revision) { resetSelectionIfRemoved() }
     }
@@ -136,28 +150,38 @@ public struct VisionTab: View {
     /// A deleted model leaves the registry; running with it would silently download it again.
     private func resetSelectionIfRemoved() {
         guard ModelRegistry.shared.model(id: selectedModel.id) == nil else { return }
-        selectedModel = Model.visionModels.first {
-            $0.isDownloaded && HardwareAnalyzer.assess($0).fitLevel != .tooLarge
-        } ?? .qwen35_0_8b
+        selectedModel = preferredModel ?? .qwen35_0_8b
     }
 
-    private var runButtonSection: some View {
-        RunButton(
-            title: "Analyze Image",
-            subtitle: selectedModel.displayName,
-            isDownloaded: selectedModel.isDownloaded,
-            isLoading: vm.isLoading,
-            color: .blue
-        ) {
-            guard let img = vm.selectedImage else { return }
-            await vm.run(
-                model: selectedModel,
-                image: img,
-                prompt: customPrompt,
-                mode: runMode
+    private var preferredModel: Model? {
+        Model.visionModels.first { $0.isDownloaded && HardwareAnalyzer.assess($0).fitLevel != .tooLarge }
+    }
+
+    @ViewBuilder private var runButtonSection: some View {
+        if autoDownload || selectedModel.isDownloaded {
+            RunButton(
+                title: "Analyze Image",
+                subtitle: selectedModel.displayName,
+                isDownloaded: selectedModel.isDownloaded,
+                isLoading: vm.isLoading,
+                color: .blue
+            ) {
+                guard let img = vm.selectedImage else { return }
+                await vm.run(
+                    model: selectedModel,
+                    image: img,
+                    prompt: customPrompt,
+                    mode: runMode
+                )
+            }
+            .disabled(vm.selectedImage == nil)
+        } else {
+            ModelDownloadPlaceholder(
+                "Download \(selectedModel.displayName)",
+                message: "Images are analyzed on this device. Pick another model in Settings, or download this one.",
+                models: [RequiredModel(selectedModel, purpose: "Describes images and answers questions about them")]
             )
         }
-        .disabled(vm.selectedImage == nil)
     }
 }
 

@@ -2,24 +2,36 @@ import SwiftUI
 import AuraCore
 
 // MARK: - Text Chat Tab
+
+/// Multi-conversation chat. A model that is not on this device shows a ``ModelDownloadPlaceholder`` instead of the
+/// chat until the user downloads it; a downloaded one loads on the first message.
 public struct TextChatTab: View {
     @StateObject private var vm = TextChatViewModel()
     @State private var selectedModel: Model = .qwen3_1_7b
     @State private var showConversations = false
     @State private var showsSearch = false
+    /// Cached: `body` redraws on every streamed token, and the check reads the disk.
+    @State private var needsDownload = false
+    /// The downloaded-model fallback runs on the first appearance only, so a later one keeps the user's pick.
+    @State private var choseStartModel = false
     private let offersHuggingFaceSearch: Bool
+    private let autoDownload: Bool
 
-    /// - Parameter offersHuggingFaceSearch: start the model menu with "Find on Hugging Face…", a sheet that
-    ///   searches, checks and downloads models for this device.
-    public init(offersHuggingFaceSearch: Bool = false) {
+    /// - Parameters:
+    ///   - offersHuggingFaceSearch: start the model menu with "Find on Hugging Face…", a sheet that searches, checks
+    ///     and downloads models for this device.
+    ///   - autoDownload: show the chat for a model that is not downloaded and download it on the first message, as
+    ///     the tab did before it showed a download placeholder.
+    public init(offersHuggingFaceSearch: Bool = false, autoDownload: Bool = false) {
         self.offersHuggingFaceSearch = offersHuggingFaceSearch
+        self.autoDownload = autoDownload
     }
 
     public var body: some View {
         // Read so the menu is rebuilt when a download finishes or a model is deleted.
         let revision = ModelDownloadCenter.shared.revision
         NavigationStack {
-            ChatView(vm: vm, selectedModel: $selectedModel)
+            content
                 .navigationTitle(vm.activeConversation?.title ?? "Text Chat")
 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -82,7 +94,18 @@ public struct TextChatTab: View {
                     ConversationListSheet(vm: vm, isPresented: $showConversations)
                 }
                 .sheet(isPresented: $showsSearch) { HFSearchSheet() }
-                .onChange(of: revision) { resetSelectionIfRemoved() }
+                .onAppear {
+                    if !choseStartModel {
+                        choseStartModel = true
+                        if !selectedModel.isDownloaded { selectedModel = preferredModel ?? selectedModel }
+                    }
+                    refreshNeedsDownload()
+                }
+                .onChange(of: revision) {
+                    resetSelectionIfRemoved()
+                    refreshNeedsDownload()
+                }
+                .onChange(of: selectedModel) { refreshNeedsDownload() }
                 // §5.1: Wire FocusedValue actions for Menu Bar commands
                 .focusedValue(\.newConversationAction) {
                     Task { await vm.newConversation(model: selectedModel) }
@@ -90,6 +113,18 @@ public struct TextChatTab: View {
                 .focusedValue(\.toggleSidebarAction) {
                     showConversations.toggle()
                 }
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        if !needsDownload {
+            ChatView(vm: vm, selectedModel: $selectedModel)
+        } else {
+            ModelDownloadPlaceholder(
+                "Download \(selectedModel.displayName)",
+                message: "Chat runs on this device. Pick another model from the menu, or download this one.",
+                models: [RequiredModel(selectedModel, purpose: "Chats and keeps your conversations on this device")]
+            )
         }
     }
 
@@ -116,7 +151,15 @@ public struct TextChatTab: View {
     /// A deleted model leaves the registry; sending with it would silently download it again.
     private func resetSelectionIfRemoved() {
         guard ModelRegistry.shared.model(id: selectedModel.id) == nil else { return }
-        selectedModel = Model.textModels.first { $0.isDownloaded && RunBlocker.check($0) == nil } ?? .qwen3_1_7b
+        selectedModel = preferredModel ?? .qwen3_1_7b
+    }
+
+    private func refreshNeedsDownload() {
+        needsDownload = !autoDownload && !selectedModel.isDownloaded
+    }
+
+    private var preferredModel: Model? {
+        Model.textModels.first { $0.isDownloaded && RunBlocker.check($0) == nil }
     }
 }
 

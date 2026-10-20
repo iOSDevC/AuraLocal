@@ -1013,6 +1013,72 @@ A record whose file a registry entry already points at is not registered, so one
 pickers. Each read-modify-write of the stored dictionary holds a lock, so calls from several threads don't drop
 records.
 
+### Download on demand
+
+`ModelManager.load`, `AuraLocal.text`/`vision`/`specialized` and the one-liners download a missing model before
+they load it. A screen that should ask first shows `ModelDownloadPlaceholder` while a model it needs is not on
+disk, and loads once the placeholder reports it ready. The SDK's own tabs (`DocsTab`, `TextChatTab`, `VisionTab`,
+`OCRTab`) do this by default.
+
+```swift
+public struct RequiredModel: Identifiable, Hashable, Sendable {
+    init(_ entry: Model, purpose: String)   // purpose: what the feature uses it for
+    let entry: Model
+    let purpose: String
+}
+extension [RequiredModel] { var notDownloaded: [RequiredModel] }   // reads the disk
+
+public struct ModelDownloadPlaceholder: View {
+    init(_ title: String, message: String, models: [RequiredModel],
+         onReady: @escaping @MainActor () -> Void = {})              // once every model is on disk
+}
+
+@MainActor @Observable
+public final class OnDemandDownloads {
+    static let shared: OnDemandDownloads
+    var revision: Int { get }                        // bumped when a download finishes, fails or is cancelled
+    func phase(of model: Model) -> Phase             // .idle, .waiting, .downloading(done:total:), .failed(String)
+    func isDownloading(_ model: Model) -> Bool       // waiting or transferring
+    func download(_ models: [Model])                 // queues the ones not on disk, in order
+    func cancel(_ models: [Model])                   // keeps the .partial, so the next download resumes
+}
+
+extension Model { var approximateSizeBytes: Int64 }  // approximateSizeMB × 1,000,000
+```
+
+```swift
+struct LibraryScreen: View {
+    let needed = [RequiredModel(.qwen3_1_7b, purpose: "Answers questions about your documents")]
+    @State private var isReady = false
+
+    var body: some View {
+        if isReady || needed.notDownloaded.isEmpty {
+            LibraryView()   // loads with ModelManager.shared.load, from disk
+        } else {
+            ModelDownloadPlaceholder("Download the Library model",
+                                     message: "Answers come from a model that runs on this device.",
+                                     models: needed) { isReady = true }
+        }
+    }
+}
+```
+
+The placeholder lists each model with its purpose, its approximate size (`approximateSizeMB`) and what a cancelled
+download left on disk, the total still to download (less those `.partial` bytes), the free space from `ModelDownloads.availableDiskBytes()`
+and, when the download plus the 20 % margin `ModelDownloads` requires may not fit, a warning; a model rated
+*Too Large* for the device's free memory gets a warning too, and so does an MLX model in the Simulator, where it
+downloads but cannot load. Nothing touches the network until the user taps
+**Download**. While it runs each row shows bytes and percent and the button becomes **Cancel download**; a failed
+model shows its error and the button becomes **Retry download**. Leaving the screen does not stop a download.
+It centers in the space it is given and scrolls at large Dynamic Type sizes, so it works as a whole screen or in
+place of one control.
+
+`OnDemandDownloads` runs one transfer at a time through `ModelDownloads.download`, so files land where the
+backends load them from, and tracks models by file (`DownloadRecords.key(for:)`). AuraUI's
+`ModelDownloadCenter` counts its downloads as busy (a catalog row or the Hugging Face browser does not start the
+same file, Delete refuses it) and folds its `revision` into its own. The reverse is not checked: a placeholder
+can start a file that `ModelDownloadCenter` or a `ModelManager.load` is already downloading.
+
 ---
 
 ## BackgroundLifecycle (iOS)

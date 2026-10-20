@@ -186,7 +186,7 @@ struct ModelRow: View {
 
     private func startDownload() {
         let key = DownloadRecords.key(for: model)
-        guard center.claim(key) else {
+        guard center.claim(model) else {
             errorMessage = "This file is downloading elsewhere in the app."
             return
         }

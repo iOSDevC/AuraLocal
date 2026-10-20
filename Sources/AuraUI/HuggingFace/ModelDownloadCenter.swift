@@ -29,8 +29,9 @@ struct DownloadInProgressError: LocalizedError {
 public final class ModelDownloadCenter {
     public static let shared = ModelDownloadCenter()
 
-    /// Bumped whenever models are downloaded, deleted or registered.
-    public private(set) var revision = 0
+    /// Bumped whenever models are downloaded, deleted or registered, here or through ``OnDemandDownloads``.
+    public var revision: Int { changes + OnDemandDownloads.shared.revision }
+    private var changes = 0
     /// Keeps the screen on while a download runs (iOS).
     public var keepsScreenAwake = false
     /// Whether a download runs.
@@ -52,10 +53,11 @@ public final class ModelDownloadCenter {
         phases[candidate.id] ?? .idle
     }
 
-    /// Whether another download writes `candidate`'s file: this center's or a catalog row's.
+    /// Whether another download writes `candidate`'s file: this center's, a catalog row's or a download placeholder's.
     func isWritingElsewhere(_ candidate: Model) -> Bool {
         let key = DownloadRecords.key(for: candidate)
         return claimedKeys.contains(key) || (activeKey == key && activeModelID != candidate.id)
+            || OnDemandDownloads.shared.isDownloading(candidate)
     }
 
     /// - Parameter records: record `candidate` now and register it when the download finishes. Pass `true` only
@@ -63,7 +65,7 @@ public final class ModelDownloadCenter {
     ///   registered, and an unsized one would pass the memory guard (size 0 always fits).
     func start(_ candidate: Model, records: Bool) {
         let key = DownloadRecords.key(for: candidate)
-        guard job == nil, !claimedKeys.contains(key) else { return }
+        guard job == nil, !claimedKeys.contains(key), !OnDemandDownloads.shared.isDownloading(candidate) else { return }
         let records = records && candidate.approximateSizeMB > 0
         if records { DownloadRecords.standard.remember(candidate) }
         activeModelID = candidate.id
@@ -96,10 +98,11 @@ public final class ModelDownloadCenter {
         job?.cancel()
     }
 
-    /// Whether a download writes `candidate`'s file now: this center's or a ``ModelSection`` row's.
+    /// Whether a download writes `candidate`'s file now: this center's, a ``ModelSection`` row's or a
+    /// ``ModelDownloadPlaceholder``'s.
     public func isDownloading(_ candidate: Model) -> Bool {
         let key = DownloadRecords.key(for: candidate)
-        return activeKey == key || claimedKeys.contains(key)
+        return activeKey == key || claimedKeys.contains(key) || OnDemandDownloads.shared.isDownloading(candidate)
     }
 
     /// Unloads every model that reads this file, removes its finished and partial files, forgets its record and
@@ -112,7 +115,7 @@ public final class ModelDownloadCenter {
         try ModelDownloads.delete(candidate)
         DownloadRecords.standard.remove(candidate)
         phases[candidate.id] = nil
-        revision += 1
+        changes += 1
     }
 
     /// Removes only `partial`, a paused file whose finished copy is already on disk; the finished file, its record
@@ -122,7 +125,7 @@ public final class ModelDownloadCenter {
             throw DownloadInProgressError(name: candidate.displayName)
         }
         try FileManager.default.removeItem(at: partial)
-        revision += 1
+        changes += 1
     }
 
     /// The cache is keyed by id: a search record and the catalog entry for the same file are two cache entries,
@@ -139,8 +142,11 @@ public final class ModelDownloadCenter {
     // MARK: Catalog rows
 
     /// Reserves a file for a catalog row's own download, so two transfers never write one `.partial`.
-    func claim(_ key: String) -> Bool {
-        guard activeKey != key, !claimedKeys.contains(key) else { return false }
+    func claim(_ candidate: Model) -> Bool {
+        let key = DownloadRecords.key(for: candidate)
+        guard activeKey != key, !claimedKeys.contains(key), !OnDemandDownloads.shared.isDownloading(candidate) else {
+            return false
+        }
         claimedKeys.insert(key)
         return true
     }
@@ -151,7 +157,7 @@ public final class ModelDownloadCenter {
 
     /// Files changed outside this center (a catalog row finished or stopped).
     func noteDiskChange() {
-        revision += 1
+        changes += 1
     }
 
     // MARK: Progress
@@ -166,7 +172,7 @@ public final class ModelDownloadCenter {
         activeModelID = nil
         activeKey = nil
         job = nil
-        revision += 1
+        changes += 1
         endBackgroundWindow()
     }
 
