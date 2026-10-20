@@ -19,7 +19,7 @@ description: "Local-first inference with optional, consent-gated escalation to a
 
 ## Overview
 
-AuraLocal is **on-device first**. The hybrid line adds an *optional*, **consent-gated**
+Tonamox is **on-device first**. The hybrid line adds an *optional*, **consent-gated**
 path to escalate a request to a more powerful model — your own `llama-server`/Ollama box
 on the LAN, or a cloud provider (Anthropic, OpenAI) — only when the local
 model isn't enough.
@@ -29,7 +29,7 @@ model isn't enough.
 > nothing leaves the device until you set a policy, and cloud sends go through your
 > `ConsentGate` first. `escalate(to:)` is the low-level call. It checks neither a policy
 > nor consent and sends immediately, so gate it yourself.
-> `AuraLocal.stream()` drives the **local** backends; escalation runs through
+> `Tonamox.stream()` drives the **local** backends; escalation runs through
 > `HybridEscalator` and an internal remote `InferenceBackend`, which shares the *same
 > streaming contract* — so the pipeline is *mixed*, not cloud.
 
@@ -58,7 +58,7 @@ Discover a running Ollama (`http://localhost:11434`) or llama.cpp `llama-server`
 dependency-free `URLSession` call that never throws (a server that is down is a normal result).
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 let providers = await LocalProviderDetector.detectAll()
 for p in providers where p.isAvailable {
@@ -107,7 +107,7 @@ secrets/PII per `EscalationPolicy.piiRedaction`: cloud targets by default (`.clo
 with `.allTargets`, none with `.never`. `escalate(to:)` redacts only with `redactPII: true`.
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 let escalator = HybridEscalator()
 
@@ -119,13 +119,13 @@ let result = try await escalator.routeAndEscalate(
     localAnswer: draftFromLocalModel,   // enables the low-confidence trigger
     consent: myConsentGate              // presents the payload + projected cost
 ) { partial in
-    // cumulative tokens — same contract as AuraLocal.stream()
+    // cumulative tokens — same contract as Tonamox.stream()
 }
 
 if let result {
     print(result.answer)
     print(result.usage as Any, result.compression.factor, result.fromCache)
-} // nil → the router kept it local; a declined offer (by default, any over the cap) throws AuraError.escalationDeclined
+} // nil → the router kept it local; a declined offer (by default, any over the cap) throws TonamoxError.escalationDeclined
 ```
 
 The router (`EscalationRouter`) is a pure decision function (rules R1–R7): it stays local
@@ -146,7 +146,7 @@ raises the bar for the latter).
   `maxTokens`, at the ledger's price. Size overflow still reads the uncompressed prompt. Over the
   cap, the router offers with the reason `.costCapped`, the default
   `ConsentGate.requestConsent(target:preview:offer:)` declines it, and `routeAndEscalate` throws
-  `AuraError.escalationDeclined` without sending anything. Implement that method to show the budget
+  `TonamoxError.escalationDeclined` without sending anything. Implement that method to show the budget
   and let the user go over. A projection of $0, such as any LAN target,
   never trips the cap.
 - When the cloud target has no price in the ledger, the router offers with the reason
@@ -199,11 +199,11 @@ Works from iOS, macOS, and visionOS.
 ## Pick one target (`AskTargetResolver`)
 
 For a one-shot ask, `AskTargetResolver.resolve` turns a provider choice into a single
-`RemoteTarget`. It is what `aura ask` uses, and a pure function: you pass the environment, a
+`RemoteTarget`. It is what `tonamox ask` uses, and a pure function: you pass the environment, a
 Keychain reader and the detected local providers, so it does no I/O of its own.
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 let target = try AskTargetResolver.resolve(
     .auto,                                        // .auto / .local / .openAI / .anthropic
@@ -230,11 +230,11 @@ consent, and cost machinery, and redacts per the policy's `piiRedaction` (cloud 
 default). Fail-closed: any error or a *stay-local* decision keeps the local draft. It passes no
 `targets:`, so it escalates only to a llama-server or Ollama on the same machine, or to a cloud key.
 
-The reusable pipeline lives in the **`AuraAgents`** module (requires iOS 26 / macOS 26 and
+The reusable pipeline lives in the **`TonamoxAgents`** module (requires iOS 26 / macOS 26 and
 the Xcode 26 SDK):
 
 ```swift
-import AuraAgents
+import TonamoxAgents
 
 let crew = AgentCrew(store: .shared, library: .shared)
 // Inject the escalation policy + consent gate; the Architect step escalates when weak.
@@ -253,7 +253,7 @@ await crew.run(topic: "Q3 security posture", policy: policy, consent: myConsentG
   `requestConsent(target:preview:projectedCostUSD:)`. `routeAndEscalate` calls
   `requestConsent(target:preview:offer:)`, whose default declines `.costCapped` and passes any other
   offer to the first; only a gate that implements the offer method sees the question and system
-  prompt. AuraLocal ships no consent UI; the Example app's `UIConsentGate` (Hybrid settings)
+  prompt. Tonamox ships no consent UI; the Example app's `UIConsentGate` (Hybrid settings)
   implements both and shows the exact payload with its redaction count, "Cost unknown" for `nil`,
   the session spend against the cap, and a warning when sending goes over it.
 - **`PIIRedactor`** strips obvious secrets/PII (code-safe, high-precision patterns) from the
@@ -280,7 +280,7 @@ Set prices on the ledger your `HybridEscalator` uses (`HybridEscalator(ledger:)`
 default), in USD per 1M tokens. A model-specific price wins over a provider-wide one:
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 let ledger = CostLedger.shared
 ledger.setPrice(TokenPrice(inputUSDPerMillion: 1, outputUSDPerMillion: 4),
@@ -304,5 +304,5 @@ let escalator = HybridEscalator(ledger: ledger)
 | Compression | `ContextCompressor` + pluggable `SelfInfoScorer` |
 | Privacy & cost | `ConsentGate`, `KeychainStore`, `PIIRedactor`, `CostLedger`, `ResponseCache`, `NetworkMonitor` |
 
-See also the [CLI]({{ '/guide/cli' | relative_url }}): `aura ask` resolves its target with
+See also the [CLI]({{ '/guide/cli' | relative_url }}): `tonamox ask` resolves its target with
 `AskTargetResolver` and sends it through `HybridEscalator.escalate(to:)`.

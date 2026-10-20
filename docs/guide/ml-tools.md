@@ -9,7 +9,7 @@ description: "Vision, NaturalLanguage, SoundAnalysis, Core ML and Create ML as t
 # On-device ML tools
 {: .no_toc }
 
-AuraLocal is not only LLMs. `AuraCore` wraps Apple's machine-learning frameworks as **system
+Tonamox is not only LLMs. `TonamoxCore` wraps Apple's machine-learning frameworks as **system
 tools**: typed Swift APIs that run on-device and add **no package dependencies**. The analysis
 tools use models that ship with the OS, so they need no download and work offline. The exceptions
 are the custom-model tools and BERT transfer learning. `CoreMLModelTool`, `TextClassifierTool` and
@@ -69,7 +69,7 @@ create them with its URL.
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let tools = await SystemToolRegistry.discover()
 for category in SystemToolCategory.allCases {
@@ -85,7 +85,7 @@ for category in SystemToolCategory.allCases {
 let barcodes = SystemToolRegistry.tool(id: "system.vision.barcodes")
 ```
 
-CLI: `aura tools` prints the same list with each tool's availability.
+CLI: `tonamox tools` prints the same list with each tool's availability.
 
 ### Platforms
 
@@ -125,7 +125,7 @@ and filtered by a threshold. Labels form a hierarchy, so a zebra photo returns `
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let classifier = VisionImageClassificationTool()
 guard await classifier.availability().isAvailable else { return }   // false in the Simulator
@@ -138,7 +138,7 @@ for label in labels {
 ```
 
 ```sh
-$ aura ml classify-image "/Library/User Pictures/Animals/Zebra.heic"
+$ tonamox ml classify-image "/Library/User Pictures/Animals/Zebra.heic"
 0.98  animal
 0.98  mammal
 0.98  ungulates
@@ -154,7 +154,7 @@ throws `ToolError.unsupportedSymbology` instead of failing inside Vision.
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 import Vision
 
 let reader = VisionBarcodeTool()
@@ -167,11 +167,11 @@ print(reader.supportedSymbologies().count)   // 24 on macOS 26
 ```
 
 ```sh
-$ aura ml barcodes qr.png
+$ tonamox ml barcodes qr.png
 QR  "https://github.com/iOSDevC/AuraLocal"  box x 0.15 y 0.15 w 0.71 h 0.71
-$ aura ml barcodes qr.png --symbology EAN13
+$ tonamox ml barcodes qr.png --symbology EAN13
 (no barcode found)
-$ aura ml barcodes --list        # the 24 symbologies this OS supports
+$ tonamox ml barcodes --list        # the 24 symbologies this OS supports
 ```
 
 ### Face detection
@@ -181,7 +181,7 @@ estimate them). It never identifies or recognizes anyone.
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let faces = try VisionFaceDetectionTool().detectFaces(
     inImageData: try Data(contentsOf: URL(fileURLWithPath: "/path/to/group.jpg")))
@@ -193,7 +193,7 @@ for face in faces where face.confidence > 0.5 {
 ```
 
 ```sh
-$ aura ml faces photo.png
+$ tonamox ml faces photo.png
 face 1  confidence 0.62  box x 0.12 y 0.15 w 0.17 h 0.35  roll 8°  yaw -4°  pitch -8°
 ```
 
@@ -207,7 +207,7 @@ guess wrong on short text.
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let receipt = try Data(contentsOf: URL(fileURLWithPath: "/path/to/receipt.jpg"))
 let lines = try VisionOCRTool().recognizeLines(inImageData: receipt, languages: ["es-ES", "en-US"])
@@ -216,7 +216,7 @@ print(confident.joined(separator: "\n"))
 ```
 
 ```sh
-$ aura ml ocr-lines receipt.png
+$ tonamox ml ocr-lines receipt.png
 1.00  box x 0.04 y 0.77 w 0.66 h 0.11  SUPERMERCADO LA PLAZA
 1.00  box x 0.05 y 0.55 w 0.29 h 0.08  Leche entera 1L
 1.00  box x 0.37 y 0.54 w 0.19 h 0.10  1.25 EUR
@@ -243,7 +243,7 @@ gate the call with `#available` and fall back to `VisionOCRTool`. `languages` wo
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let receipt = try Data(contentsOf: URL(fileURLWithPath: "/path/to/receipt.jpg"))
 if #available(iOS 26, macOS 26, *) {
@@ -259,7 +259,7 @@ if #available(iOS 26, macOS 26, *) {
 }
 ```
 
-`aura ml document <image> [--lang es-ES]...` prints the title, then one line with its box for each paragraph,
+`tonamox ml document <image> [--lang es-ES]...` prints the title, then one line with its box for each paragraph,
 table and detected value. A table's rows follow it as cell text, without boxes.
 
 Data Detection decides which spans are amounts or dates. It does not decide which amount is the total, so an app
@@ -274,7 +274,7 @@ the upright image as displayed.
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 import CoreGraphics
 
 func viewRect(for box: CGRect, in size: CGSize) -> CGRect {
@@ -299,7 +299,7 @@ These tools take a `String` and are synchronous. Language codes are NaturalLangu
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let identifier = NLLanguageIdentificationTool()
 let result = identifier.identify("El modelo se ejecuta en el dispositivo sin conexión a internet.")
@@ -313,7 +313,7 @@ let replyLanguage = identifier.identify("Ciao, come stai?", constraints: ["es", 
 ```
 
 ```sh
-$ aura ml language "Ciao, come stai?" --only es,it,pt --max 2
+$ tonamox ml language "Ciao, come stai?" --only es,it,pt --max 2
 dominant  it
 0.99  it
 0.01  pt
@@ -327,7 +327,7 @@ en, es, fr, de, it and pt; other languages return an empty list.
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let finder = NLEntityRecognitionTool()
 let text = "Pedro Sánchez se reunió con directivos de Telefónica en Madrid."
@@ -338,7 +338,7 @@ print(finder.supports(language: "ja"))   // false
 ```
 
 ```sh
-$ aura ml entities "Tim Cook presented the new iPhone at Apple Park in Cupertino." --lang en
+$ tonamox ml entities "Tim Cook presented the new iPhone at Apple Park in Cupertino." --lang en
 person        Tim Cook  [utf16 0+8]
 place         Cupertino  [utf16 51+9]
 ```
@@ -353,7 +353,7 @@ sentiment model (only en, es, fr, de, it and pt have one) return `nil` rather th
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let sentiment = NLSentimentTool()
 if let score = sentiment.score("Me encanta esta aplicación, funciona de maravilla.") {
@@ -375,7 +375,7 @@ print(sentiment.score("今日はいい天気です") as Any)   // nil: no Japane
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 import NaturalLanguage
 
 let embeddings = NLEmbeddingTool()
@@ -387,7 +387,7 @@ let vector = embeddings.embed("offline semantic search")   // [Float]? for your 
 ```
 
 ```sh
-$ aura ml similarity "the cat sat on the mat" "a cat is sitting on a mat"
+$ tonamox ml similarity "the cat sat on the mat" "a cat is sitting on a mat"
 0.40
 ```
 
@@ -405,7 +405,7 @@ the calling task cancels the analysis.
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let recording = URL(fileURLWithPath: "/path/to/voice-note.m4a")
 let sounds = try await SoundClassificationTool().classify(audioFileAt: recording, maxResults: 3)
@@ -417,20 +417,20 @@ let isVoiceNote = mostly.first?.identifier == "speech"
 ```
 
 ```sh
-$ aura ml sounds speech.wav
+$ tonamox ml sounds speech.wav
 0.93  speech
 0.29  insect
 0.16  mosquito_buzz
 …
-$ aura ml sounds tone-440hz.wav --max 3
+$ tonamox ml sounds tone-440hz.wav --max 3
 0.68  music
 0.54  beep
 0.50  tuning_fork
-$ aura ml sounds hello.aiff     # a 0.6 s spoken "hello there"
+$ tonamox ml sounds hello.aiff     # a 0.6 s spoken "hello there"
 0.88  speech
 0.51  zipper
 …
-$ aura ml sounds --list     # all 303 labels
+$ tonamox ml sounds --list     # all 303 labels
 ```
 
 ---
@@ -452,7 +452,7 @@ input `area_m2`, an `Int` input `rooms` and a `Double` output `price`.
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let modelURL = URL(fileURLWithPath: "/path/to/FlatPrice.mlmodel")
 let model = CoreMLModelTool(modelAt: modelURL)
@@ -470,9 +470,9 @@ if case .double(let price)? = outputs["price"] {
 ```
 
 ```sh
-$ aura ml coreml-describe FlatPrice.mlmodel
+$ tonamox ml coreml-describe FlatPrice.mlmodel
 id           coreml.FlatPrice
-author       AuraLocal CLI test
+author       Tonamox CLI test
 description  Toy flat-price regressor
 version      1
 inputs
@@ -480,7 +480,7 @@ inputs
   rooms  int64
 outputs
   price  double
-$ aura ml coreml-predict FlatPrice.mlmodel area_m2=100 rooms=3
+$ tonamox ml coreml-predict FlatPrice.mlmodel area_m2=100 rooms=3
 price  197966.8679
 ```
 
@@ -489,7 +489,7 @@ a `CGImage`; pick compute units if you need to (the default is `.all`).
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 import CoreML
 import ImageIO
 
@@ -543,7 +543,7 @@ text,label
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let trainer = TextClassifierTrainer()
 guard await trainer.availability().isAvailable else { return }   // false in the iOS / visionOS Simulator
@@ -600,7 +600,7 @@ across wording and across Spanish and English. `.maxEnt` trains instantly, so me
 data. Training cannot be cancelled once started.
 
 ```sh
-$ aura ml train-text expenses.csv --out Expenses.mlmodel --algorithm bert --holdout 0.2 --seed 7
+$ tonamox ml train-text expenses.csv --out Expenses.mlmodel --algorithm bert --holdout 0.2 --seed 7
 /absolute/path/to/Expenses.mlmodel
 — 30 examples, 3 labels (food, housing, transport) in 4.63 s
   training accuracy   100.0 %
@@ -630,7 +630,7 @@ log go to stderr.
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 guard let bundled = Bundle.main.url(forResource: "Expenses", withExtension: "mlmodelc") else { return }
 let expenses = TextClassifierTool(modelAt: bundled)
@@ -643,12 +643,12 @@ print(try await expenses.labels())   // ["food", "housing", "transport"]
 ```
 
 ```sh
-$ aura ml classify-text Expenses.mlmodel "Pagué el taxi del hotel a la estación"
+$ tonamox ml classify-text Expenses.mlmodel "Pagué el taxi del hotel a la estación"
 label  transport
 1.00  transport
 0.00  housing
 0.00  food
-$ aura ml coreml-predict Expenses.mlmodel "text=Billete de avión a Lima"
+$ tonamox ml coreml-predict Expenses.mlmodel "text=Billete de avión a Lima"
 label  "transport"
 ```
 
@@ -661,7 +661,7 @@ the facts and give the model only those.
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let receiptData = try Data(contentsOf: URL(fileURLWithPath: "/path/to/receipt.jpg"))
 let lines = try VisionOCRTool().recognizeLines(inImageData: receiptData)
@@ -671,7 +671,7 @@ let expenses = TextClassifierTool(modelAt: URL(fileURLWithPath: "/path/to/Expens
 let category = try await expenses.classify(receiptText).label ?? "unknown"
 let language = NLLanguageIdentificationTool().identify(receiptText).dominantLanguage ?? "en"
 
-let llm = try await AuraLocal.text()   // downloads the default model on first use
+let llm = try await Tonamox.text()   // downloads the default model on first use
 let answer = try await llm.chat(
     "Receipt (category: \(category)):\n\(receiptText)\n\nWhat was the merchant and the total?",
     systemPrompt: "Answer only from the receipt text, in the language with code \(language).")
@@ -682,7 +682,7 @@ print(answer)
 
 ## Try it
 
-- **CLI:** `aura ml help` lists every subcommand; see [CLI]({{ '/guide/cli' | relative_url }}).
-- **Example app:** the **ML** tab in `AuraExample` lists the tools by category with their
+- **CLI:** `tonamox ml help` lists every subcommand; see [CLI]({{ '/guide/cli' | relative_url }}).
+- **Example app:** the **ML** tab in `TonamoxExample` lists the tools by category with their
   availability, analyses text, images (with boxes drawn over the picture) and audio files, and on
   macOS trains the expense classifier above and classifies what you type.

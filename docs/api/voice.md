@@ -1,20 +1,20 @@
 ---
 layout: docs
-title: AuraVoice
+title: TonamoxVoice
 parent: API Reference
 nav_order: 3
-description: "AuraVoice API reference — VoiceSession, VoiceButton, VoiceChatView."
+description: "TonamoxVoice API reference — VoiceSession, VoiceButton, VoiceChatView."
 ---
 
-# AuraVoice
+# TonamoxVoice
 {: .no_toc }
 
 Turn-based (half-duplex) voice pipeline: on-device STT → LLM → on-device TTS. The microphone is off
 while the assistant thinks and speaks; call `startListening()` again for the next turn. Adds no
-packages beyond AuraCore, and speech recognition runs on-device (`requiresOnDeviceRecognition`).
+packages beyond TonamoxCore, and speech recognition runs on-device (`requiresOnDeviceRecognition`).
 
 ```
-Microphone → SFSpeechRecognizer → AuraLocal.stream() → AVSpeechSynthesizer
+Microphone → SFSpeechRecognizer → Tonamox.stream() → AVSpeechSynthesizer
 ```
 
 Sentences stream to TTS **while the LLM is still generating** — the assistant starts speaking after the first complete sentence.
@@ -40,7 +40,7 @@ public final class VoiceSession: NSObject, ObservableObject
 
 ```swift
 // conversationID nil = a new conversation, created in `store` on the first utterance
-init(llm: AuraLocal, conversationID: UUID? = nil, store: ConversationStore = .shared, config: Config = Config())
+init(llm: Tonamox, conversationID: UUID? = nil, store: ConversationStore = .shared, config: Config = Config())
 ```
 
 ### State
@@ -127,7 +127,7 @@ VoiceChatView(llm: llm, conversationID: conv.id, config: config)
 
 ### VoiceTab
 
-`VoiceTab` is **internal** to `AuraVoice` — it is **not** public, and nothing is added automatically when you `import AuraVoice`. To add voice to your own UI, place a public `VoiceButton` or `VoiceChatView` in your own view hierarchy (for example, as a tab you compose in your own `TabView`).
+`VoiceTab` is **internal** to `TonamoxVoice` — it is **not** public, and nothing is added automatically when you `import TonamoxVoice`. To add voice to your own UI, place a public `VoiceButton` or `VoiceChatView` in your own view hierarchy (for example, as a tab you compose in your own `TabView`).
 
 ---
 

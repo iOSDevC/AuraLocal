@@ -10,9 +10,9 @@
     uv run scripts/verify_catalog.py --only gemma4_12b,granite4_tiny
 
 Standard library only, so `python3 scripts/verify_catalog.py` works too. Architecture facts (layers, KV heads,
-head width, per-layer-type KV, experts, trained context, weight bytes) come from `aura models check <repo> --json`,
-the same code that writes `aura models check --entry` (GGUF entries read their own file's header via --gguf);
-build it first with `swift build --product aura`.
+head width, per-layer-type KV, experts, trained context, weight bytes) come from `tonamox models check <repo> --json`,
+the same code that writes `tonamox models check --entry` (GGUF entries read their own file's header via --gguf);
+build it first with `swift build --product tonamox`.
 
 Per entry it checks: the repo exists (301/307 = renamed, `gated` = needs a token, 401/404 = gone or private);
 the license on the model card; the GGUF file name exactly as listed (case, subfolders, split parts); the size;
@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CATALOGS = [ROOT / "models.json", ROOT / "Sources/AuraCore/Resources/models.json"]
+CATALOGS = [ROOT / "models.json", ROOT / "Sources/TonamoxCore/Resources/models.json"]
 EXCEPTIONS = ROOT / "scripts/catalog-exceptions.json"
 HF = "https://huggingface.co"
 WINDOW_SECONDS = 300
@@ -57,7 +57,7 @@ NESTED_ORDER = ["fullAttentionLayers", "slidingLayers", "slidingWindow", "recurr
 
 
 class RateLimiter:
-    """Sliding window over every request this run makes, aura's included (charged at an upper bound)."""
+    """Sliding window over every request this run makes, tonamox's included (charged at an upper bound)."""
 
     def __init__(self, limit: int, window: float = WINDOW_SECONDS):
         self.limit, self.window, self.sent = limit, window, collections.deque()
@@ -107,7 +107,7 @@ def retry_after(headers: dict, attempt: int) -> float:
 
 
 def get(url: str, limiter: RateLimiter, attempts: int = 6) -> Response:
-    headers = {"User-Agent": "AuraLocal-verify-catalog", "Accept": "application/json"}
+    headers = {"User-Agent": "TONAMOX-verify-catalog", "Accept": "application/json"}
     if (token := os.environ.get("HF_TOKEN")) and url.startswith(HF + "/"):
         headers["Authorization"] = f"Bearer {token}"
     for attempt in range(attempts):
@@ -172,28 +172,28 @@ def card_license(card: dict) -> str | None:
 
 
 def aura_cost(files: dict) -> int:
-    """Upper bound on aura's requests: listing, config, index, a GGUF header, the first shard's header again, and two
+    """Upper bound on tonamox's requests: listing, config, index, a GGUF header, the first shard's header again, and two
     reads (probe, then the rest) per safetensors header."""
     safetensors = sum(1 for path in files if path.endswith(".safetensors") and "/" not in path)
     return 5 + 2 * min(safetensors, 68)
 
 
 def listed_gguf(entry: dict, files: dict) -> str | None:
-    """The catalog's GGUF as the repo lists it (exact, else same name in another case), for aura's --gguf."""
+    """The catalog's GGUF as the repo lists it (exact, else same name in another case), for tonamox's --gguf."""
     name = entry.get("ggufFilename") or ""
     if name in files:
         return name
     return next((p for p in files if p.lower() == name.lower()), None)
 
 
-def aura_report(aura: str, repo: str, device: str, cost: int, limiter: RateLimiter,
+def aura_report(tonamox: str, repo: str, device: str, cost: int, limiter: RateLimiter,
                 gguf: str | None = None) -> dict | None:
-    command = [aura, "models", "check", repo, "--device", device, "--json"] + (["--gguf", gguf] if gguf else [])
+    command = [tonamox, "models", "check", repo, "--device", device, "--json"] + (["--gguf", gguf] if gguf else [])
     for attempt in range(4):
         limiter.acquire(cost)
         run = subprocess.run(command, capture_output=True, text=True, timeout=600)
         if run.returncode != 0:
-            log(f"  aura failed ({run.returncode}): {run.stderr.strip()[-300:]}")
+            log(f"  tonamox failed ({run.returncode}): {run.stderr.strip()[-300:]}")
             return None
         report = json.loads(run.stdout)
         if not any("HTTP 429" in f.get("detail", "") for f in report.get("findings", [])):
@@ -219,7 +219,7 @@ def mib(size: int) -> int:
 
 
 def ordered(nested: dict | None) -> dict | None:
-    """aura's JSON sorts keys; the catalog keeps CatalogEntry's field order."""
+    """tonamox's JSON sorts keys; the catalog keeps CatalogEntry's field order."""
     if nested is None:
         return None
     return {k: nested[k] for k in sorted(nested, key=lambda k: NESTED_ORDER.index(k) if k in NESTED_ORDER else 99)}
@@ -357,7 +357,7 @@ def log(text: str) -> None:
 
 
 def find_aura(explicit: str | None) -> str | None:
-    for candidate in [explicit, ROOT / ".build/debug/aura", ROOT / ".build/release/aura", shutil.which("aura")]:
+    for candidate in [explicit, ROOT / ".build/debug/tonamox", ROOT / ".build/release/tonamox", shutil.which("tonamox")]:
         if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
     return None
@@ -367,9 +367,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--fix", action="store_true", help="write fixable corrections to both catalogs")
     parser.add_argument("--only", help="comma-separated entry ids")
-    parser.add_argument("--aura", help="aura binary (default: .build/debug/aura, .build/release/aura, PATH)")
-    parser.add_argument("--no-aura", action="store_true", help="skip the architecture checks")
-    parser.add_argument("--device", default="mac-64gb", help="aura device preset for the not-runnable notes")
+    parser.add_argument("--tonamox", help="tonamox binary (default: .build/debug/tonamox, .build/release/tonamox, PATH)")
+    parser.add_argument("--no-tonamox", action="store_true", help="skip the architecture checks")
+    parser.add_argument("--device", default="mac-64gb", help="tonamox device preset for the not-runnable notes")
     parser.add_argument("--size-tolerance", type=float, default=0.02, help="relative size drift allowed (default 0.02)")
     parser.add_argument("--max-requests", type=int, default=450, help="requests per 300 s (HF allows 500)")
     parser.add_argument("--exceptions", type=Path, default=EXCEPTIONS,
@@ -384,9 +384,9 @@ def main() -> int:
     catalog = json.loads(texts[0])
     if dump(catalog) != texts[0]:
         log("note: the catalog layout differs from this script's writer; --fix will reformat it")
-    aura = None if args.no_aura else find_aura(args.aura)
-    if not args.no_aura and not aura:
-        log("aura not found: run `swift build --product aura`, pass --aura, or use --no-aura")
+    tonamox = None if args.no_aura else find_aura(args.tonamox)
+    if not args.no_aura and not tonamox:
+        log("tonamox not found: run `swift build --product tonamox`, pass --tonamox, or use --no-tonamox")
         return 2
     only = set(args.only.split(",")) if args.only else None
     exceptions = load_exceptions(args.exceptions)
@@ -399,13 +399,13 @@ def main() -> int:
         log(f"[{index + 1}/{len(catalog['models'])}] {entry['id']}  {entry['repoID']}")
         state = fetch_repo(entry["repoID"], limiter)
         report = None
-        if aura and state.status in ("ok", "renamed"):
+        if tonamox and state.status in ("ok", "renamed"):
             gguf = listed_gguf(entry, state.files) if entry["format"] == "gguf" else None
-            report = aura_report(aura, state.canonical, args.device, aura_cost(state.files), limiter, gguf)
+            report = aura_report(tonamox, state.canonical, args.device, aura_cost(state.files), limiter, gguf)
         if state.status in ("gone", "error"):
             diffs = [Diff("repoID", entry["repoID"], None, False, state.detail)]
         else:
-            diffs = compare(entry, state, report, args.size_tolerance, architecture=aura is not None)
+            diffs = compare(entry, state, report, args.size_tolerance, architecture=tonamox is not None)
         skipped = set((exceptions.get(entry["id"]) or {}).get("fields", []))
         open_diffs = [d for d in diffs if d.field not in skipped]
         verdict = (report or {}).get("verdict")
@@ -415,7 +415,7 @@ def main() -> int:
         if state.status in ("ok", "renamed") and state.license is None:
             notes.append("the model card declares no license")
         if verdict == "notRunnable":
-            notes.append(f"aura: not runnable — {report.get('headline')}")
+            notes.append(f"tonamox: not runnable — {report.get('headline')}")
         print_entry(entry, open_diffs, [d for d in diffs if d.field in skipped], notes)
         failing += bool(open_diffs)
         results.append({"id": entry["id"], "repoID": entry["repoID"], "status": state.status, "gated": state.gated,
@@ -430,7 +430,7 @@ def main() -> int:
 
     checked = len(results)
     print(f"\n{checked} entries checked, {checked - failing} match, {failing} differ; "
-          f"{limiter.total} HF requests (aura's counted at an upper bound)")
+          f"{limiter.total} HF requests (tonamox's counted at an upper bound)")
     if args.report:
         args.report.write_text(json.dumps(results, indent=2, ensure_ascii=False) + "\n")
     if args.fix and fixed:

@@ -3,7 +3,7 @@ layout: docs
 title: Backends
 parent: Guide
 nav_order: 2
-description: "How AuraLocal's dual-backend architecture selects between MLX and llama.cpp/GGUF for each model and device."
+description: "How Tonamox's dual-backend architecture selects between MLX and llama.cpp/GGUF for each model and device."
 ---
 
 # Backends
@@ -19,7 +19,7 @@ description: "How AuraLocal's dual-backend architecture selects between MLX and 
 
 ## Overview
 
-AuraLocal uses two inference engines internally, selected automatically by `BackendRouter`:
+Tonamox uses two inference engines internally, selected automatically by `BackendRouter`:
 
 | Backend | Engine | Formats | Platforms | Peak RAM (estimate) |
 |---------|--------|---------|-----------|---------|
@@ -28,24 +28,24 @@ AuraLocal uses two inference engines internally, selected automatically by `Back
 | `LayerStreamingBackend` | llama.cpp + mmap | `.gguf` | iOS + macOS, when it does not fit (in practice iPhone and iPad) | ~1 GB for a 7B–8B |
 
 All three implement the same `InferenceBackend` protocol — your code looks identical regardless of which backend is running.
-After each generation, `AuraLocal.lastGenerationStats` reports token counts and timings: MLX passes on its runtime
+After each generation, `Tonamox.lastGenerationStats` reports token counts and timings: MLX passes on its runtime
 counters, the llama.cpp backends time the stream and estimate the prompt from its rendered text, and with tools the
 output as well (see
 [Generation Stats]({{ '/api/core' | relative_url }}#generation-stats)).
 
 {: .warning }
-> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:temperature:topP:onProgress:)`, `AuraProfile.tools`) run on the GGUF backends and on MLX text models; with an MLX vision or document model `ModelManager.load` and `AuraSession` throw `ModelConfigurationError.toolsUnsupported(.mlx)` before loading anything. The llama.cpp backends are text-only (an `image:` argument is ignored). Both families pass a multi-turn history with its roles; the llama.cpp backends render it with the GGUF's own chat template (see [Multi-turn conversations](#multi-turn-conversations-gguf)). A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `AuraSession` enforces `AuraProfile.outputSchema` on every backend by validating each reply and re-prompting; on `LlamaCppBackend`, for a profile without tools, it also decodes each reply under a grammar built from the schema (see [Schema grammars](#schema-grammars)); other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). `AuraSession` loads the model with `AuraProfile.sampling`'s `temperature` and `topP` and uses its `maxTokens` per turn; `topK` and `contextOverride` are not applied (see [Sampling](#sampling-temperature-and-top-p)).
+> The API is identical, the behaviour is not. **Tools** (`ModelManager.shared.load(_:tools:temperature:topP:onProgress:)`, `TonamoxProfile.tools`) run on the GGUF backends and on MLX text models; with an MLX vision or document model `ModelManager.load` and `TonamoxSession` throw `ModelConfigurationError.toolsUnsupported(.mlx)` before loading anything. The llama.cpp backends are text-only (an `image:` argument is ignored). Both families pass a multi-turn history with its roles; the llama.cpp backends render it with the GGUF's own chat template (see [Multi-turn conversations](#multi-turn-conversations-gguf)). A `constraint:` on `chat`/`stream` is enforced only by `LlamaCppBackend`; MLX, layer-streaming and remote throw `GenerationConstraintError.unsupportedBackend` (see [Constrained generation](#constrained-generation-gguf-only)). `TonamoxSession` enforces `TonamoxProfile.outputSchema` on every backend by validating each reply and re-prompting; on `LlamaCppBackend`, for a profile without tools, it also decodes each reply under a grammar built from the schema (see [Schema grammars](#schema-grammars)); other APIs ignore it (see [Structured output]({{ '/api/core' | relative_url }}#structured-output)). `TonamoxSession` loads the model with `TonamoxProfile.sampling`'s `temperature` and `topP` and uses its `maxTokens` per turn; `topK` and `contextOverride` are not applied (see [Sampling](#sampling-temperature-and-top-p)).
 
-`BackendKind` also declares `.remote` and `.hybrid`, but no AuraCore API returns them; remote inference goes through `HybridEscalator` (see [Hybrid inference]({{ '/guide/hybrid' | relative_url }})).
+`BackendKind` also declares `.remote` and `.hybrid`, but no TonamoxCore API returns them; remote inference goes through `HybridEscalator` (see [Hybrid inference]({{ '/guide/hybrid' | relative_url }})).
 
 ---
 
 ## Automatic Selection
 
-`BackendRouter` selects a backend when `AuraEngine` is initialized:
+`BackendRouter` selects a backend when `TonamoxEngine` is initialized:
 
 ```swift
-// Internal to AuraCore, shown for illustration: AuraEngine calls it on init.
+// Internal to TonamoxCore, shown for illustration: TonamoxEngine calls it on init.
 // From app code, call BackendRouter.recommendedBackend(for:) instead.
 let backend = BackendRouter.selectBackend(for: model, sampling: sampling, tools: tools)
 ```
@@ -66,13 +66,13 @@ model.format == .gguf
     fitLevel == .streamingRequired
         → LayerStreamingBackend  (mmap; Metal on device, CPU in the Simulator)
     fitLevel == .tooLarge
-        → LlamaCppBackend  (ModelManager.load refuses it first with AuraError.modelTooLarge)
+        → LlamaCppBackend  (ModelManager.load refuses it first with TonamoxError.modelTooLarge)
 ```
 
 To check which backend a model will use on the current device:
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 let kind = BackendRouter.recommendedBackend(for: .llama3_1_8b_gguf)
 // → .llamaCpp        on Mac with 16 GB RAM
@@ -86,7 +86,7 @@ let kind = BackendRouter.recommendedBackend(for: .llama3_1_8b_gguf)
 ## Sampling (temperature and top-p)
 
 `ModelManager.shared.load(_:tools:temperature:topP:onProgress:)` and the factories
-(`AuraLocal.text(_:temperature:topP:onProgress:)`, `.vision`, `.specialized`) take a temperature and a top-p. They
+(`Tonamox.text(_:temperature:topP:onProgress:)`, `.vision`, `.specialized`) take a temperature and a top-p. They
 hold for the instance's lifetime; there is no per-call setting.
 
 ```swift
@@ -113,7 +113,7 @@ let total = try await llm.chat("Coffee 3.50, bagel 2.25. Reply with the total on
 - **Constrained calls** run on a dedicated client with the instance's temperature and top-p.
 - **At temperature 0** on GGUF, the repetition penalty (1.1 over the last 64 tokens) has no effect, since
   LocalLLMClient applies it after the temperature sampler. Greedy decoding can repeat itself; budget `maxTokens`.
-- `AuraSession` loads its model with `AuraProfile.sampling.temperature` and `.topP` (`SamplingParams.default` is
+- `TonamoxSession` loads its model with `TonamoxProfile.sampling.temperature` and `.topP` (`SamplingParams.default` is
   0.7 / 0.95, `.precise` 0.2 / 0.95). On MLX that turns top-p on, unlike a plain `load`.
 
 ---
@@ -127,10 +127,10 @@ Used for all `.mlx` format models, from Granite Docling 258M up to Ornith 1.5 35
 - Model weights loaded into unified memory as MLX arrays
 - Supports text generation and vision (multimodal) models
 - GPU cache scaled by model weight size (~1/12 of the weights), clamped to 128 MB – 512 MB
-- KV cache bounded by `HardwareAnalyzer.recommendedContextWindow(for:)` (`maxKVSize`). Past it MLX overwrites the oldest tokens without an error, which `AuraLocal.lastContextOverflow` reports. Qwen 3.5 text models, Gemma 3 and 4, and LFM2 build their own caches and ignore the bound (see [Memory]({{ '/guide/memory' | relative_url }}#mlx-kv-window))
+- KV cache bounded by `HardwareAnalyzer.recommendedContextWindow(for:)` (`maxKVSize`). Past it MLX overwrites the oldest tokens without an error, which `Tonamox.lastContextOverflow` reports. Qwen 3.5 text models, Gemma 3 and 4, and LFM2 build their own caches and ignore the bound (see [Memory]({{ '/guide/memory' | relative_url }}#mlx-kv-window))
 - 20–45 tokens/second for ≤4B models on iPhone 15 Pro / M-series Mac
 - Text models run tool calls with the same loop as the GGUF backends; vision and document models with tools throw
-  `ModelConfigurationError.toolsUnsupported(.mlx)` from `ModelManager.load` and `AuraSession` (see
+  `ModelConfigurationError.toolsUnsupported(.mlx)` from `ModelManager.load` and `TonamoxSession` (see
   [Prompt cache and tool rounds](#prompt-cache-and-tool-rounds-mlx))
 - A text model keeps the KV cache of its last generation and prefills only the part of the next prompt it does
   not hold (see [Prompt cache and tool rounds](#prompt-cache-and-tool-rounds-mlx))
@@ -171,7 +171,7 @@ Used for all `.mlx` format models, from Granite Docling 258M up to Ornith 1.5 35
     does not parse is dropped, neither run nor shown. With Llama 3's untagged format (Llama 3.2 1B and 3B,
     Cogito v1 3B in the catalog), a `{…}` that does not parse streams as text, and text after a `{` that never
     closes is lost at the end of the reply. Every call in a reply runs, the same tool twice included.
-  - **What the model sees:** the tools go to the chat template as `tools`, with no instructions of AuraLocal's, so
+  - **What the model sees:** the tools go to the chat template as `tools`, with no instructions of Tonamox's, so
     a model whose template ignores `tools` never learns about them. A round goes back as an assistant turn with
     `tool_calls` and a `tool` turn per result (with `tool_call_id` and `name`); when the template throws on that,
     every round of the turn goes as one assistant turn of `<tool_call>` and `<tool_response>` text. Each reply
@@ -216,7 +216,7 @@ the text the KV cache holds from the turn before decodes only the rest; any othe
 and an empty decode batch (see **Reusing the KV cache** below). The pinned LocalLLMClient (0.5.0) never cleared the
 cache when a new prompt did not extend the cached one, so the cache grew every turn until the context overflowed
 (around turn 8 at 1024 tokens) and later turns failed or aborted; the fix it needs upstream is prepared as
-`contrib/localllmclient/0004`. AuraLocal compares the text itself and clears the cache on every miss.
+`contrib/localllmclient/0004`. Tonamox compares the text itself and clears the cache on every miss.
 
 - **Roles:** the history is rendered with the GGUF's `tokenizer.chat_template` and special tokens (`bos_token`,
   `eos_token`, …), read from the file the way llama.cpp resolves them, with the same Jinja engine and message shapes
@@ -248,7 +248,7 @@ cache when a new prompt did not extend the cached one, so the cache grew every t
   the rest tokenizes as it would at the end of the whole prompt (checked against the model's own tokenizer on
   Qwen2.5 and SmolLM2). Anything else re-prefills the whole prompt after an empty cache, as before:
   - a reply cut by `maxTokens`, `shouldStop`, cancellation or backgrounding, or a turn that failed;
-  - a history that does not carry the reply exactly as it was returned (AuraLocal's history methods store it as
+  - a history that does not carry the reply exactly as it was returned (Tonamox's history methods store it as
     returned);
   - a history whose start changed: a turn on which the overflow trimming drops more of the oldest history than the
     turn before re-prefills. `chat(_:in:)`'s `maxContextTokens` window snaps its oldest kept turn to a stride of up
@@ -281,8 +281,8 @@ cache when a new prompt did not extend the cached one, so the cache grew every t
   model is asked to write them:
   - **`<tool_call>` JSON** (`<tool_call>{"name": …, "arguments": {…}}</tool_call>`): templates without tool support,
     which get it from the injected tool instructions, and templates that write a call that way, such as Qwen2.5's
-    (checked at load by rendering a sample call). The turn runs on AuraLocal's own context, like a turn
-    without tools, and AuraLocal's parser reads the calls: every call in a reply runs, two to the same tool included;
+    (checked at load by rendering a sample call). The turn runs on Tonamox's own context, like a turn
+    without tools, and Tonamox's parser reads the calls: every call in a reply runs, two to the same tool included;
     a `<tool_call>` block that is not such an object stays in the visible text; arguments reach the tool as JSON with
     sorted keys. The round joins the conversation as the reply exactly as the model wrote it, its `<tool_call>` text
     included, followed by one tool turn per result. On a template that renders tool turns natively (Qwen2.5's), the
@@ -404,15 +404,15 @@ iOS it counts toward the jetsam limit, and so does the per-call peak.
 - The prompt is rendered with the model's chat template like an unconstrained call, the system prompt in its own
   turn, but without tool instructions.
 - Only `chat(_:systemPrompt:maxTokens:constraint:)` and `stream(_:systemPrompt:maxTokens:constraint:)` take a
-  constraint; the history and vision paths do not. `AuraSession` uses one internally for a profile's
+  constraint; the history and vision paths do not. `TonamoxSession` uses one internally for a profile's
   `outputSchema` (below).
 
 ### Schema grammars
 
-For a profile with an `outputSchema` and no tools, `AuraSession` runs every generation, repairs included, through
-the constrained path above with a GBNF grammar that AuraLocal builds from the compiled schema. Validation and
+For a profile with an `outputSchema` and no tools, `TonamoxSession` runs every generation, repairs included, through
+the constrained path above with a GBNF grammar that Tonamox builds from the compiled schema. Validation and
 repair still run on every reply. MLX and layer-streaming keep validation only, and so does
-`AuraSession.usesSchemaGrammar = false`. What the grammar enforces is listed in
+`TonamoxSession.usesSchemaGrammar = false`. What the grammar enforces is listed in
 [the API reference]({{ '/api/core' | relative_url }}#schema-grammars).
 
 Measured with `GGUFSchemaGrammarLiveTests` on the same M1 Pro (32 GB, macOS 26.7.1): temperature 0, the person

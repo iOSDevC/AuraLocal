@@ -3,7 +3,7 @@ layout: docs
 title: Distributed Inference (Research)
 parent: Guide
 nav_order: 10
-description: "Research evaluation of a Mac orchestrating USB-tethered iPhones for speculative decoding and embeddings (measured results, transport and iOS findings, what AuraLocal would need); no mesh API ships, and the multilingual-e5-small provider it evaluated is documented in Document RAG."
+description: "Research evaluation of a Mac orchestrating USB-tethered iPhones for speculative decoding and embeddings (measured results, transport and iOS findings, what Tonamox would need); no mesh API ships, and the multilingual-e5-small provider it evaluated is documented in Document RAG."
 ---
 
 # Distributed Inference over USB (research)
@@ -20,7 +20,7 @@ description: "Research evaluation of a Mac orchestrating USB-tethered iPhones fo
 ## Status and verdict
 
 {: .warning }
-> **Research only. Not shipped, no API.** AuraLocal has no mesh, node, USB transport or
+> **Research only. Not shipped, no API.** Tonamox has no mesh, node, USB transport or
 > speculative-decoding API. This page records an evaluation (2026-09-29) so its results and pitfalls
 > are not rediscovered. The one piece that shipped, the multilingual-e5-small embedding provider, is
 > documented in [Document RAG]({{ '/guide/rag' | relative_url }}#multilingual-e5-small-opt-in).
@@ -204,7 +204,7 @@ remote) [Inferred]; the quality of those quantizations was not measured.
   connections on background, rebuild on foreground, and have the Mac send heartbeats.
 - **Memory.** `os_proc_available_memory()` is headroom to the process's current limit, not free device
   memory; it returns 0 over the limit, outside an app and in the simulator, where `physicalMemory` is
-  the host's RAM [Verified]. AuraLocal now computes the limit as `HardwareProfile.memoryLimitBytes()`:
+  the host's RAM [Verified]. Tonamox now computes the limit as `HardwareProfile.memoryLimitBytes()`:
   `os_proc_available_memory()` plus the process's `phys_footprint` (`TASK_VM_INFO`), capped at 74% of
   physical RAM because an 8 GB iPad reported 8142 MiB available. It returns `nil` when iOS reports
   unknown, and on macOS. Size models against measured headroom; per-app budgets are far below device RAM
@@ -218,7 +218,7 @@ remote) [Inferred]; the quality of those quantizations was not measured.
   the Mac and key by model, not chip: A19 Pro has 5 GPU cores in iPhone Air, 6 in 17 Pro [Third-party].
 - **MLX** does not run in the iOS Simulator (mlx-swift docs). Open upstream on 2026-09-29 [Verified]:
   mlx-swift #491 (0.32.2 crashes at launch on iOS and macOS before 26.4; fix PRs #493 and #494 unmerged)
-  and #485 (an app linking 0.31.6 hangs before `main()` on iOS 27.0). AuraLocal holds mlx-swift at
+  and #485 (an app linking 0.31.6 hangs before `main()` on iOS 27.0). Tonamox holds mlx-swift at
   `0.31.3..<0.31.5` (0.31.3 in its lockfile, 0.31.4 in a resolve without it), which excludes 0.31.6; use the same
   range in a separate app target and test it on iOS 27 first, and cap MLX's buffer cache below the headroom before loading a draft, or jetsam may kill it [Inferred].
 
@@ -252,15 +252,15 @@ masks, missing licenses) [Verified]. Three conversion pitfalls, all measured [Ve
    attention mask in the graph from the pad id, leaving `input_ids` as the only input.
 
 Apple's ANE layout (`(B, C, 1, S)`, 1×1 convolutions, LayerNorm epsilon 1e-5) was up to 1.9× faster at
-512 tokens [Verified]. This recipe **shipped** as AuraLocal's opt-in e5 provider
+512 tokens [Verified]. This recipe **shipped** as Tonamox's opt-in e5 provider
 (`CoreMLTextEmbeddingTool`, `CoreMLEmbeddingProvider`, `scripts/embeddings/convert_e5_coreml.py`; see
 [Document RAG]({{ '/guide/rag' | relative_url }}#multilingual-e5-small-opt-in)). A mesh would tokenize
 on the Mac and send ids so phones ship no tokenizer; that needs a new ids-in entry point, because the
 shipped tool embeds only from text and its bundle check requires `tokenizer.json` and `tokenizer_config.json`.
 
-## How it would integrate into AuraLocal
+## How it would integrate into Tonamox
 
-No mesh code exists. Everything below is unimplemented except module 1 and these shipped AuraLocal
+No mesh code exists. Everything below is unimplemented except module 1 and these shipped Tonamox
 features, which a mesh would reuse (claims about current code were checked on the source tree):
 
 - **Capabilities.** `HardwareProfile.availableMemoryBytes()` reads `os_proc_available_memory()` on iOS
@@ -279,23 +279,23 @@ features, which a mesh would reuse (claims about current code were checked on th
 1. **A token-level backend API with position-based sync.** `InferenceBackend` takes text
    (`prompt: String` or `messages: [[String: String]]`) and streams `String` tokens; a draft needs
    "generate from these ids, return ids, keep the longest common prefix". The resolved mlx-swift-lm
-   3.31.3 exposes `trimPromptCache` and `SpeculativeTokenIterator`, unused by AuraLocal.
+   3.31.3 exposes `trimPromptCache` and `SpeculativeTokenIterator`, unused by Tonamox.
 2. **A reverse channel for phone-to-Mac escalation.** `OpenAICompatibleProvider` opens connections to a
    `baseURL`, which a phone cannot do over usbmux; the Mac would hold a connection open for its requests.
    If the USB-NCM link above works, a `baseURL` at the Mac's link-local address could make this channel
    unnecessary (untested).
-3. **Minimum iOS version.** AuraLocal requires iOS 18 and C++ interoperability; the evaluated node
-   design (not built) targeted iOS 17, so it did not depend on AuraLocal.
+3. **Minimum iOS version.** Tonamox requires iOS 18 and C++ interoperability; the evaluated node
+   design (not built) targeted iOS 17, so it did not depend on Tonamox.
 
 **If this work continues, the modules would come in this order. Each one depends on device measurements
 that have not been taken, and there is no commitment or timeline:**
 
 | # | Module | Scope |
 |---|---|---|
-| 1 | e5 embedding provider for AuraDocs | **Shipped**, independent of any mesh ([Document RAG]({{ '/guide/rag' | relative_url }}#multilingual-e5-small-opt-in)) |
+| 1 | e5 embedding provider for TonamoxDocs | **Shipped**, independent of any mesh ([Document RAG]({{ '/guide/rag' | relative_url }}#multilingual-e5-small-opt-in)) |
 | 2 | iOS node | Loopback server with a token; memory from `HardwareProfile.availableMemoryBytes()` (headroom) and `HardwareProfile.memoryLimitBytes()` (the app's limit), not `HardwareProfile.current()`. On iOS that call reports the limit but falls back to 60% of physical RAM when iOS reports unknown, as in the simulator, where that is the host's RAM; perception and embedding roles over `SystemTool` conformers |
 | 3 | USB transport for remote escalation | Test the USB-NCM link first, otherwise build the reverse channel above; consent and cost receipts either way. A usbmux channel needs no Wi-Fi and no Local Network prompt [Inferred]; an NCM link needs the Local Network permission |
-| 4 | macOS orchestrator in the `aura` CLI | A Swift usbmuxd client; the protocol is small and needs no dependencies |
+| 4 | macOS orchestrator in the `tonamox` CLI | A Swift usbmuxd client; the protocol is small and needs no dependencies |
 | 5 | Draft role | Last, and only on a GPU-generation-15+ Mac or with an nvfp4/mxfp4 target |
 
 ## Phases, exit criteria and risks

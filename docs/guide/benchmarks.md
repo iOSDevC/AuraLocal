@@ -3,7 +3,7 @@ layout: docs
 title: Benchmarks
 parent: Guide
 nav_order: 8
-description: "AuraLocal performance benchmarks — tokens per second, RAM usage, and first-token latency on iPhone, iPad, and Mac."
+description: "Tonamox performance benchmarks — tokens per second, RAM usage, and first-token latency on iPhone, iPad, and Mac."
 ---
 
 # Benchmarks
@@ -164,7 +164,7 @@ GGUF layer-streaming loads faster because only the first few layers are paged in
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let start = ContinuousClock.now
 let llm = try await ModelManager.shared.load(.qwen3_1_7b)

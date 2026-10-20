@@ -3,7 +3,7 @@ layout: docs
 title: Voice Interface
 parent: Guide
 nav_order: 6
-description: "Turn-based voice pipeline with AuraVoice — on-device STT, LLM streaming, and TTS with sentence-level pipelining."
+description: "Turn-based voice pipeline with TonamoxVoice — on-device STT, LLM streaming, and TTS with sentence-level pipelining."
 ---
 
 # Voice Interface
@@ -22,7 +22,7 @@ description: "Turn-based voice pipeline with AuraVoice — on-device STT, LLM st
 ```
 Microphone
   → SFSpeechRecognizer (on-device, no network)
-    → AuraLocal.stream()
+    → Tonamox.stream()
       → Sentence splitter
         → AVSpeechSynthesizer (on-device TTS)
 ```
@@ -36,7 +36,7 @@ Speech is recognized in one locale: `Config.locale`, else the device's first pre
 ## Quick Start
 
 ```swift
-import AuraVoice
+import TonamoxVoice
 
 // Drop-in button — manages its own session
 VoiceButton(llm: llm)
@@ -47,7 +47,7 @@ VoiceButton(llm: llm)
 ## Full Control
 
 ```swift
-import AuraVoice
+import TonamoxVoice
 
 @StateObject var session = VoiceSession(llm: llm)
 
@@ -137,10 +137,10 @@ session.cancel()
 
 ## Adding Voice to Your App
 
-`AuraVoice` does **not** add a tab to your app automatically. The `VoiceTab` view is internal to the module and is not part of the public API — importing `AuraVoice` exposes no tab. To add voice, place the public `VoiceButton` or `VoiceChatView` in your own view hierarchy.
+`TonamoxVoice` does **not** add a tab to your app automatically. The `VoiceTab` view is internal to the module and is not part of the public API — importing `TonamoxVoice` exposes no tab. To add voice, place the public `VoiceButton` or `VoiceChatView` in your own view hierarchy.
 
 ```swift
-import AuraVoice
+import TonamoxVoice
 
 // Drop-in button — manages its own session
 VoiceButton(llm: llm)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build AuraExample.app and package it into a .dmg that contains a
+# Build TonamoxExample.app and package it into a .dmg that contains a
 # drag-to-Applications alias. Requires macOS 26 (AgentCrew) + an Xcode signing
 # identity. The app is development-signed (runs on this Mac).
 #
@@ -12,24 +12,24 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROJ="$ROOT/Sources/AuraExample/AuraExample.xcodeproj"
-SCHEME="AuraExample"
+PROJ="$ROOT/Sources/TonamoxExample/TonamoxExample.xcodeproj"
+SCHEME="TonamoxExample"
 CONFIG="${CONFIG:-Debug}"
-VOL="AuraExample"
+VOL="TONAMOX"
 
 BUILD="$ROOT/build"
 DD="$BUILD/dd"
 STAGE="$BUILD/dmg"
-DMG="$BUILD/AuraExample.dmg"
+DMG="$BUILD/TONAMOX.dmg"
 
 rm -rf "$BUILD"; mkdir -p "$BUILD"
 
-echo "==> Building AuraExample ($CONFIG)…"
+echo "==> Building TonamoxExample ($CONFIG)…"
 xcodebuild -project "$PROJ" -scheme "$SCHEME" -configuration "$CONFIG" \
   -destination 'platform=macOS' -skipMacroValidation \
   -derivedDataPath "$DD" build
 
-APP="$DD/Build/Products/$CONFIG/AuraExample.app"
+APP="$DD/Build/Products/$CONFIG/TonamoxExample.app"
 [ -d "$APP" ] || { echo "error: app not found at $APP"; exit 1; }
 
 echo "==> Staging .dmg contents (app + /Applications alias)…"

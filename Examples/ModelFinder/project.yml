@@ -7,7 +7,7 @@ options:
   createIntermediateGroups: true
   generateEmptyDirectories: false
 packages:
-  AuraLocal:
+  Tonamox:
     path: ../..
 targets:
   ModelFinder:
@@ -16,10 +16,10 @@ targets:
     sources:
       - path: ModelFinder
     dependencies:
-      - package: AuraLocal
-        product: AuraCore
-      - package: AuraLocal
-        product: AuraUI
+      - package: Tonamox
+        product: TonamoxCore
+      - package: Tonamox
+        product: TonamoxUI
     scheme: {}
     settings:
       base:
@@ -28,7 +28,7 @@ targets:
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
-        # AuraCore is built with C++ interop (llama.cpp), so every importer needs it too.
+        # TonamoxCore is built with C++ interop (llama.cpp), so every importer needs it too.
         SWIFT_OBJC_INTEROP_MODE: objcxx
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Model Finder

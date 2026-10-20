@@ -1,15 +1,15 @@
 ---
 layout: docs
-title: AuraUI
+title: TonamoxUI
 parent: API Reference
 nav_order: 2
-description: "AuraUI API reference — prebuilt SwiftUI tabs for text chat, vision and OCR, a model list section and a Hugging Face model browser."
+description: "TonamoxUI API reference — prebuilt SwiftUI tabs for text chat, vision and OCR, a model list section and a Hugging Face model browser."
 ---
 
-# AuraUI
+# TonamoxUI
 {: .no_toc }
 
-Prebuilt SwiftUI views. Import `AuraUI` and compose the public tab views — `TextChatTab`, `VisionTab`, `OCRTab` — into your own `TabView`. The library ships no top-level `ContentView`; you own the container. (`ContentView` exists only in the bundled `AuraExample` demo app, not in the `AuraUI` library. That app no longer uses these three tabs: its Chat tab is one multimodal chat built on `Model.capabilities`; see [The example apps]({{ '/guide/models' | relative_url }}#the-example-apps).)
+Prebuilt SwiftUI views. Import `TonamoxUI` and compose the public tab views — `TextChatTab`, `VisionTab`, `OCRTab` — into your own `TabView`. The library ships no top-level `ContentView`; you own the container. (`ContentView` exists only in the bundled `TonamoxExample` demo app, not in the `TonamoxUI` library. That app no longer uses these three tabs: its Chat tab is one multimodal chat built on `Model.capabilities`; see [The example apps]({{ '/guide/models' | relative_url }}#the-example-apps).)
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -21,11 +21,11 @@ Prebuilt SwiftUI views. Import `AuraUI` and compose the public tab views — `Te
 
 ## Composing the tabs
 
-`AuraUI` ships individual tab views. Compose them into your own `TabView` — you own the top-level container. (Add a Voice tab yourself by importing `AuraVoice` and placing its `VoiceChatView`.)
+`TonamoxUI` ships individual tab views. Compose them into your own `TabView` — you own the top-level container. (Add a Voice tab yourself by importing `TonamoxVoice` and placing its `VoiceChatView`.)
 
 ```swift
 import SwiftUI
-import AuraUI
+import TonamoxUI
 
 @main
 struct MyApp: App {
@@ -50,19 +50,19 @@ struct MyApp: App {
 
 | Tab | Module | Description |
 |-----|--------|-------------|
-| **Text** | `AuraUI` | Multi-conversation chat with streaming. Model menu with a **Downloaded** section first, then MLX and GGUF. `TextChatTab(offersHuggingFaceSearch: true)` adds **Find on Hugging Face…** at the top of the menu. A model that is not downloaded shows a [download placeholder](#downloading-on-demand) instead of the chat. |
-| **Vision** | `AuraUI` | Image analysis — Standard and Stream modes. Model picker with **Downloaded** and **Available** sections. A model that is not downloaded shows a download placeholder in place of **Analyze Image**. |
-| **OCR** | `AuraUI` | Receipt and document extraction with FastVLM or Granite Docling. A model that is not downloaded shows a download placeholder in place of **Extract Document**. |
-| **Models** | `AuraUI` (`ModelSection`) | No tab type. `ModelSection` is a `Section` of model rows with download (through `ModelDownloads`: the paths the backends load, the Hugging Face token, a free-space check, cancel and resume), delete, and backend, fit and speed badges; place it in your own `List`. A row does not start a file that the [Hugging Face browser](#hugging-face-browser) is downloading, and its delete also unregisters a model added from search. |
-| **Voice** | `AuraVoice` | No tab type. Place `VoiceChatView(llm:)` in your own tab for turn-based voice chat. See [AuraVoice]({{ '/api/voice' | relative_url }}). |
-| **Docs** | `AuraDocs` | `DocsTab`: document library and RAG chat. Requires `AuraDocs` import. Shows a download placeholder until its two models are on disk. See [AuraDocs]({{ '/api/rag' | relative_url }}). |
+| **Text** | `TonamoxUI` | Multi-conversation chat with streaming. Model menu with a **Downloaded** section first, then MLX and GGUF. `TextChatTab(offersHuggingFaceSearch: true)` adds **Find on Hugging Face…** at the top of the menu. A model that is not downloaded shows a [download placeholder](#downloading-on-demand) instead of the chat. |
+| **Vision** | `TonamoxUI` | Image analysis — Standard and Stream modes. Model picker with **Downloaded** and **Available** sections. A model that is not downloaded shows a download placeholder in place of **Analyze Image**. |
+| **OCR** | `TonamoxUI` | Receipt and document extraction with FastVLM or Granite Docling. A model that is not downloaded shows a download placeholder in place of **Extract Document**. |
+| **Models** | `TonamoxUI` (`ModelSection`) | No tab type. `ModelSection` is a `Section` of model rows with download (through `ModelDownloads`: the paths the backends load, the Hugging Face token, a free-space check, cancel and resume), delete, and backend, fit and speed badges; place it in your own `List`. A row does not start a file that the [Hugging Face browser](#hugging-face-browser) is downloading, and its delete also unregisters a model added from search. |
+| **Voice** | `TonamoxVoice` | No tab type. Place `VoiceChatView(llm:)` in your own tab for turn-based voice chat. See [TonamoxVoice]({{ '/api/voice' | relative_url }}). |
+| **Docs** | `TonamoxDocs` | `DocsTab`: document library and RAG chat. Requires `TonamoxDocs` import. Shows a download placeholder until its two models are on disk. See [TonamoxDocs]({{ '/api/rag' | relative_url }}). |
 
 ---
 
 ## Downloading on demand
 
 No tab downloads a model until the user asks. When the selected model (or, for `DocsTab`, one of
-`DocsTab.neededModels`) is not on disk, the tab shows AuraCore's `ModelDownloadPlaceholder`: the model, what it is
+`DocsTab.neededModels`) is not on disk, the tab shows TonamoxCore's `ModelDownloadPlaceholder`: the model, what it is
 for, its size, the free space with a warning when it may not fit, and **Download**. Progress and **Cancel
 download** follow, or the error and **Retry download**; when the files are on disk the tab continues on its own and
 loads the model from there. A model already on disk loads as before, on send, run or (`DocsTab`) appearance. On
@@ -104,7 +104,7 @@ Fit level badges show device compatibility (label and SF Symbol from `ModelFitLe
 | Too Large | `xmark.octagon.fill` | red | Not runnable on this device; the row is dimmed |
 
 A speed badge follows when the chip's memory bandwidth is known: `~N tok/s`, or `~N–M tok/s` for a mixture of
-experts (an uncalibrated range). It is omitted otherwise, including on iPhone, where AuraLocal knows no bandwidth.
+experts (an uncalibrated range). It is omitted otherwise, including on iPhone, where Tonamox knows no bandwidth.
 
 ---
 
@@ -113,8 +113,8 @@ experts (an uncalibrated range). It is omitted otherwise, including on iPhone, w
 Use individual tabs and components directly:
 
 ```swift
-import AuraUI
-import AuraCore
+import TonamoxUI
+import TonamoxCore
 
 // Prebuilt tab views
 TextChatTab()
@@ -122,7 +122,7 @@ VisionTab()
 OCRTab()
 
 // Models browser component: build a Section from a [Model] array.
-// (There is no `ModelsTab` in AuraUI — compose `ModelSection` inside your own List/Form.)
+// (There is no `ModelsTab` in TonamoxUI — compose `ModelSection` inside your own List/Form.)
 ModelSection(
     title: "Text",
     icon: "text.bubble",
@@ -142,7 +142,7 @@ brings its own navigation container, so they fit a `NavigationStack`, a `Navigat
 
 | Type | What it is |
 |------|------------|
-| `HFModelSearch` | `@MainActor @Observable` state: `init(query:devices:compatibleOnly:pipelineFilter:)` and `search()`. Fetched repo snapshots are cached; changing the device re-evaluates them offline. `pipelineFilter` (an `HFPipelineFilter` from AuraCore, such as `.chat`; `nil` by default) hides results whose declared pipeline it does not admit, and the list's controls name the pipelines it keeps. |
+| `HFModelSearch` | `@MainActor @Observable` state: `init(query:devices:compatibleOnly:pipelineFilter:)` and `search()`. Fetched repo snapshots are cached; changing the device re-evaluates them offline. `pipelineFilter` (an `HFPipelineFilter` from TonamoxCore, such as `.chat`; `nil` by default) hides results whose declared pipeline it does not admit, and the list's controls name the pipelines it keeps. |
 | `HFModelSearchList` | `init(search:selection:)`. Search field, format filter (starts on GGUF on the Simulator), sort, device picker (only with more than one device), **Compatible only**, and a verdict badge per row. Selecting a row sets `selection` to its repo id. |
 | `HFRepoDetailView` | `init(repoID:search:)`. Fetches the repo if needed and shows the findings, per-quant fits, license and gating, plus a **Download** section for repos rated runnable: quant picker, size and free space, progress, Cancel/Resume, **Try it** (load, one 32-token reply, unload). A key button and the gated error open the token form. |
 | `DownloadedModelsList` | `init()`. Everything on disk under the model storage root and the Caches folder earlier versions used, finished or paused, with Try it, Resume, Cancel and Delete (unload every model reading the file, files, record, registry), plus the keep-awake switch. Try it and Resume are off for a file whose size is unknown (no record or catalog entry). A paused `.partial` whose finished file is already on disk (left in Caches by an older build) shows as **Leftover**: no Resume, and Delete removes only that partial. Sets the title "Downloads". |
@@ -151,8 +151,8 @@ brings its own navigation container, so they fit a `NavigationStack`, a `Navigat
 
 ```swift
 import SwiftUI
-import AuraCore
-import AuraUI
+import TonamoxCore
+import TonamoxUI
 
 // In a stack (iPhone): judge repos against this device only and hide the ones that won't run.
 struct FindModels: View {

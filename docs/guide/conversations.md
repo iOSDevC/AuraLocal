@@ -22,7 +22,7 @@ description: "Persistent multi-turn chat history with ConversationStore, context
 `ConversationStore` is an actor-backed SQLite store (no external dependencies). All reads and writes are serialized automatically — safe to call from any task.
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 let store = ConversationStore.shared
 
@@ -49,7 +49,7 @@ try await store.deleteConversation(id: conv.id)
 Pass a `conversationID` to any `chat` or `stream` call — context is loaded automatically:
 
 ```swift
-let llm = try await AuraLocal.text(.qwen3_1_7b)
+let llm = try await Tonamox.text(.qwen3_1_7b)
 
 let reply1 = try await llm.chat("What is 2+2?", in: conv.id)
 let reply2 = try await llm.chat("Why?", in: conv.id)  // has full context
@@ -60,7 +60,7 @@ for try await token in llm.stream("Tell me more", in: conv.id) {
 }
 ```
 
-Before each call AuraLocal loads the newest turns that fit `maxContextTokens` (default 3072, estimated at ~4 characters per token). When older turns have to be dropped, it snaps the oldest kept turn to a stride of up to 4 turns, which can drop up to 3 extra old turns. Between moves the window's start stays byte-identical, so the GGUF backends can keep their KV cache and decode only the new turns; a turn on which the start moves prefills the whole window ([Reusing the KV cache]({{ '/guide/backends' | relative_url }}#multi-turn-conversations-gguf)).
+Before each call Tonamox loads the newest turns that fit `maxContextTokens` (default 3072, estimated at ~4 characters per token). When older turns have to be dropped, it snaps the oldest kept turn to a stride of up to 4 turns, which can drop up to 3 extra old turns. Between moves the window's start stays byte-identical, so the GGUF backends can keep their KV cache and decode only the new turns; a turn on which the start moves prefills the whole window ([Reusing the KV cache]({{ '/guide/backends' | relative_url }}#multi-turn-conversations-gguf)).
 
 The user turn is saved before the model runs. If the call throws, the conversation keeps one reply per prompt:
 a `GenerationInterrupted` that carries text (the app moved to the background, or the device guard stopped it)
@@ -70,7 +70,7 @@ Cancelling the task that runs a `stream(_:in:)` loop (a Stop button), or leaving
 generation and settles the conversation the same way: the text generated so far is saved as the reply, or the user
 turn is removed when there was none. Leaving the loop cancels only once nothing else holds the stream; if you keep it
 in a variable or property, stop it by cancelling the task. Those writes finish after your loop has ended, so the next
-`chat(_:in:)` or `stream(_:in:)` on the same `AuraLocal` waits for them before saving its prompt.
+`chat(_:in:)` or `stream(_:in:)` on the same `Tonamox` waits for them before saving its prompt.
 
 On a GGUF model loaded with tools whose call format runs on LocalLLMClient's `LlamaClient` (for example Llama 3.1's
 or Mistral's), the reply is cut and saved at once, but llama.cpp keeps decoding until the end of generation or a full
@@ -107,7 +107,7 @@ try await llm.summarizeAndPrune(
 )
 ```
 
-Nothing calls it for you: `chat(_:in:)`, `stream(_:in:)` and `ModelManager` never prune. Call it yourself after a reply (AuraUI's `TextChatTab` does this after every turn) or before switching models.
+Nothing calls it for you: `chat(_:in:)`, `stream(_:in:)` and `ModelManager` never prune. Call it yourself after a reply (TonamoxUI's `TextChatTab` does this after every turn) or before switching models.
 
 ---
 
@@ -115,7 +115,7 @@ Nothing calls it for you: `chat(_:in:)`, `stream(_:in:)` and `ModelManager` neve
 
 ```swift
 // Creates a new conversation automatically, returns the ID
-let (reply, conversationID) = try await AuraLocal.chat(
+let (reply, conversationID) = try await Tonamox.chat(
     "Hello",
     model: .qwen3_1_7b
 )
@@ -127,11 +127,11 @@ let (reply, conversationID) = try await AuraLocal.chat(
 
 ```swift
 import SwiftUI
-import AuraCore
+import TonamoxCore
 
 struct ChatView: View {
     @State private var messages: [Turn] = []
-    @State private var llm: AuraLocal?
+    @State private var llm: Tonamox?
     let conversationID: UUID
 
     var body: some View {
@@ -139,7 +139,7 @@ struct ChatView: View {
             Text(turn.content)
         }
         .task {
-            llm = try? await AuraLocal.text(.qwen3_1_7b)
+            llm = try? await Tonamox.text(.qwen3_1_7b)
             messages = (try? await ConversationStore.shared.turns(for: conversationID)) ?? []
         }
     }

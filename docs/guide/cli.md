@@ -1,12 +1,12 @@
 ---
 layout: docs
-title: CLI (aura)
+title: CLI (tonamox)
 parent: Guide
 nav_order: 9
-description: "The aura command-line tool — a headless integration harness for the hybrid, native-tool and on-device ML features, plus Homebrew packaging."
+description: "The tonamox command-line tool — a headless integration harness for the hybrid, native-tool and on-device ML features, plus Homebrew packaging."
 ---
 
-# CLI — `aura`
+# CLI — `tonamox`
 {: .no_toc }
 
 ## Table of contents
@@ -19,13 +19,13 @@ description: "The aura command-line tool — a headless integration harness for 
 
 ## Overview
 
-`aura` is a small **macOS** command-line tool that drives AuraLocal's hybrid and
+`tonamox` is a small **macOS** command-line tool that drives Tonamox's hybrid and
 native-tool features headlessly — useful as an integration reference and a CI smoke test.
 
-Build it from the package, with Xcode 26.4 or later (it links `AuraImageGen`, which needs the 26.4 SDK):
+Build it from the package, with Xcode 26.4 or later (it links `TonamoxImageGen`, which needs the 26.4 SDK):
 
 ```sh
-swift build -c release --product aura
+swift build -c release --product tonamox
 # or
 ./scripts/build-cli.sh
 ```
@@ -33,30 +33,30 @@ swift build -c release --product aura
 ## Commands
 
 ```
-aura providers                      # detect Ollama / llama-server + models
-aura tools                          # list on-device ML tools by category, with availability
-aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>]
+tonamox providers                      # detect Ollama / llama-server + models
+tonamox tools                          # list on-device ML tools by category, with availability
+tonamox ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>]
          [--base-url <url>] [--max-tokens N]  # ask a bigger model; local unless you name a cloud API
-aura ocr <image>                    # native Vision OCR; ignores EXIF orientation (camera photos: aura ml ocr-lines)
-aura ml <subcommand> …              # run an on-device ML tool (see below)
-aura models search|check|devices …  # which Hugging Face models AuraLocal can run (see below)
-aura receipt extract|eval …          # receipt fields by rule and by a local model, scored (macOS 26; see below)
-aura imagegen "<prompt>" [--model schnell|dev|<repo>] [--base-model schnell|dev]
+tonamox ocr <image>                    # native Vision OCR; ignores EXIF orientation (camera photos: tonamox ml ocr-lines)
+tonamox ml <subcommand> …              # run an on-device ML tool (see below)
+tonamox models search|check|devices …  # which Hugging Face models Tonamox can run (see below)
+tonamox receipt extract|eval …          # receipt fields by rule and by a local model, scored (macOS 26; see below)
+tonamox imagegen "<prompt>" [--model schnell|dev|<repo>] [--base-model schnell|dev]
               [--lora <file.safetensors> [--lora-scale S]]... [--steps N] [--seed N]
               [--quantize 3|4|6|8] [--low-ram] [--out <dir>]   # FLUX via mflux (macOS; needs uv tool install mflux)
 ```
 
 - **`providers`** / **`tools`** / **`ocr`** / **`ml`** / **`models`** need no key and no model download.
 - **`ask`** needs a running llama-server / Ollama, a named cloud provider with a key, or `--base-url`;
-  see [below](#ask-a-bigger-model-aura-ask).
+  see [below](#ask-a-bigger-model-tonamox-ask).
 - **`imagegen`** prints the path of the PNG it wrote (`<dir>/image.png`, a temporary folder by default).
   It defaults to `--model schnell` (a gated repo) and `--quantize 4`, and `--lora` takes local files only;
   see [Image Generation]({{ '/guide/imagegen' | relative_url }}).
 
-## Ask a bigger model (`aura ask`)
+## Ask a bigger model (`tonamox ask`)
 
 ```
-aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>]
+tonamox ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>]
          [--base-url <url>] [--max-tokens N]
 ```
 
@@ -69,7 +69,7 @@ aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>]
 | `anthropic` | Anthropic Messages API, default model `claude-sonnet-4-5` | `ANTHROPIC_API_KEY`, else Keychain account `cloud.anthropic` |
 
 - **`auto` never picks a cloud API.** It also skips Ollama cloud models (`name:cloud`, which Ollama
-  forwards to `ollama.com`; `aura providers` marks them). With no on-machine model running, it exits 1
+  forwards to `ollama.com`; `tonamox providers` marks them). With no on-machine model running, it exits 1
   and lists the options (start llama-server / Ollama, `--provider openai|anthropic`, or `--base-url`).
 - **`--model <id>`** overrides the default. For `auto` / `local` it selects the local server that
   serves that model (`llama3` also matches Ollama's `llama3:latest`) and fails if none does.
@@ -85,59 +85,59 @@ aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>]
 - **`--max-tokens N`** caps the answer (default 512).
 
 ```sh
-aura ask "Summarize RFC 9110 in one sentence" > answer.txt      # your llama-server / Ollama
-aura ask "Review this function: …" --provider anthropic          # sends to Anthropic
-aura ask "Hello" --base-url http://192.168.1.20:8080/v1 --model qwen3-32b
+tonamox ask "Summarize RFC 9110 in one sentence" > answer.txt      # your llama-server / Ollama
+tonamox ask "Review this function: …" --provider anthropic          # sends to Anthropic
+tonamox ask "Hello" --base-url http://192.168.1.20:8080/v1 --model qwen3-32b
 ```
 
 The answer goes to stdout, so it pipes cleanly. A receipt goes to stderr:
 `— via <provider> · <model>[ · <in> in / <out> out][ · cached]`. Token counts appear when the
-server reports them. The response cache lives in memory, and each `aura ask` is a new process that
+server reports them. The response cache lives in memory, and each `tonamox ask` is a new process that
 sends one request, so the CLI never answers from it and `· cached` does not appear in practice.
-`aura ask --help` prints the usage.
+`tonamox ask --help` prints the usage.
 
 For a cloud target, obvious secrets and PII in the prompt (emails, API keys, tokens) are redacted
 before sending (`redactPII: true`); a local-network target gets the prompt verbatim. Keychain keys use the
 service `dev.auralocal.remote` (`KeychainStore`). Exit codes: 0 success, 1 no target or a failed
 request, 2 a usage error (missing prompt, unknown flag or provider, an invalid `--base-url` or one
-without `--model`, conflicting options). The choice itself is `AskTargetResolver.resolve` in `AuraCore`; see
+without `--model`, conflicting options). The choice itself is `AskTargetResolver.resolve` in `TonamoxCore`; see
 [Hybrid Inference]({{ '/guide/hybrid' | relative_url }}).
 
 {: .note }
-> `aura ask` used GitHub Models until GitHub retired it on 2026-07-30. `AURA_GITHUB_TOKEN`,
+> `tonamox ask` used GitHub Models until GitHub retired it on 2026-07-30. `AURA_GITHUB_TOKEN`,
 > `GITHUB_TOKEN` and the Keychain account `cloud.github-models` are no longer read.
 
-## On-device ML (`aura ml`)
+## On-device ML (`tonamox ml`)
 
 One subcommand per [on-device ML tool]({{ '/guide/ml-tools' | relative_url }}). Results go to stdout; notes, summaries and
 Create ML's training log go to stderr.
 
 ```
-aura ml classify-image <image> [--max N] [--min 0.1]   # label the scene / objects (Vision)
-aura ml barcodes <image> [--symbology QR]... | --list  # QR codes and barcodes
-aura ml faces <image>                                  # face boxes and head pose (no identity)
-aura ml ocr-lines <image> [--lang es-ES]... [--fast]   # text line by line with boxes
-aura ml document <image> [--lang es-ES]...             # paragraphs, tables, amounts and dates (macOS 26)
-aura ml language "<text>" [--max N] [--only es,en]     # identify the language
-aura ml entities "<text>" [--lang es]                  # people, places, organizations
-aura ml sentiment "<text>" [--lang es]                 # score from -1 to 1
-aura ml similarity "<a>" "<b>" [--lang en]             # sentence-embedding distance
-aura ml sounds <audio file> [--max N] [--mean] | --list  # classify everyday sounds
-aura ml coreml-describe <model>                        # inputs, outputs, labels, metadata
-aura ml coreml-predict <model> <input>=<value>...      # run one prediction
-aura ml train-text <csv> --out <Model.mlmodel> [--text-column text] [--label-column label]
+tonamox ml classify-image <image> [--max N] [--min 0.1]   # label the scene / objects (Vision)
+tonamox ml barcodes <image> [--symbology QR]... | --list  # QR codes and barcodes
+tonamox ml faces <image>                                  # face boxes and head pose (no identity)
+tonamox ml ocr-lines <image> [--lang es-ES]... [--fast]   # text line by line with boxes
+tonamox ml document <image> [--lang es-ES]...             # paragraphs, tables, amounts and dates (macOS 26)
+tonamox ml language "<text>" [--max N] [--only es,en]     # identify the language
+tonamox ml entities "<text>" [--lang es]                  # people, places, organizations
+tonamox ml sentiment "<text>" [--lang es]                 # score from -1 to 1
+tonamox ml similarity "<a>" "<b>" [--lang en]             # sentence-embedding distance
+tonamox ml sounds <audio file> [--max N] [--mean] | --list  # classify everyday sounds
+tonamox ml coreml-describe <model>                        # inputs, outputs, labels, metadata
+tonamox ml coreml-predict <model> <input>=<value>...      # run one prediction
+tonamox ml train-text <csv> --out <Model.mlmodel> [--text-column text] [--label-column label]
                    [--algorithm maxent|crf|static|bert] [--language es]
                    [--holdout 0.2 [--seed 7] | --no-validation]
-aura ml classify-text <Model.mlmodel> "<text>" [--max N]
+tonamox ml classify-text <Model.mlmodel> "<text>" [--max N]
 ```
 
 `language`, `entities` and `sentiment` read stdin when the text is `-`. Image boxes are normalized
 0…1 with the origin at the bottom-left, as Vision reports them.
 
 ```sh
-$ aura ml train-text expenses.csv --out Expenses.mlmodel --algorithm bert --holdout 0.2 --seed 7 2>/dev/null
+$ tonamox ml train-text expenses.csv --out Expenses.mlmodel --algorithm bert --holdout 0.2 --seed 7 2>/dev/null
 /absolute/path/to/Expenses.mlmodel
-$ aura ml classify-text Expenses.mlmodel "Pagué el taxi del hotel a la estación"
+$ tonamox ml classify-text Expenses.mlmodel "Pagué el taxi del hotel a la estación"
 label  transport
 1.00  transport
 0.00  housing
@@ -146,19 +146,19 @@ label  transport
 
 Training is reproducible: the same CSV and `--seed` give the same split, accuracies and model.
 
-## Model compatibility (`aura models`)
+## Model compatibility (`tonamox models`)
 
-Checks Hugging Face repos against the runtimes AuraLocal pins (mlx-swift-lm 3.31.3, llama.cpp b8851) and a
+Checks Hugging Face repos against the runtimes Tonamox pins (mlx-swift-lm 3.31.3, llama.cpp b8851) and a
 device budget — see [Finding compatible models]({{ '/guide/models' | relative_url }}#finding-compatible-models).
 
 ```
-aura models search "<query>" [--format mlx|gguf] [--device <preset>] [--limit N]
-aura models check <owner/repo | URL> [--device <preset>] [--gguf <file>] [--json] [--entry]
-aura models devices                     # presets and where each memory budget comes from
+tonamox models search "<query>" [--format mlx|gguf] [--device <preset>] [--limit N]
+tonamox models check <owner/repo | URL> [--device <preset>] [--gguf <file>] [--json] [--entry]
+tonamox models devices                     # presets and where each memory budget comes from
 ```
 
 ```sh
-$ aura models check ukisai/Swift-1.5-Qwen3.8-27B-GGUF --device mac-32gb 2>/dev/null | head -3
+$ tonamox models check ukisai/Swift-1.5-Qwen3.8-27B-GGUF --device mac-32gb 2>/dev/null | head -3
 ukisai/Swift-1.5-Qwen3.8-27B-GGUF — GGUF · WON'T RUN
 Device: Mac, 32 GB (M1 Pro) · budget 20.0 GB (measured)
 Model: qwen35 · 65 layers · context 262144 · 22 quants
@@ -168,10 +168,10 @@ Model: qwen35 · 65 layers · context 262144 · 22 quants
 `architecture` object (layers, KV heads, head width, `kvLayers`, `experts`, trained context) that stays filled when a
 blocker withholds the entry, and HF's `gated` mode. `--gguf <file>` reads that GGUF's header instead of the smallest
 whole top-level quant.
-`--device` defaults to `this-device` (see `aura models devices`); `--limit` defaults to 15 (1–100).
+`--device` defaults to `this-device` (see `tonamox models devices`); `--limit` defaults to 15 (1–100).
 `search` and `check` query huggingface.co, so they need a network connection.
 
-## Receipt fields (`aura receipt`)
+## Receipt fields (`tonamox receipt`)
 
 A harness for measuring how well a local model reads receipts. `VisionDocumentTool` reads the image, and the
 fields (merchant, date, total, tax, currency) are filled two ways from the same text. Currency is extracted and
@@ -188,8 +188,8 @@ Each model field but currency is then checked against the receipt: whether its v
 ("anchored"). An app can send an unanchored field to review instead of trusting it.
 
 ```
-aura receipt extract <image>... [--model <id | .gguf path | URL>] [--lang es-MX]...
-aura receipt eval <labels.csv> [--images <dir>] [--model <id | .gguf path | URL>] [--lang es-MX]...
+tonamox receipt extract <image>... [--model <id | .gguf path | URL>] [--lang es-MX]...
+tonamox receipt eval <labels.csv> [--images <dir>] [--model <id | .gguf path | URL>] [--lang es-MX]...
                   [--min-total 0.9] [--min-date 0.9] [--min-merchant 0.8] [--min-tax 0.8] [--report <out.json>]
 ```
 
@@ -219,19 +219,19 @@ relative to the current directory unless absolute. The model is loaded once for 
 
 ## Homebrew
 
-`aura` can be packaged as a prebuilt tarball (binary + `llama.framework`, co-located) for a
+`tonamox` can be packaged as a prebuilt tarball (binary + `llama.framework`, co-located) for a
 personal Homebrew tap.
 
 {: .warning }
-> The Homebrew tap is not published yet (`github.com/iOSDevC/homebrew-aura` does not resolve),
-> and the only released tarball (v0.1.0) predates `aura ml`, `aura models` and `aura imagegen`, and
-> its `aura ask` still calls the retired GitHub Models. Build from source (above) to get the commands
+> The Homebrew tap is not published yet (`github.com/iOSDevC/homebrew-tonamox` does not resolve),
+> and the only released tarball (v0.1.0) predates `tonamox ml`, `tonamox models` and `tonamox imagegen`, and
+> its `tonamox ask` still calls the retired GitHub Models. Build from source (above) to get the commands
 > on this page. Once the tap is live:
 
 ```sh
-brew tap iOSDevC/aura
-brew install aura
-aura tools
+brew tap iOSDevC/tonamox
+brew install tonamox
+tonamox tools
 ```
 
 See [`docs/HOMEBREW.md`](https://github.com/iOSDevC/AuraLocal/blob/main/docs/HOMEBREW.md)

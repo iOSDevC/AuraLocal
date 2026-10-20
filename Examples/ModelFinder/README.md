@@ -1,10 +1,10 @@
 # Model Finder
 
-A small iOS 18 / macOS 15 app that searches Hugging Face, tells you, per repo, whether AuraLocal can really
-run it on a given device — and if not, why — and downloads the ones that fit to where AuraLocal loads them from.
-It is a thin host for AuraUI's Hugging Face browser (`HFModelSearch`, `HFModelSearchList`, `HFRepoDetailView`,
+A small iOS 18 / macOS 15 app that searches Hugging Face, tells you, per repo, whether Tonamox can really
+run it on a given device — and if not, why — and downloads the ones that fit to where Tonamox loads them from.
+It is a thin host for TonamoxUI's Hugging Face browser (`HFModelSearch`, `HFModelSearchList`, `HFRepoDetailView`,
 `DownloadedModelsList`, `HuggingFaceTokenSection`), which sits on `ModelCompatibilityChecker` and `ModelDownloads`
-(AuraCore); AuraExample shows the same views. See
+(TonamoxCore); TonamoxExample shows the same views. See
 [Finding compatible models](../../docs/guide/models.md#finding-compatible-models) and
 [Downloading without loading](../../docs/guide/models.md#downloading-without-loading).
 
@@ -36,7 +36,7 @@ Repos rated *Runs* or *Runs, with caveats* get a **Download** section in the det
   (`Model.resolvedFileURL`), MLX at `<root>/huggingface/hub/models--<org>--<repo>/snapshots/main/` with a
   `.complete` marker written last. Downloads an older build left in `Library/Caches` are still read from there. `ModelManager.shared.load(_:)` finds them without downloading again.
 - When a download finishes, the detail view offers **Try it**, and the model is registered
-  (`ModelRegistry.register(_:)`), so AuraUI's Text and Vision pickers list it.
+  (`ModelRegistry.register(_:)`), so TonamoxUI's Text and Vision pickers list it.
 
 **Interruptions.** There are no background downloads: the session is a default `URLSession`, so locking the phone
 or leaving the app for more than ~30 s (a background-task window) stops the transfer. Each file is written in 32 MB
@@ -46,7 +46,7 @@ continues from it, unless the file changed on Hugging Face meanwhile (another ET
 **Downloads tab.** A scan of the disk on every visit, so it survives relaunches without a database: finished GGUF
 files, paused GGUF `.partial` files, and MLX snapshots (complete or not), with size, Resume, **Delete** (swipe or
 context menu; unloads the model first, forgets its record, unregisters it and reports the freed space) and
-**Try it**. AuraCore's `DownloadRecords` keeps the sized `Model` for each download in `UserDefaults`
+**Try it**. TonamoxCore's `DownloadRecords` keeps the sized `Model` for each download in `UserDefaults`
 (`dev.auralocal.downloadRecords`; records under this app's old `downloadRecords` key are copied once) so Try it
 can judge memory; files with neither a record nor a catalog entry show Try it and Resume disabled (size unknown):
 delete them, or resume them from their search result. A paused file whose finished copy is already on disk (an
@@ -59,10 +59,10 @@ complete downloads with a known size whose `HardwareAnalyzer` fit on this device
 
 **Gated repos.** Accept the license on the repo page, create a read token, and save it in the **Settings** tab
 or from **Add a token** (also the key button) in the detail view. It is stored in the Keychain (service
-`dev.auralocal.remote`, account `download.huggingface`) and read by AuraLocal's downloaders (`ModelDownloads`,
-`GGUFModelDownloader`, `ChunkedDownloader`), by the checker and by AuraUI's `ModelSection`; the MLX load path does
+`dev.auralocal.remote`, account `download.huggingface`) and read by Tonamox's downloaders (`ModelDownloads`,
+`GGUFModelDownloader`, `ChunkedDownloader`), by the checker and by TonamoxUI's `ModelSection`; the MLX load path does
 not read it. It is sent only to `huggingface.co` and `hf.co`. On iOS that item belongs to this app; other
-AuraLocal apps don't see it. Search stays anonymous, so private repos don't appear in results. No OAuth sign-in
+Tonamox apps don't see it. Search stays anonymous, so private repos don't appear in results. No OAuth sign-in
 (it would need a registered Hugging Face OAuth app and URL scheme).
 
 **Simulator.** GGUF downloads and Try it work (llama.cpp on the CPU); MLX can be downloaded but not run there.
@@ -84,8 +84,8 @@ xcodegen generate            # rewrites ModelFinder.xcodeproj from project.yml
 open ModelFinder.xcodeproj   # pick the ModelFinder scheme, then a Mac or an iOS 18+ destination
 ```
 
-The app depends on the repository root as a local Swift package (products `AuraCore` and `AuraUI`; AuraUI also
-links `AuraVoice`), so keep it inside the checkout. AuraCore links llama.cpp, which is why the target sets
+The app depends on the repository root as a local Swift package (products `TonamoxCore` and `TonamoxUI`; TonamoxUI also
+links `TonamoxVoice`), so keep it inside the checkout. TonamoxCore links llama.cpp, which is why the target sets
 `SWIFT_OBJC_INTEROP_MODE = objcxx`. After editing `project.yml`, run `xcodegen generate` again and commit the
 regenerated project.
 `ModelFinder.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` is a copy of the root
@@ -105,5 +105,5 @@ access only.
 For gated repositories the checker uses the same token: without one, `config.json` and file headers come back as
 HTTP 401 caveats and the verdict is often *Unknown* or *Runs, with caveats*.
 
-The same checks are available headless: `aura models search "<query>"` and `aura models check <repo>` — see
-[CLI](../../docs/guide/cli.md#model-compatibility-aura-models).
+The same checks are available headless: `tonamox models search "<query>"` and `tonamox models check <repo>` — see
+[CLI](../../docs/guide/cli.md#model-compatibility-tonamox-models).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package the `aura` CLI + its llama.framework into a distributable tarball for a
+# Package the `tonamox` CLI + its llama.framework into a distributable tarball for a
 # Homebrew formula (personal tap). No SwiftPM/network is needed at install time —
 # the binary + framework are co-located so the binary's @loader_path rpath finds
 # `@rpath/llama.framework` right next to it (no install_name_tool, no re-sign).
@@ -14,23 +14,23 @@ cd "$ROOT"
 
 VERSION="${1:-0.1.0}"
 ARCH="$(uname -m)"                       # arm64
-STAGE="$ROOT/build/aura-pkg"
-OUT="$ROOT/build/aura-v${VERSION}-macos-${ARCH}.tar.gz"
+STAGE="$ROOT/build/tonamox-pkg"
+OUT="$ROOT/build/tonamox-v${VERSION}-macos-${ARCH}.tar.gz"
 
-echo "==> Building aura (release)…"
-swift build -c release --product aura >/dev/null
+echo "==> Building tonamox (release)…"
+swift build -c release --product tonamox >/dev/null
 
 # Swift 6.4's build system writes products to .build/out/Products/Release, not
 # .build/<arch>-apple-macosx/release; ask SwiftPM instead of guessing.
 BIN_DIR="$(swift build -c release --show-bin-path)"
-BIN="$BIN_DIR/aura"
+BIN="$BIN_DIR/tonamox"
 FW="$BIN_DIR/llama.framework"
-[ -x "$BIN" ] || { echo "error: aura binary not found at $BIN"; exit 1; }
+[ -x "$BIN" ] || { echo "error: tonamox binary not found at $BIN"; exit 1; }
 [ -d "$FW" ]  || { echo "error: llama.framework not found at $FW"; exit 1; }
 
-echo "==> Staging (aura + llama.framework + resource bundles, co-located)…"
+echo "==> Staging (tonamox + llama.framework + resource bundles, co-located)…"
 rm -rf "$STAGE"; mkdir -p "$STAGE"
-cp "$BIN" "$STAGE/aura"
+cp "$BIN" "$STAGE/tonamox"
 cp -R "$FW" "$STAGE/llama.framework"
 for bundle in "$BIN_DIR"/*.bundle; do
   case "$bundle" in *Tests.bundle) continue ;; esac
@@ -49,7 +49,7 @@ for checkout in .build/checkouts/*; do
 done
 
 echo "==> Verifying the staged binary runs standalone…"
-( cd "$STAGE" && ./aura tools >/dev/null ) && echo "    ok — runs without the source tree"
+( cd "$STAGE" && ./tonamox tools >/dev/null ) && echo "    ok — runs without the source tree"
 
 echo "==> Creating tarball…"
 rm -f "$OUT"
@@ -58,4 +58,4 @@ rm -f "$OUT"
 echo "==> Done: $OUT"
 echo "    size:   $(du -h "$OUT" | awk '{print $1}')"
 echo "    sha256: $(shasum -a 256 "$OUT" | awk '{print $1}')"
-echo "Put that sha256 into Formula/aura.rb before publishing the tap."
+echo "Put that sha256 into Formula/tonamox.rb before publishing the tap."

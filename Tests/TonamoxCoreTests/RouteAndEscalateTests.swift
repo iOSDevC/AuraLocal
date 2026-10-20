@@ -1,0 +1,350 @@
+import XCTest
+@testable import TonamoxCore
+
+/// Locks the fix: `routeAndEscalate` now threads `localAnswer` into the router, so
+/// a weak local draft can trigger low-confidence escalation (R5/R6). Previously
+/// `localAnswer` was hardcoded to nil, making that path unreachable in production.
+/// Uses a fake provider + injected target, so no network or model is needed.
+@MainActor
+final class RouteAndEscalateTests: XCTestCase {
+
+    private func lanTarget(answer: String) -> RemoteTarget {
+        RemoteTarget(
+            provider: FakeRemoteProvider(answer: answer),
+            modelID: "fake", contextLength: 8192,
+            origin: .localNetwork(.llamaServer))
+    }
+
+    func testLowConfidenceLocalAnswerEscalates() async throws {
+        let target = lanTarget(answer: "STRONGER REMOTE ANSWER")
+        let result = try await HybridEscalator().routeAndEscalate(
+            policy: EscalationPolicy(mode: .askEachTime),
+            context: "short",
+            question: "What is the safest fix here?",
+            localAnswer: "I'm not sure, I cannot help with that.",   // low confidence
+            consent: ApprovingConsentGate(),
+            targets: [target])
+        XCTAssertNotNil(result, "a low-confidence local answer must escalate")
+        XCTAssertEqual(result?.answer, "STRONGER REMOTE ANSWER")
+    }
+
+    func testConfidentLocalAnswerStaysLocal() async throws {
+        let target = lanTarget(answer: "REMOTE")
+        let confident = String(repeating: "This is a thorough, confident, complete answer. ", count: 5)
+        let result = try await HybridEscalator().routeAndEscalate(
+            policy: EscalationPolicy(mode: .askEachTime),
+            context: "short",
+            question: "an easy question",
+            localAnswer: confident,
+            consent: ApprovingConsentGate(),
+            targets: [target])
+        XCTAssertNil(result, "a confident local answer should stay local")
+    }
+
+    func testNoLocalAnswerHasNoLowConfidenceTrigger() async throws {
+        // Documents the fixed bug: with no localAnswer and a small prompt there is
+        // no escalation trigger (no size overflow, no low-confidence) -> stays local.
+        let target = lanTarget(answer: "REMOTE")
+        let result = try await HybridEscalator().routeAndEscalate(
+            policy: EscalationPolicy(mode: .askEachTime),
+            context: "short",
+            question: "another easy question",
+            consent: ApprovingConsentGate(),
+            targets: [target])
+        XCTAssertNil(result)
+    }
+
+    func testSensitiveDomainEscalatesAModerateAnswer() async throws {
+        // The dead-code fix: passing `domain:` activates the sensitive-domain bias
+        // (EscalationRouter raises the confidence bar for .security/.medicine), so a
+        // moderate answer that stays local for a general domain escalates for security.
+        let target = lanTarget(answer: "SPECIALIST ANSWER")
+        let moderate = "A reasonably complete answer that is over forty characters long and confident."
+
+        let asGeneral = try await HybridEscalator().routeAndEscalate(
+            policy: EscalationPolicy(mode: .askEachTime),
+            context: "short", question: "a moderately hard systems question",
+            domain: nil, localAnswer: moderate,
+            consent: ApprovingConsentGate(), targets: [target])
+        XCTAssertNil(asGeneral, "a moderate answer should stay local for a general domain")
+
+        let asSecurity = try await HybridEscalator().routeAndEscalate(
+            policy: EscalationPolicy(mode: .askEachTime),
+            context: "short", question: "a moderately hard security question",
+            domain: .security, localAnswer: moderate,
+            consent: ApprovingConsentGate(), targets: [target])
+        XCTAssertEqual(asSecurity?.answer, "SPECIALIST ANSWER",
+                       "a .security step must escalate the same moderate answer")
+    }
+
+    // MARK: - Cost
+
+    private func cloudTarget() -> RemoteTarget {
+        RemoteTarget(provider: FakeRemoteProvider(answer: "CLOUD"), modelID: "fake", contextLength: 8192, origin: .cloud)
+    }
+
+    func testRoutingInputCarriesSessionSpendAndLedgerProjection() {
+        let ledger = CostLedger()
+        ledger.setPrice(TokenPrice(inputUSDPerMillion: 1, outputUSDPerMillion: 1), provider: "test.fake", model: "fake")
+        ledger.record(provider: "test.fake", model: "fake",
+                      usage: TokenUsage(inputTokens: 950_000, outputTokens: 0), origin: .cloud, compressionRatio: nil)
+        let target = cloudTarget()
+
+        var input = HybridEscalator(ledger: ledger).routingInput(
+            policy: EscalationPolicy(mode: .askEachTime, allowCloud: true, costCapUSDPerSession: 1),
+            target: target, promptTokens: 8000, maxTokens: 100_000,
+            localContextWindow: 8192, localAnswer: nil, domain: nil)
+
+        XCTAssertEqual(input.sessionSpentUSD, Decimal(string: "0.95"))
+        XCTAssertEqual(input.unpricedRecordCount, 0)
+        XCTAssertEqual(input.projectedCostUSD, Decimal(string: "0.108"))
+        input.online = true   // R3 would otherwise depend on the test host
+        XCTAssertEqual(EscalationRouter.decide(input), .offer(reason: .costCapped),
+                       "0.95 spent + 0.108 projected crosses the 1.00 cap although the request alone does not")
+    }
+
+    func testUnpricedCloudTargetAsksConsentWithUnknownCost() async throws {
+        try XCTSkipUnless(NetworkMonitor.shared.isOnline, "cloud routing needs a network path (R3)")
+        let gate = RecordingConsentGate()
+        do {
+            _ = try await HybridEscalator(ledger: CostLedger()).routeAndEscalate(
+                policy: EscalationPolicy(mode: .askEachTime, allowCloud: true),
+                context: "short", question: "What is the safest fix here?",
+                localAnswer: "I'm not sure, I cannot help with that.",
+                consent: gate, targets: [cloudTarget()])
+            XCTFail("the recording gate declines, so routeAndEscalate must throw")
+        } catch TonamoxError.escalationDeclined {}
+        XCTAssertEqual(gate.projectedCosts, [nil])
+    }
+
+    func testPricedCloudTargetAsksConsentWithLedgerProjection() async throws {
+        try XCTSkipUnless(NetworkMonitor.shared.isOnline, "cloud routing needs a network path (R3)")
+        let ledger = CostLedger()
+        ledger.setPrice(TokenPrice(inputUSDPerMillion: 1, outputUSDPerMillion: 2), provider: "test.fake")
+        let gate = RecordingConsentGate()
+        do {
+            _ = try await HybridEscalator(ledger: ledger).routeAndEscalate(
+                policy: EscalationPolicy(mode: .askEachTime, allowCloud: true),
+                context: "short", question: "What is the safest fix here?",
+                localAnswer: "I'm not sure, I cannot help with that.",
+                consent: gate, maxTokens: 1000, targets: [cloudTarget()])
+            XCTFail("the recording gate declines, so routeAndEscalate must throw")
+        } catch TonamoxError.escalationDeclined {}
+        let projected = try XCTUnwrap(gate.projectedCosts.first ?? nil)
+        XCTAssertGreaterThan(projected, Decimal(string: "0.002")!, "1000 output tokens at $2/1M alone cost $0.002")
+    }
+
+    /// $1.00 already spent at $1/1M, so any priced request crosses a $1 cap.
+    private func spentLedger() -> CostLedger {
+        let ledger = CostLedger()
+        ledger.setPrice(TokenPrice(inputUSDPerMillion: 1, outputUSDPerMillion: 1), provider: "test.fake")
+        ledger.record(provider: "test.fake", model: "fake", usage: TokenUsage(inputTokens: 1_000_000, outputTokens: 0),
+                      origin: .cloud, compressionRatio: nil)
+        return ledger
+    }
+
+    private func routeWeakAnswer(ledger: CostLedger, consent: any ConsentGate) async throws -> HybridEscalator.Result? {
+        try await HybridEscalator(ledger: ledger).routeAndEscalate(
+            policy: EscalationPolicy(mode: .askEachTime, allowCloud: true, costCapUSDPerSession: 1),
+            context: "short", question: "unique \(UUID().uuidString)",
+            localAnswer: "I'm not sure, I cannot help with that.",
+            consent: consent, targets: [cloudTarget()])
+    }
+
+    func testOverCapOfferIsDeclinedByTheDefaultGateMethod() async throws {
+        try XCTSkipUnless(NetworkMonitor.shared.isOnline, "cloud routing needs a network path (R3)")
+        let ledger = spentLedger()
+        do {
+            _ = try await routeWeakAnswer(ledger: ledger, consent: ApprovingConsentGate())
+            XCTFail("a gate without the offer method must not approve an over-cap escalation")
+        } catch TonamoxError.escalationDeclined {}
+        XCTAssertEqual(ledger.records.count, 1, "nothing was sent")
+    }
+
+    func testGateSeesTheCapAndCanOverrideIt() async throws {
+        try XCTSkipUnless(NetworkMonitor.shared.isOnline, "cloud routing needs a network path (R3)")
+        let ledger = spentLedger()
+        let gate = OfferRecordingGate(approves: true)
+
+        let result = try await routeWeakAnswer(ledger: ledger, consent: gate)
+
+        XCTAssertEqual(result?.answer, "CLOUD")
+        let offer = try XCTUnwrap(gate.offers.first)
+        XCTAssertEqual(offer.reason, .costCapped)
+        XCTAssertEqual(offer.sessionSpentUSD, 1)
+        XCTAssertEqual(offer.costCapUSD, 1)
+        XCTAssertEqual(offer.unpricedRecordCount, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(offer.projectedCostUSD), 0)
+    }
+
+    func testUnpricedSessionCallsReachTheGateAsCostUnknown() async throws {
+        try XCTSkipUnless(NetworkMonitor.shared.isOnline, "cloud routing needs a network path (R3)")
+        let ledger = CostLedger()
+        ledger.setPrice(TokenPrice(inputUSDPerMillion: 1, outputUSDPerMillion: 1), provider: "test.fake")
+        ledger.record(provider: "unpriced", usage: nil, origin: .cloud, compressionRatio: nil)
+        let gate = OfferRecordingGate(approves: false)
+
+        do {
+            _ = try await routeWeakAnswer(ledger: ledger, consent: gate)
+            XCTFail("the gate declines, so routeAndEscalate must throw")
+        } catch TonamoxError.escalationDeclined {}
+
+        XCTAssertEqual(gate.offers.map(\.reason), [.costUnknown])
+        XCTAssertEqual(gate.offers.first?.unpricedRecordCount, 1)
+    }
+
+    /// About 1,600 tokens; keepRatio 0.3 of a 2,048-token window minus 64 compresses it to 550.
+    private static let longContext = String(repeating: "Bananas are a yellow fruit grown in warm places. ", count: 130)
+
+    func testOfferIsPricedFromThePayloadSent() async throws {
+        try XCTSkipUnless(NetworkMonitor.shared.isOnline, "cloud routing needs a network path (R3)")
+        let ledger = CostLedger()
+        ledger.setPrice(TokenPrice(inputUSDPerMillion: 1000, outputUSDPerMillion: 0), provider: "test.fake")
+        let target = RemoteTarget(provider: FakeRemoteProvider(answer: "CLOUD"), modelID: "fake",
+                                  contextLength: 2048, origin: .cloud)
+        let gate = OfferRecordingGate(approves: false)
+        let question = "Which fruit is yellow? \(UUID().uuidString)"
+
+        do {
+            _ = try await HybridEscalator(ledger: ledger).routeAndEscalate(
+                policy: EscalationPolicy(mode: .askEachTime, allowCloud: true, costCapUSDPerSession: 1, keepRatio: 0.3),
+                context: Self.longContext, question: question,
+                localAnswer: "I'm not sure.", consent: gate, maxTokens: 64, targets: [target])
+            XCTFail("the gate declines, so routeAndEscalate must throw")
+        } catch TonamoxError.escalationDeclined {}
+
+        let offer = try XCTUnwrap(gate.offers.first)
+        let payload = try XCTUnwrap(offer.payload)
+        let rawTokens = ContextCompressor.estimateTokens(Self.longContext + question)
+        XCTAssertGreaterThan(rawTokens, 1000, "the uncompressed prompt alone would cost over the $1 cap")
+        XCTAssertLessThan(payload.estimatedInputTokens, 1000)
+        XCTAssertEqual(offer.reason, .lowConfidence, "the payload sent fits under the cap")
+        XCTAssertEqual(offer.projectedCostUSD,
+                       ledger.projectedCost(target: target, inputTokens: payload.estimatedInputTokens, maxOutput: 64))
+    }
+
+    func testSizeOverflowReadsTheUncompressedPrompt() async throws {
+        let target = RemoteTarget(provider: FakeRemoteProvider(answer: "LAN"), modelID: "fake",
+                                  contextLength: 2048, origin: .localNetwork(.llamaServer))
+        let gate = OfferRecordingGate(approves: false)
+        do {
+            _ = try await HybridEscalator(ledger: CostLedger()).routeAndEscalate(
+                policy: EscalationPolicy(mode: .askEachTime, keepRatio: 0.3),
+                context: Self.longContext, question: "Which fruit is yellow? \(UUID().uuidString)",
+                localContextWindow: 1024, consent: gate, maxTokens: 64, targets: [target])
+            XCTFail("the gate declines, so routeAndEscalate must throw")
+        } catch TonamoxError.escalationDeclined {}
+
+        let offer = try XCTUnwrap(gate.offers.first)
+        XCTAssertEqual(offer.reason, .sizeOverflow)
+        XCTAssertLessThan(try XCTUnwrap(offer.payload).estimatedInputTokens, 921, "the payload alone would fit")
+    }
+
+    func testCloudCallFailingAfterOutputIsRecordedWithUnknownCost() async throws {
+        let ledger = CostLedger()
+        ledger.setPrice(TokenPrice(inputUSDPerMillion: 1, outputUSDPerMillion: 1), provider: "test.failing")
+        let target = RemoteTarget(provider: FailingRemoteProvider(emitsToken: true), modelID: "fake",
+                                  contextLength: 8192, origin: .cloud)
+        do {
+            _ = try await HybridEscalator(ledger: ledger).escalate(to: target, context: "", question: "unique \(UUID().uuidString)")
+            XCTFail("the provider fails mid-stream")
+        } catch is FailingRemoteProvider.StreamError {}
+
+        let entry = try XCTUnwrap(ledger.records.last)
+        XCTAssertNil(entry.usage)
+        XCTAssertNil(entry.costUSD)
+        XCTAssertEqual(ledger.unpricedRecordCount, 1)
+    }
+
+    func testCallFailingBeforeAnyOutputIsNotRecorded() async throws {
+        let ledger = CostLedger()
+        let target = RemoteTarget(provider: FailingRemoteProvider(emitsToken: false), modelID: "fake",
+                                  contextLength: 8192, origin: .cloud)
+        do {
+            _ = try await HybridEscalator(ledger: ledger).escalate(to: target, context: "", question: "unique \(UUID().uuidString)")
+            XCTFail("the provider fails before streaming")
+        } catch is FailingRemoteProvider.StreamError {}
+        XCTAssertTrue(ledger.records.isEmpty)
+    }
+
+    func testEscalationRecordsModelAndFreeLANCost() async throws {
+        let ledger = CostLedger()
+        _ = try await HybridEscalator(ledger: ledger).escalate(
+            to: lanTarget(answer: "LAN"), context: "", question: "unique \(UUID().uuidString)")
+        let entry = try XCTUnwrap(ledger.records.last)
+        XCTAssertEqual(entry.model, "fake")
+        XCTAssertTrue(entry.isLocalNetwork)
+        XCTAssertEqual(entry.costUSD, 0)
+    }
+}
+
+// MARK: - Test doubles
+
+/// A ``RemoteLLMProvider`` that yields a canned answer + usage — no network.
+private struct FakeRemoteProvider: RemoteLLMProvider {
+    let id = "test.fake"
+    let displayName = "Fake"
+    let retentionNote = "test"
+    let answer: String
+
+    func stream(_ request: RemoteRequest) -> AsyncThrowingStream<RemoteEvent, Error> {
+        let answer = self.answer
+        return AsyncThrowingStream { continuation in
+            continuation.yield(.token(answer))
+            continuation.yield(.usage(TokenUsage(inputTokens: 5, outputTokens: 7)))
+            continuation.finish()
+        }
+    }
+}
+
+/// Streams one token (optionally) and then fails, like a dropped connection.
+private struct FailingRemoteProvider: RemoteLLMProvider {
+    struct StreamError: Error {}
+    let id = "test.failing"
+    let displayName = "Failing"
+    let retentionNote = "test"
+    let emitsToken: Bool
+
+    func stream(_ request: RemoteRequest) -> AsyncThrowingStream<RemoteEvent, Error> {
+        let emitsToken = self.emitsToken
+        return AsyncThrowingStream { continuation in
+            if emitsToken { continuation.yield(.token("partial")) }
+            continuation.finish(throwing: StreamError())
+        }
+    }
+}
+
+/// A consent gate that always approves (mirrors DenyingConsentGate's shape).
+private struct ApprovingConsentGate: ConsentGate {
+    func requestConsent(target: RemoteTarget, preview: CompressionResult, projectedCostUSD: Decimal?) async -> Bool { true }
+}
+
+/// Declines every offer and keeps the projected cost it was shown.
+@MainActor
+private final class RecordingConsentGate: ConsentGate {
+    private(set) var projectedCosts: [Decimal?] = []
+
+    func requestConsent(target: RemoteTarget, preview: CompressionResult, projectedCostUSD: Decimal?) async -> Bool {
+        projectedCosts.append(projectedCostUSD)
+        return false
+    }
+}
+
+/// Implements the offer method, keeping every offer it was shown.
+@MainActor
+private final class OfferRecordingGate: ConsentGate {
+    private let approves: Bool
+    private(set) var offers: [EscalationOffer] = []
+
+    init(approves: Bool) { self.approves = approves }
+
+    func requestConsent(target: RemoteTarget, preview: CompressionResult, projectedCostUSD: Decimal?) async -> Bool {
+        XCTFail("routeAndEscalate must call requestConsent(target:preview:offer:)")
+        return false
+    }
+
+    func requestConsent(target: RemoteTarget, preview: CompressionResult, offer: EscalationOffer) async -> Bool {
+        offers.append(offer)
+        return approves
+    }
+}

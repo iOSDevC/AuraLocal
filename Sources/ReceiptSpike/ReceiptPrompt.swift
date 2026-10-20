@@ -1,5 +1,5 @@
 import Foundation
-import AuraCore
+import TonamoxCore
 
 /// What the model sees: the receipt's OCR text and Data Detection's candidates. The app reads the image; the model
 /// only assigns the text it is given to fields.
@@ -32,8 +32,8 @@ public enum ReceiptPrompt {
         """
 
     /// Greedy (temperature 0) and short: the reply is one small JSON object.
-    public static func profile(model: Model) -> AuraProfile {
-        AuraProfile(id: "receipt-spike", displayName: "Receipt fields", instructions: instructions, model: model,
+    public static func profile(model: Model) -> TonamoxProfile {
+        TonamoxProfile(id: "receipt-spike", displayName: "Receipt fields", instructions: instructions, model: model,
                     sampling: SamplingParams(temperature: 0, topP: 1, maxTokens: 256), outputSchema: .json(schema))
     }
 

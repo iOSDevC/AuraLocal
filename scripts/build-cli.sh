@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Build the `aura` integration CLI as a release binary.
+# Build the `tonamox` integration CLI as a release binary.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-echo "==> Building aura (release)…"
-swift build -c release --product aura
+echo "==> Building tonamox (release)…"
+swift build -c release --product tonamox
 
-BIN="$ROOT/.build/release/aura"
+BIN="$ROOT/.build/release/tonamox"
 echo "==> Done: $BIN"
 "$BIN" help

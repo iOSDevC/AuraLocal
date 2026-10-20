@@ -2,28 +2,28 @@
 import PackageDescription
 
 let package = Package(
-    name: "AuraLocal",
+    name: "Tonamox",
     platforms: [
         .iOS(.v18),
         .macOS(.v15),
         .visionOS(.v2)
     ],
     products: [
-        .library(name: "AuraCore",              targets: ["AuraCore"]),
-        .library(name: "AuraUI",                targets: ["AuraUI"]),
-        .library(name: "AuraVoice",             targets: ["AuraVoice"]),
-        .library(name: "AuraDocs",              targets: ["AuraDocs"]),
-        .library(name: "AuraAppleIntelligence", targets: ["AuraAppleIntelligence"]),
-        .library(name: "AuraAgents",            targets: ["AuraAgents"]),
-        .library(name: "AuraImageGen",          targets: ["AuraImageGen"]),
-        .executable(name: "aura", targets: ["aura"]),
+        .library(name: "TonamoxCore",              targets: ["TonamoxCore"]),
+        .library(name: "TonamoxUI",                targets: ["TonamoxUI"]),
+        .library(name: "TonamoxVoice",             targets: ["TonamoxVoice"]),
+        .library(name: "TonamoxDocs",              targets: ["TonamoxDocs"]),
+        .library(name: "TonamoxAppleIntelligence", targets: ["TonamoxAppleIntelligence"]),
+        .library(name: "TonamoxAgents",            targets: ["TonamoxAgents"]),
+        .library(name: "TonamoxImageGen",          targets: ["TonamoxImageGen"]),
+        .executable(name: "tonamox", targets: ["tonamox"]),
     ],
     dependencies: [
         // GGUF (llama.cpp) + MLX local client, pinned to the SHA of tag 0.5.0.
         // `exact: "0.5.0"` is rejected: LocalLLMClientLlamaC carries unsafeFlags, which
         // SwiftPM forbids in version-pinned deps but allows in revision-pinned ones.
         //
-        // 0.5.0 is what makes AuraLocal resolvable at all. It swapped mlx-swift-lm
+        // 0.5.0 is what makes Tonamox resolvable at all. It swapped mlx-swift-lm
         // `branch:"main"` for `from: "3.31.3"`, so SwiftPM can backtrack past the
         // swift-syntax 602..<604 floor mlx-swift-lm adopted in 3.31.4 and settle on
         // 3.31.3. A branch pin cannot backtrack, so every resolve without our lockfile
@@ -35,7 +35,7 @@ let package = Package(
         ),
 
         // MLX (Apple Silicon). Both are ALREADY in the resolve — LocalLLMClient pulls them
-        // in itself — so declaring them adds zero packages; it only lets AuraCore link what
+        // in itself — so declaring them adds zero packages; it only lets TonamoxCore link what
         // it already downloads. Ranges mirror LocalLLMClient's own so they unify instead of
         // conflicting; `from:` (not a branch) is what lets SwiftPM backtrack off the 602 floor.
         .package(url: "https://github.com/ml-explore/mlx-swift-lm",      from: "3.31.3"),
@@ -48,7 +48,7 @@ let package = Package(
         // same templates themselves, so every turn can start from an empty KV cache with real roles.
         .package(url: "https://github.com/huggingface/swift-jinja", from: "2.3.5"),
 
-        // Core ML Stable Diffusion for AuraImageGen. `exact:` because upstream main pins
+        // Core ML Stable Diffusion for TonamoxImageGen. `exact:` because upstream main pins
         // swift-transformers 0.1.8, which conflicts with the 1.3.0 floor above; 1.1.1 depends only on
         // swift-argument-parser (for its CLI).
         .package(url: "https://github.com/apple/ml-stable-diffusion", exact: "1.1.1"),
@@ -56,7 +56,7 @@ let package = Package(
     targets: [
         // MARK: - Core
         .target(
-            name: "AuraCore",
+            name: "TonamoxCore",
             dependencies: [
                 .product(name: "LocalLLMClient",      package: "LocalLLMClient"),
                 .product(name: "LocalLLMClientLlama", package: "LocalLLMClient"),
@@ -71,7 +71,7 @@ let package = Package(
                 .product(name: "Tokenizers",  package: "swift-transformers"),
                 .product(name: "Jinja",       package: "swift-jinja"),
             ],
-            path: "Sources/AuraCore",
+            path: "Sources/TonamoxCore",
             resources: [
                 .process("Resources")
             ],
@@ -82,38 +82,38 @@ let package = Package(
 
         // MARK: - UI
         .target(
-            name: "AuraUI",
+            name: "TonamoxUI",
             dependencies: [
-                "AuraCore",
-                "AuraVoice",
+                "TonamoxCore",
+                "TonamoxVoice",
             ],
-            path: "Sources/AuraUI",
+            path: "Sources/TonamoxUI",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
         // MARK: - Voice
         .target(
-            name: "AuraVoice",
-            dependencies: ["AuraCore"],
-            path: "Sources/AuraVoice",
+            name: "TonamoxVoice",
+            dependencies: ["TonamoxCore"],
+            path: "Sources/TonamoxVoice",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
         // MARK: - Docs (RAG)
         .target(
-            name: "AuraDocs",
-            dependencies: ["AuraCore"],
-            path: "Sources/AuraDocs",
+            name: "TonamoxDocs",
+            dependencies: ["TonamoxCore"],
+            path: "Sources/TonamoxDocs",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
         // MARK: - Apple Intelligence Agents
         // Requires iOS 26+ / macOS 26+ with Apple Intelligence enabled.
-        // No dependency on AuraCore — standalone module using FoundationModels.
+        // No dependency on TonamoxCore — standalone module using FoundationModels.
             .target(
-                name: "AuraAppleIntelligence",
+                name: "TonamoxAppleIntelligence",
                 dependencies: [],
-                path: "Sources/AuraAppleIntelligence",
+                path: "Sources/TonamoxAppleIntelligence",
                 swiftSettings: [
                     .enableUpcomingFeature("StrictConcurrency")
                 ]
@@ -123,9 +123,9 @@ let package = Package(
         // Reusable agent pipeline (AgentCrew) on FoundationModels + per-step hybrid
         // escalation. Sits above the base modules; gated to iOS 26 / macOS 26 in-code.
         .target(
-            name: "AuraAgents",
-            dependencies: ["AuraCore", "AuraAppleIntelligence", "AuraDocs"],
-            path: "Sources/AuraAgents",
+            name: "TonamoxAgents",
+            dependencies: ["TonamoxCore", "TonamoxAppleIntelligence", "TonamoxDocs"],
+            path: "Sources/TonamoxAgents",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
@@ -134,66 +134,66 @@ let package = Package(
         // mflux subprocess. The target compiles everywhere; visionOS gets no StableDiffusion
         // (1.1.1 declares no visionOS), so its engines throw `.unsupportedPlatform` there.
         .target(
-            name: "AuraImageGen",
+            name: "TonamoxImageGen",
             dependencies: [
-                "AuraCore",
+                "TonamoxCore",
                 .product(name: "StableDiffusion", package: "ml-stable-diffusion",
                          condition: .when(platforms: [.iOS, .macOS, .macCatalyst])),
             ],
-            path: "Sources/AuraImageGen",
+            path: "Sources/TonamoxImageGen",
             resources: [.process("PrivacyInfo.xcprivacy")],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
         // MARK: - Recibo spike (not a product)
         // The deterministic half of the Recibo spike: the rule-based baseline, the prompt, the OCR anchors and the
-        // scoring that `aura receipt` drives. Recibo itself lives in its own repository.
+        // scoring that `tonamox receipt` drives. Recibo itself lives in its own repository.
         .target(
             name: "ReceiptSpike",
-            dependencies: ["AuraCore"],
+            dependencies: ["TonamoxCore"],
             path: "Sources/ReceiptSpike",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
         // MARK: - CLI
-        // `aura` — a headless integration harness that drives the hybrid + tools
-        // features (provider detection, local-first `aura ask` escalation, native OCR).
-        // Cxx interop is required because it links AuraCore (llama.cpp).
+        // `tonamox` — a headless integration harness that drives the hybrid + tools
+        // features (provider detection, local-first `tonamox ask` escalation, native OCR).
+        // Cxx interop is required because it links TonamoxCore (llama.cpp).
         .executableTarget(
-            name: "aura",
-            dependencies: ["AuraCore", "AuraImageGen", "ReceiptSpike"],
-            path: "Sources/aura",
+            name: "tonamox",
+            dependencies: ["TonamoxCore", "TonamoxImageGen", "ReceiptSpike"],
+            path: "Sources/tonamox",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
 
         // MARK: - Example App
-        // AuraExample is a macOS/iOS app (built via Sources/AuraExample/AuraExample.xcodeproj),
+        // TonamoxExample is a macOS/iOS app (built via Sources/TonamoxExample/TonamoxExample.xcodeproj),
         // not a library product. It requires macOS 26 (AgentCrew) and is intentionally NOT a
         // SwiftPM target here, so `swift build`/`swift test` stay green on the macOS-15 package.
 
         // MARK: - Tests
         .testTarget(
-            name: "AuraCoreTests",
-            dependencies: ["AuraCore"],
-            path: "Tests/AuraCoreTests",
+            name: "TonamoxCoreTests",
+            dependencies: ["TonamoxCore"],
+            path: "Tests/TonamoxCoreTests",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         .testTarget(
-            name: "AuraDocsTests",
-            dependencies: ["AuraDocs", "AuraCore"],
-            path: "Tests/AuraDocsTests",
+            name: "TonamoxDocsTests",
+            dependencies: ["TonamoxDocs", "TonamoxCore"],
+            path: "Tests/TonamoxDocsTests",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         .testTarget(
             name: "ReceiptSpikeTests",
-            dependencies: ["ReceiptSpike", "AuraCore"],
+            dependencies: ["ReceiptSpike", "TonamoxCore"],
             path: "Tests/ReceiptSpikeTests",
             swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         .testTarget(
-            name: "AuraImageGenTests",
-            dependencies: ["AuraImageGen"],
-            path: "Tests/AuraImageGenTests",
+            name: "TonamoxImageGenTests",
+            dependencies: ["TonamoxImageGen"],
+            path: "Tests/TonamoxImageGenTests",
             resources: [.copy("Fixtures")],
             swiftSettings: [.interoperabilityMode(.Cxx)]
         )

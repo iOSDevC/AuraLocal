@@ -8,12 +8,12 @@ description: "Text-to-image on iPhone and Mac with Core ML Stable Diffusion, App
 
 # Image Generation + LoRA
 
-`AuraImageGen` has two engines and one policy:
+`TonamoxImageGen` has two engines and one policy:
 
 | Path | Platforms | Where it runs | Notes |
 |------|-----------|---------------|-------|
 | `CoreMLDiffusionEngine` | iOS, macOS | This device | Stable Diffusion 2.1 base built in (512×512, ~1.07 GB one-time download), or a Core ML SD 1.x/2.x folder from Hugging Face that `CoreMLDiffusionInspector` accepts |
-| Apple Image Playground (`ImagePlaygroundPolicy`) | iOS 18.4+, macOS 15.4+, visionOS 2.4+ (the Example uses it on iOS only) | On device before OS 27; Apple's servers from OS 27 | Apple's sheet; AuraLocal only sets its styles and options |
+| Apple Image Playground (`ImagePlaygroundPolicy`) | iOS 18.4+, macOS 15.4+, visionOS 2.4+ (the Example uses it on iOS only) | On device before OS 27; Apple's servers from OS 27 | Apple's sheet; Tonamox only sets its styles and options |
 | `MFluxEngine` | macOS | This Mac | FLUX + `lora.safetensors` through the mflux CLI |
 
 ## On device (iPhone and Mac): Core ML Stable Diffusion
@@ -23,7 +23,7 @@ pipeline in process. The only network traffic is the one-time model download; pr
 the device.
 
 ```swift
-import AuraImageGen
+import TonamoxImageGen
 
 let model = CoreMLDiffusionModel.stableDiffusion21Base
 if !model.isDownloaded {
@@ -72,7 +72,7 @@ base (`apple/coreml-stable-diffusion-2-1-base-palettized`, `split_einsum_v2/comp
   `isDownloaded` on every call.
   The folder records the revision its files come from, and `isDownloaded` requires the pinned one. Files from
   any other revision, finished or partial, are deleted before the next download.
-  AuraUI's Downloads list shows every image model as a paused MLX snapshot of its repo. Resume is off there;
+  TonamoxUI's Downloads list shows every image model as a paused MLX snapshot of its repo. Resume is off there;
   its Delete removes every folder of that repo and does not unload a running image engine.
   `CoreMLDiffusionModel.delete()` removes only the model's own folder (`ModelDownloads.deleteFolder(repoID:folder:)`).
 - **Output.** 512×512 only: the Unet's input shape is fixed. No LoRA.
@@ -90,8 +90,8 @@ folder's Unet `metadata.json` (about 4 KB), pinned to that commit. `CoreMLDiffus
 folder rated **Runs** or **Runs, with caveats** into a model pinned to the same commit.
 
 ```swift
-import AuraCore
-import AuraImageGen
+import TonamoxCore
+import TonamoxImageGen
 
 let inspector = CoreMLDiffusionInspector()
 let hits = try await inspector.search("dreamshaper")       // sends the text to huggingface.co
@@ -205,21 +205,21 @@ Errors are `OnDeviceImageGenError`: `.unsupportedPlatform` (visionOS), `.simulat
 
 ### Dependency
 
-`AuraImageGen` links `StableDiffusion` from `apple/ml-stable-diffusion`, pinned `exact: "1.1.1"` on iOS, macOS
+`TonamoxImageGen` links `StableDiffusion` from `apple/ml-stable-diffusion`, pinned `exact: "1.1.1"` on iOS, macOS
 and Mac Catalyst (1.1.1 declares no visionOS, where the engine throws `.unsupportedPlatform`). It is exact
-because upstream `main` pins `swift-transformers` 0.1.8, which conflicts with AuraLocal's 1.3 floor. It adds
+because upstream `main` pins `swift-transformers` 0.1.8, which conflicts with Tonamox's 1.3 floor. It adds
 one pin to a downstream resolve, `ml-stable-diffusion`. The `swift-argument-parser` its CLI target uses is
-already in the graph through mlx-swift, LocalLLMClient and swift-syntax. AuraLocal's own lockfile gained both.
+already in the graph through mlx-swift, LocalLLMClient and swift-syntax. Tonamox's own lockfile gained both.
 Apple presents Core AI as Core ML's successor, so expect a migration later.
 
 ## Apple Image Playground
 
-`ImagePlaygroundPolicy` holds the settings for presenting Apple's `imagePlaygroundSheet`. AuraLocal does not
+`ImagePlaygroundPolicy` holds the settings for presenting Apple's `imagePlaygroundSheet`. Tonamox does not
 generate through Image Playground; the sheet is Apple's UI and pipeline.
 
 ```swift
 import ImagePlayground
-import AuraImageGen
+import TonamoxImageGen
 
 content
     .imagePlaygroundSheet(isPresented: $presenting, concept: prompt) { url in /* move the file */ }
@@ -249,16 +249,16 @@ content
 ### Why FLUX stays on macOS
 
 FLUX is a ~12B-parameter diffusion model. A Swift package cannot embed the Python runtime mflux
-needs, so `AuraImageGen` locates and execs an already-installed `mflux-generate`. Consequences,
+needs, so `TonamoxImageGen` locates and execs an already-installed `mflux-generate`. Consequences,
 stated plainly:
 
 - **macOS only.** Off macOS the API exists but `MFluxEngine.isAvailable == false` and `generate`
   throws `.unsupportedPlatform`. The quantized weights alone are 6.8–9.2 GB and the peak is about twice
   that, far beyond an iPhone app's memory limit; use `CoreMLDiffusionEngine` there.
 - **Non-sandboxed only.** The macOS App Sandbox blocks exec-ing an external CLI, so this serves the
-  `aura` CLI and non-sandboxed apps (the Example has `ENABLE_APP_SANDBOX = NO`) — not App-Store
+  `tonamox` CLI and non-sandboxed apps (the Example has `ENABLE_APP_SANDBOX = NO`) — not App-Store
   sandboxed apps. An in-process, sandbox-safe Swift engine (`flux.swift`) is **not** available: it
-  pins `swift-transformers 0.1.x` while AuraLocal is on `1.3.x` — an unresolvable dependency conflict.
+  pins `swift-transformers 0.1.x` while Tonamox is on `1.3.x` — an unresolvable dependency conflict.
 
 ### Prerequisites
 
@@ -277,13 +277,13 @@ path is an **ungated pre-quantized** repo, which downloads with no auth:
 
 > Using an alias with `--quantize` downloads the **full** model (tens of GB) and quantizes on load;
 > a pre-quantized repo downloads only the quantized weights. This is what the defaults do:
-> `ImageGenRequest(prompt:)` and `aura imagegen "…"` use `model: "schnell"` with `quantize: 4`, so
+> `ImageGenRequest(prompt:)` and `tonamox imagegen "…"` use `model: "schnell"` with `quantize: 4`, so
 > always pass an ungated repo in `model` (`--model`) plus `baseModel` (`--base-model`).
 
 ### Swift
 
 ```swift
-import AuraImageGen
+import TonamoxImageGen
 
 let engine = MFluxEngine()
 guard engine.isAvailable else { /* macOS + mflux required */ return }
@@ -307,13 +307,13 @@ Errors are typed (`ImageGenError`): `.engineNotFound(installHint:)`, `.loraNotFo
 ### CLI
 
 ```bash
-aura imagegen "a red fox in snow" \
+tonamox imagegen "a red fox in snow" \
   --model dhairyashil/FLUX.1-schnell-mflux-4bit --base-model schnell \
   --lora /path/to/style.safetensors --lora-scale 0.9 \
   --steps 4 --seed 42
 ```
 
-`aura imagegen` flags: `--model`, `--base-model`, `--steps`, `--seed`, `--quantize` and `--low-ram`
+`tonamox imagegen` flags: `--model`, `--base-model`, `--steps`, `--seed`, `--quantize` and `--low-ram`
 pass straight to mflux. `--lora <file>` is repeatable, and `--lora-scale S` sets the scale of the
 `--lora` before it; they become mflux's `--lora-paths`/`--lora-scales`. `--out <dir>` picks the folder
 for `image.png` (default: a temporary folder), and the CLI prints the PNG's path. Width and height are
@@ -366,7 +366,7 @@ can pick an ungated mirror instead.
 
 ## LoRA notes
 
-`AuraImageGen` accepts **local `.safetensors` files only** (a missing path throws
+`TonamoxImageGen` accepts **local `.safetensors` files only** (a missing path throws
 `ImageGenError.loraNotFound`); download a Hugging Face LoRA first. Multiple LoRAs each take a scale. mflux
 also ships curated styles (`--lora-style`) and a `mflux-lora-library` / `mflux-train` toolchain for
-building your own — outside `AuraImageGen`'s scope, which is loading, not training.
+building your own — outside `TonamoxImageGen`'s scope, which is loading, not training.

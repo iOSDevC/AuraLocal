@@ -1,12 +1,14 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/iOSDevC/AuraLocal/main/docs/media/logo.png" alt="AuraLocal" width="400">
+  <img src="docs/media/logo.png" alt="TONAMOX" width="260">
 </p>
 
-# AuraLocal
+# TONAMOX
+
+> TONAMOX is the selected project identity. Repository URLs and persistent identifiers still use `AuraLocal` until the planned migration is implemented.
 
 Lightweight on-device LLM & VLM Swift package for iOS/macOS/visionOS. Run Qwen3, Llama 3, Mistral, Gemma, SmolVLM and more — locally and privately by default (no API keys unless you opt into cloud escalation). Supports both MLX (Apple Silicon GPU) and llama.cpp/GGUF (up to 70B, including layer-streaming for memory-constrained devices).
 
-**Documentation:** [iosdevc.github.io/AuraLocal](https://iosdevc.github.io/AuraLocal/) — installation, hybrid inference, RAG, the CLI and the other guides.
+**Documentation:** [TONAMOX documentation](https://iosdevc.github.io/AuraLocal/) — installation, hybrid inference, RAG, the CLI and the other guides.
 Research notes, not a shipped feature: [Distributed inference](docs/guide/distributed.md).
 
 ---
@@ -22,16 +24,16 @@ Research notes, not a shipped feature: [Distributed inference](docs/guide/distri
 - **Swift 6 concurrency** — All public APIs are `@MainActor`-isolated or `Sendable`, with `actor`-based stores for data-race safety.
 - **OOM prevention that fails safe** — One source of truth (`HardwareProfile.availableMemoryBytes()`) asks the OS and returns `nil` rather than inventing a number. iOS reports "unknown" exactly when the process is at its jetsam limit, so unknown counts as *pressure*: layer-streaming shrinks its context to 512 tokens and stops a reply early (checked every 32 tokens), and the model cache keeps one model. Paired with `DispatchSource` listeners and per-generation checks.
 - **Hybrid RAG pipeline** — FTS5 keyword pre-filter + Accelerate cosine re-ranking, stored in SQLite. Zero external dependencies.
-- **Local provider detection** — `AuraLocal.detectLocalProviders()` discovers a running Ollama (`:11434`) or llama.cpp `llama-server` (`:8080/v1`) and the models each exposes, via a dependency-free URLSession probe (never throws — a down server is a normal result).
-- **Token-optimized hybrid inference** — Stay local by default: `AuraLocal.stream()` runs on-device models, and `HybridEscalator` sends a request to your own llama-server/Ollama box or a cloud model only when needed, streaming its answer through an `onToken` callback. It **cuts the tokens sent to the remote** via selective-context compression (input-dependent), an in-memory response cache (repeat calls in a session cost **$0**), and PII redaction (on by default for cloud targets on the policy path). Every escalation returns its token counts, and `CostLedger` records its cost, for a receipt. The policy path is off by default and consent-gated. See [Hybrid Inference](#hybrid-inference-local--remote).
+- **Local provider detection** — `Tonamox.detectLocalProviders()` discovers a running Ollama (`:11434`) or llama.cpp `llama-server` (`:8080/v1`) and the models each exposes, via a dependency-free URLSession probe (never throws — a down server is a normal result).
+- **Token-optimized hybrid inference** — Stay local by default: `Tonamox.stream()` runs on-device models, and `HybridEscalator` sends a request to your own llama-server/Ollama box or a cloud model only when needed, streaming its answer through an `onToken` callback. It **cuts the tokens sent to the remote** via selective-context compression (input-dependent), an in-memory response cache (repeat calls in a session cost **$0**), and PII redaction (on by default for cloud targets on the policy path). Every escalation returns its token counts, and `CostLedger` records its cost, for a receipt. The policy path is off by default and consent-gated. See [Hybrid Inference](#hybrid-inference-local--remote).
 - **Agent orchestration (Architect-step escalation)** — `AgentCrew` (Extractor → Reviewer → Architect → Reporter) escalates the Architect's local draft to a bigger model when it looks weak, reusing the same compression + consent + cost machinery.
 - **On-device ML tools, not just LLMs** — Typed, availability-checked wrappers over Apple's ML frameworks, using models that ship with the OS and no extra dependencies: Vision (OCR lines, image classification, barcodes & QR, face detection), NaturalLanguage (language ID, named entities, sentiment, embeddings), SoundAnalysis (303 everyday sounds), a runner for **your own Core ML models**, and **on-device Create ML training** of text classifiers. `SystemToolRegistry` reports which built-in tools run on each device. See [On-device ML tools](#on-device-ml-tools).
-- **`aura` CLI & binaries** — A headless integration harness (`aura providers | tools | ask | ocr | ml | models | imagegen`) plus build scripts for a release CLI and a drag-to-Applications `.dmg`. See [CLI & Binaries](#cli--binaries).
-- **Will this Hugging Face model run here?** — `ModelCompatibilityChecker` reads a repo's config and GGUF/safetensors headers and reports, for a device preset, whether AuraLocal's pinned runtimes (mlx-swift-lm 3.31.3, llama.cpp b8851) can load it, why not, and its `models.json` entry. Also `aura models search|check|devices` and the Model Finder example app.
+- **`tonamox` CLI & binaries** — A headless integration harness (`tonamox providers | tools | ask | ocr | ml | models | imagegen`) plus build scripts for a release CLI and a drag-to-Applications `.dmg`. See [CLI & Binaries](#cli--binaries).
+- **Will this Hugging Face model run here?** — `ModelCompatibilityChecker` reads a repo's config and GGUF/safetensors headers and reports, for a device preset, whether Tonamox's pinned runtimes (mlx-swift-lm 3.31.3, llama.cpp b8851) can load it, why not, and its `models.json` entry. Also `tonamox models search|check|devices` and the Model Finder example app.
 - **Multilingual dense RAG (opt-in)** — `AutoEmbeddingProvider(embeddingModelAt:)` swaps TF-IDF for multilingual-e5-small via Core ML; the index re-embeds itself when the provider changes.
-- **On-device image generation** — `CoreMLDiffusionEngine` (AuraImageGen) runs Core ML Stable Diffusion 2.1 base on iPhone and Mac after a one-time ~1.07 GB download, or a Core ML SD 1.x/2.x folder from Hugging Face that `CoreMLDiffusionInspector` judges runnable; FLUX + LoRA via mflux on macOS. See [Image Generation](#image-generation).
+- **On-device image generation** — `CoreMLDiffusionEngine` (TonamoxImageGen) runs Core ML Stable Diffusion 2.1 base on iPhone and Mac after a one-time ~1.07 GB download, or a Core ML SD 1.x/2.x folder from Hugging Face that `CoreMLDiffusionInspector` judges runnable; FLUX + LoRA via mflux on macOS. See [Image Generation](#image-generation).
 - **Stops when an iOS app backgrounds** — running MLX, llama.cpp and Core ML generations are cancelled and throw `GenerationInterrupted` with the text so far; an opt-in `DeviceConditions` guard stops on critical heat. See [Background Lifecycle](#background-lifecycle-ios).
-- **Constrained and structured output** — a GGUF loaded in full takes `constraint: .json` or a GBNF grammar; `AuraSession` constrains decoding on a GGUF loaded in full with a grammar built from a profile's `OutputSchema` (profiles without tools) and still validates and repairs, re-prompting with the violations; MLX and layer-streaming validate and repair only. See [Structured output](docs/api/core.md#structured-output).
+- **Constrained and structured output** — a GGUF loaded in full takes `constraint: .json` or a GBNF grammar; `TonamoxSession` constrains decoding on a GGUF loaded in full with a grammar built from a profile's `OutputSchema` (profiles without tools) and still validates and repairs, re-prompting with the violations; MLX and layer-streaming validate and repair only. See [Structured output](docs/api/core.md#structured-output).
 - **Model downloads** — `ModelDownloads` fetches GGUF and MLX models without loading them, resumes `.partial` files across relaunches (restarting when the file's ETag changes), sends the Keychain Hugging Face token and checks free space; `DownloadRecords` keeps them across launches. See [Downloading without loading](docs/guide/models.md#downloading-without-loading).
 
 ---
@@ -39,11 +41,11 @@ Research notes, not a shipped feature: [Distributed inference](docs/guide/distri
 ## Requirements
 
 - **iOS 18+** / **macOS 15+** / **visionOS 2+**
-- **Xcode 16.3+** (Swift 6.1: the pinned LocalLLMClient 0.5.0 and mlx-swift-lm 3.31.3 declare tools-version 6.1); **Xcode 26** (iOS 26 / macOS 26 SDK) to build `AuraAppleIntelligence` and `AuraAgents`, which import FoundationModels; **Xcode 26.4+** (26.4 SDKs) to build `AuraImageGen` and the `aura` CLI, which use `ImagePlaygroundOptions`
+- **Xcode 16.3+** (Swift 6.1: the pinned LocalLLMClient 0.5.0 and mlx-swift-lm 3.31.3 declare tools-version 6.1); **Xcode 26** (iOS 26 / macOS 26 SDK) to build `TonamoxAppleIntelligence` and `TonamoxAgents`, which import FoundationModels; **Xcode 26.4+** (26.4 SDKs) to build `TonamoxImageGen` and the `tonamox` CLI, which use `ImagePlaygroundOptions`
 - **Swift 6.1+** (C++ interoperability mode enabled — required by llama.cpp)
 - `Increased Memory Limit` **and** `Extended Virtual Addressing` entitlements (both required for models > 500 MB — the second one is what makes mmap/layer-streaming actually work on iOS)
 
-> **Note:** The C++ interoperability requirement means all targets that import `AuraCore` must enable `.interoperabilityMode(.Cxx)` in their `Package.swift` `swiftSettings`. In an Xcode app target, set the build setting `SWIFT_OBJC_INTEROP_MODE = objcxx` (as `Examples/ModelFinder/project.yml` does).
+> **Note:** The C++ interoperability requirement means all targets that import `TonamoxCore` must enable `.interoperabilityMode(.Cxx)` in their `Package.swift` `swiftSettings`. In an Xcode app target, set the build setting `SWIFT_OBJC_INTEROP_MODE = objcxx` (as `Examples/ModelFinder/project.yml` does).
 
 ---
 
@@ -62,16 +64,16 @@ Or in `Package.swift`, pinned to a commit on `main`:
 .package(url: "https://github.com/iOSDevC/AuraLocal", revision: "<commit SHA from main>")
 ```
 
-> A version requirement (`from:` / `exact:`) cannot resolve. AuraLocal depends on LocalLLMClient by
+> A version requirement (`from:` / `exact:`) cannot resolve. Tonamox depends on LocalLLMClient by
 > `revision:` (its `unsafeFlags` rule out a version pin), and SwiftPM rejects a version-pinned package
 > whose dependencies are pinned by revision or branch. `branch: "main"` also resolves, but it moves under you.
 
-If your package imports `AuraCore`, add the C++ interop setting:
+If your package imports `TonamoxCore`, add the C++ interop setting:
 
 ```swift
 .target(
     name: "MyTarget",
-    dependencies: [.product(name: "AuraCore", package: "AuraLocal")],
+    dependencies: [.product(name: "TonamoxCore", package: "Tonamox")],
     swiftSettings: [.interoperabilityMode(.Cxx)]
 )
 ```
@@ -85,21 +87,21 @@ If your package imports `AuraCore`, add the C++ interop setting:
 | [LocalLLMClient](https://github.com/tattn/LocalLLMClient) | Swift wrapper for llama.cpp — GGUF inference + Metal kernels |
 | [swift-transformers](https://github.com/huggingface/swift-transformers) | `Tokenizers` — tokenization for MLX models |
 | [swift-jinja](https://github.com/huggingface/swift-jinja) | `Jinja` — renders each GGUF's chat template so turns carry real roles (from 2.3.5; LocalLLMClient already resolves it) |
-| [ml-stable-diffusion](https://github.com/apple/ml-stable-diffusion) | `StableDiffusion` — Core ML text-to-image for `AuraImageGen` (pinned `exact: "1.1.1"`: upstream `main` requires swift-transformers 0.1.8; not linked on visionOS) |
+| [ml-stable-diffusion](https://github.com/apple/ml-stable-diffusion) | `StableDiffusion` — Core ML text-to-image for `TonamoxImageGen` (pinned `exact: "1.1.1"`: upstream `main` requires swift-transformers 0.1.8; not linked on visionOS) |
 
-`AuraCore` and `AuraImageGen` ship `PrivacyInfo.xcprivacy` manifests (no tracking, no collected data, and the required-reason APIs they use); see [Privacy manifests](docs/guide/installation.md#privacy-manifests) for what your app still declares.
+`TonamoxCore` and `TonamoxImageGen` ship `PrivacyInfo.xcprivacy` manifests (no tracking, no collected data, and the required-reason APIs they use); see [Privacy manifests](docs/guide/installation.md#privacy-manifests) for what your app still declares.
 
 ### Modules
 
 | Module | Contents |
 |--------|----------|
-| `AuraCore` | Core inference, dual-backend engine, models, conversation persistence, hybrid escalation, on-device ML tools, Hugging Face compatibility checker, model downloads, structured output (`AuraSession`) |
-| `AuraUI` | SwiftUI views and ViewModels for drop-in UI |
-| `AuraVoice` | Turn-based voice (on-device STT + TTS), 100% local |
-| `AuraDocs` | RAG document library — PDF, DOCX, text, images · TF-IDF or multilingual-e5-small embeddings |
-| `AuraAppleIntelligence` | Apple FoundationModels agents, tools & structured output (iOS 26 / macOS 26) |
-| `AuraAgents` | Reusable multi-agent orchestration (`AgentCrew`) with hybrid escalation of its Architect step |
-| `AuraImageGen` | Text-to-image: Core ML Stable Diffusion on device (iOS + macOS), built in or inspected and adopted from Hugging Face; FLUX + LoRA via mflux (macOS) |
+| `TonamoxCore` | Core inference, dual-backend engine, models, conversation persistence, hybrid escalation, on-device ML tools, Hugging Face compatibility checker, model downloads, structured output (`TonamoxSession`) |
+| `TonamoxUI` | SwiftUI views and ViewModels for drop-in UI |
+| `TonamoxVoice` | Turn-based voice (on-device STT + TTS), 100% local |
+| `TonamoxDocs` | RAG document library — PDF, DOCX, text, images · TF-IDF or multilingual-e5-small embeddings |
+| `TonamoxAppleIntelligence` | Apple FoundationModels agents, tools & structured output (iOS 26 / macOS 26) |
+| `TonamoxAgents` | Reusable multi-agent orchestration (`AgentCrew`) with hybrid escalation of its Architect step |
+| `TonamoxImageGen` | Text-to-image: Core ML Stable Diffusion on device (iOS + macOS), built in or inspected and adopted from Hugging Face; FLUX + LoRA via mflux (macOS) |
 
 ---
 
@@ -123,7 +125,7 @@ The backends differ in what they honour:
 
 | | MLX | GGUF (llama.cpp) |
 |---|---|---|
-| Tools (`ModelManager.load(_:tools:)`, `AuraProfile.tools`) | Text models run the tool-calling loop (`toolLoop.maxToolRounds` rounds per turn, default 1); vision and document models throw `ModelConfigurationError.toolsUnsupported(.mlx)` before loading | Runs the tool-calling loop (`toolLoop.maxToolRounds` rounds per turn, default 1) |
+| Tools (`ModelManager.load(_:tools:)`, `TonamoxProfile.tools`) | Text models run the tool-calling loop (`toolLoop.maxToolRounds` rounds per turn, default 1); vision and document models throw `ModelConfigurationError.toolsUnsupported(.mlx)` before loading | Runs the tool-calling loop (`toolLoop.maxToolRounds` rounds per turn, default 1) |
 | `temperature` / `topP` | Fixed per instance | Fixed per instance (the sampler is built with the context); each setting is its own cached instance |
 | `constraint:` (JSON / GBNF) | Throws `GenerationConstraintError.unsupportedBackend` | Enforced when loaded in full; layer-streaming throws |
 | Images | Vision models | Ignored (text only) |
@@ -131,20 +133,20 @@ The backends differ in what they honour:
 You can inspect which backend a model will use:
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 let backend = BackendRouter.recommendedBackend(for: .llama3_1_8b_gguf)
 // → .llamaCpp      (Mac with 16 GB)
 // → .layerStreaming (entitled 6 GB iPhone — ~3 GB budget)
 // → still .llamaCpp when not even streaming fits: recommendedBackend never reports a refusal.
-//   Check HardwareAnalyzer.assess(.llama3_1_8b_gguf).fitLevel == .tooLarge (ModelManager.load throws AuraError.modelTooLarge)
+//   Check HardwareAnalyzer.assess(.llama3_1_8b_gguf).fitLevel == .tooLarge (ModelManager.load throws TonamoxError.modelTooLarge)
 ```
 
 ---
 
 ## Hybrid Inference (local + remote)
 
-AuraLocal is **local-first**: everything runs on-device by default. `AuraLocal.stream()` and
+Tonamox is **local-first**: everything runs on-device by default. `Tonamox.stream()` and
 `chat()` run on-device models only; `HybridEscalator` is the remote path. It sends a request to
 your own `llama-server`/Ollama box or a cloud model (Anthropic / OpenAI), selected **per request**,
 and streams the answer through an `onToken` callback. When a task exceeds the local model it
@@ -180,10 +182,10 @@ call's cost in its escalation history, marking unknown costs "unpriced".
 ### Detect local providers
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 // Probe a running Ollama (:11434) and llama.cpp llama-server (:8080/v1) concurrently.
-let providers = await AuraLocal.detectLocalProviders()   // never throws
+let providers = await Tonamox.detectLocalProviders()   // never throws
 for p in providers where p.isAvailable {
     print(p.kind, p.version ?? "", p.models.map(\.name))
 }
@@ -236,7 +238,7 @@ let result = try await escalator.routeAndEscalate(
 
 ### Agent orchestration (Architect-step escalation)
 
-`AgentCrew` (in `AuraAgents`) runs Extractor → Reviewer → Architect → Reporter on-device and
+`AgentCrew` (in `TonamoxAgents`) runs Extractor → Reviewer → Architect → Reporter on-device and
 escalates only the **Architect** step: when its local draft looks weak (the router's
 low-confidence trigger), `HybridEscalator.routeAndEscalate(localAnswer:)` sends it to a bigger
 model, reusing the same compression, consent, and cost machinery. Fail-closed: any error or a
@@ -256,7 +258,7 @@ model, reusing the same compression, consent, and cost machinery. Fail-closed: a
 > **GitHub Models is retired.** GitHub shut down GitHub Models on 2026-07-30.
 > `OpenAICompatibleProvider.gitHubModels(apiKey:)` is now `unavailable` (a compile error naming the
 > replacements), `HybridEscalator.cloudTargets` no longer reads the `cloud.github-models` Keychain
-> key, and `aura ask` uses your own llama-server/Ollama box, or an Anthropic/OpenAI key when you
+> key, and `tonamox ask` uses your own llama-server/Ollama box, or an Anthropic/OpenAI key when you
 > name that provider.
 
 **Privacy & cost:** cloud API keys live only in the Keychain (never in source, files,
@@ -299,7 +301,7 @@ ledger.startNewSession()   // the cap and sessionCostUSD restart; records keeps 
 >   if the session's priced spend (`sessionCostUSD`) plus that projection exceeds
 >   `costCapUSDPerSession`, the router offers with `.costCapped`, the default
 >   `requestConsent(target:preview:offer:)` declines, and `routeAndEscalate` throws
->   `AuraError.escalationDeclined`. Only a gate that implements that method can let the user go over.
+>   `TonamoxError.escalationDeclined`. Only a gate that implements that method can let the user go over.
 >   Unpriced calls add nothing to `sessionCostUSD`, so while `unpricedRecordCount` is above zero a
 >   priced request under the cap is offered as `.costUnknown`. `escalate(to:)` checks no cap.
 
@@ -324,7 +326,7 @@ on an iPhone 14 Pro Max), and the first run on a device spends minutes preparing
 In the Simulator `generate` throws `.simulatorUnsupported`; test on a device.
 
 ```swift
-import AuraImageGen
+import TonamoxImageGen
 
 let model = CoreMLDiffusionModel.stableDiffusion21Base
 if !model.isDownloaded { try await model.download { _, _ in } }   // ~1.07 GB, resumable
@@ -358,7 +360,7 @@ uv tool install mflux      # one-time; the Example app has a button that runs th
 >    pre-quantized** repo to skip auth entirely, e.g. `dhairyashil/FLUX.1-schnell-mflux-4bit`.
 
 ```swift
-import AuraImageGen
+import TonamoxImageGen
 
 let engine = MFluxEngine()                       // isAvailable == false off macOS / if mflux is missing
 let result = try await engine.generate(ImageGenRequest(
@@ -375,7 +377,7 @@ result.fileURL    // the PNG on disk
 CLI:
 
 ```bash
-aura imagegen "a red fox in snow" \
+tonamox imagegen "a red fox in snow" \
   --model dhairyashil/FLUX.1-schnell-mflux-4bit --base-model schnell \
   --lora /path/to/style.safetensors --lora-scale 0.9 --steps 4
 ```
@@ -401,7 +403,7 @@ measured — so a 6.8 GB FLUX reads *too large* with 13 GB free, *good* with ~20
 with model load). It fits a 32 GB Mac but runs best **exclusively** (it presses the ~21.5 GB Metal wired
 limit) — don't co-load an LLM. FLUX does **not** run on iPhone (far too large; use `CoreMLDiffusionEngine`);
 the mflux subprocess is also blocked by the macOS **App Sandbox**, so it serves the
-`aura` CLI and non-sandboxed apps (like the Example), not App-Store-sandboxed apps.
+`tonamox` CLI and non-sandboxed apps (like the Example), not App-Store-sandboxed apps.
 
 See the [Image generation guide](docs/guide/imagegen.md).
 
@@ -409,7 +411,7 @@ See the [Image generation guide](docs/guide/imagegen.md).
 
 ## On-device ML tools
 
-Not everything needs an LLM. `AuraCore` wraps Apple's machine-learning frameworks as typed tools
+Not everything needs an LLM. `TonamoxCore` wraps Apple's machine-learning frameworks as typed tools
 that run on-device with no extra package dependencies. The analysis tools use models that ship
 with the OS, so they need no download and work offline; BERT transfer learning may first download
 OS embedding assets for the text's script.
@@ -424,7 +426,7 @@ OS embedding assets for the text's script.
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 // Read a QR code and the text around it.
 let reader = VisionBarcodeTool()
@@ -446,7 +448,7 @@ Every tool reports `availability()`; check it before calling, since the executio
 For example, Vision classification, barcodes and faces report unavailable in the Simulator, and
 Create ML training is unavailable in the iOS / visionOS Simulator.
 `SystemToolRegistry.discover()` lists the built-in tools with their availability;
-`CoreMLModelTool`, `TextClassifierTool` and `CoreMLTextEmbeddingTool` are created per model file or bundle instead. Try them with `aura tools` and `aura ml …`, or in the **ML** tab of the
+`CoreMLModelTool`, `TextClassifierTool` and `CoreMLTextEmbeddingTool` are created per model file or bundle instead. Try them with `tonamox tools` and `tonamox ml …`, or in the **ML** tab of the
 example app. Full guide, with a train → ship → classify walkthrough and a bring-your-own-model
 section: [On-device ML tools](docs/guide/ml-tools.md).
 
@@ -456,23 +458,23 @@ section: [On-device ML tools](docs/guide/ml-tools.md).
 
 Two ways to run and ship these features beyond the source package.
 
-### `aura` CLI
+### `tonamox` CLI
 
 A headless integration harness (macOS) that drives the hybrid + native-tool features —
 handy as a reference and in CI. Build with `scripts/build-cli.sh` (or
-`swift build -c release --product aura`).
+`swift build -c release --product tonamox`).
 
 ```
-aura providers                      # detect Ollama / llama-server + models
-aura tools                          # list on-device ML tools by category, with availability
-aura ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>] [--base-url <url>]
+tonamox providers                      # detect Ollama / llama-server + models
+tonamox tools                          # list on-device ML tools by category, with availability
+tonamox ask "<prompt>" [--provider auto|local|openai|anthropic] [--model <id>] [--base-url <url>]
                                     # ask a bigger model: your llama-server/Ollama unless you name a cloud API
-aura ocr <image>                    # extract text via native Vision OCR
-aura ml <subcommand> …              # on-device ML: classify-image, barcodes, faces, ocr-lines, document,
+tonamox ocr <image>                    # extract text via native Vision OCR
+tonamox ml <subcommand> …              # on-device ML: classify-image, barcodes, faces, ocr-lines, document,
                                     # language, entities, sentiment, similarity, sounds,
                                     # coreml-describe, coreml-predict, train-text, classify-text
-aura imagegen "<prompt>" [--lora <path>] …  # FLUX image generation via mflux (macOS)
-aura models search|check|devices …  # which Hugging Face models run here, and why not
+tonamox imagegen "<prompt>" [--lora <path>] …  # FLUX image generation via mflux (macOS)
+tonamox models search|check|devices …  # which Hugging Face models run here, and why not
 ```
 
 `ask` sends to a running llama-server, else Ollama, and never picks a cloud API on its own.
@@ -483,13 +485,13 @@ other OpenAI-compatible server, with an optional `AURA_API_KEY`. All flags:
 
 ### Demo app (`.dmg`)
 
-`scripts/build-app.sh` builds `AuraExample.app` and packages it into
-`build/AuraExample.dmg` with a drag-to-**Applications** alias. The app is
+`scripts/build-app.sh` builds `TonamoxExample.app` and packages it into
+`build/TonamoxExample.dmg` with a drag-to-**Applications** alias. The app is
 development-signed (runs on this Mac); to distribute it, re-sign with a Developer ID
 identity and notarize (`xcrun notarytool submit … && xcrun stapler staple …`).
 Requires macOS 26 (AgentCrew).
 
-AuraExample also runs on iPhone (iOS 18.6+); the Agents tab is Mac-only (macOS 26). Each section gets its own models:
+TonamoxExample also runs on iPhone (iOS 18.6+); the Agents tab is Mac-only (macOS 26). Each section gets its own models:
 **Chat** (text, images and documents in one conversation, with Text, Vision, OCR and Tools badges per model)
 downloads from the catalog or searches Hugging Face for chat models that run on the phone, **Voice** uses the
 downloaded text models, **Library** asks before downloading the two models it answers and reads images with, and
@@ -500,16 +502,16 @@ from iOS 27, when it runs on Apple's servers.
 
 ### Model Finder (`Examples/ModelFinder`)
 
-A small iOS 18 / macOS 15 app that searches Hugging Face and shows, per repo, whether AuraLocal's pinned
+A small iOS 18 / macOS 15 app that searches Hugging Face and shows, per repo, whether Tonamox's pinned
 runtimes can run it on a chosen device (this one, iPhone classes, Macs) and why not — with the exact
-`models.json` entry for the ones that run, and downloads them. It hosts AuraUI's Hugging Face browser
-([AuraUI](docs/api/ui.md#hugging-face-browser)). See [its README](Examples/ModelFinder/README.md) and
+`models.json` entry for the ones that run, and downloads them. It hosts TonamoxUI's Hugging Face browser
+([TonamoxUI](docs/api/ui.md#hugging-face-browser)). See [its README](Examples/ModelFinder/README.md) and
 [Finding compatible models](docs/guide/models.md#finding-compatible-models).
 
 The same check from code:
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 let report = await ModelCompatibilityChecker().check("mlx-community/Qwen3-4B-4bit", on: .iPhone8GB)
 print(report.status.label, "—", report.headline)
@@ -522,13 +524,13 @@ if let entry = report.suggestedEntry { print(entry.jsonText()) }   // the models
 ## Text Chat
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 // MLX small model — one-liner
-let reply = try await AuraLocal.chat("How much did I spend this week?")
+let reply = try await Tonamox.chat("How much did I spend this week?")
 
 // Reusable instance (loads model once — preferred for multiple calls)
-let llm = try await AuraLocal.text(.qwen3_1_7b) { progress in
+let llm = try await Tonamox.text(.qwen3_1_7b) { progress in
     print(progress) // "Downloading Qwen3 1.7B: 42%"
 }
 let summary = try await llm.chat("Summarize my expenses")
@@ -545,7 +547,7 @@ let answer = try await llm.chat(
 )
 
 // Repeatable output: temperature 0 is greedy on MLX and GGUF alike
-let extractor = try await AuraLocal.text(.qwen3_1_7b, temperature: 0)
+let extractor = try await Tonamox.text(.qwen3_1_7b, temperature: 0)
 ```
 
 `temperature` and `topP` (also on `ModelManager.shared.load`) hold for the instance's lifetime; `nil` keeps the
@@ -561,7 +563,7 @@ and [MLX KV window](docs/guide/memory.md#mlx-kv-window).
 GGUF models are downloaded automatically from HuggingFace on first use. Use `ModelManager` to track progress:
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 // Load via ModelManager — handles GGUF download + backend selection automatically
 let llm = try await ModelManager.shared.load(.llama3_1_8b_gguf)
@@ -633,14 +635,14 @@ entitlements; see [Large Models — GGUF](docs/guide/models.md#large-models--ggu
 ## Vision / Image Analysis
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 // One-liner receipt extraction
-let json = try await AuraLocal.extractDocument(receiptImage)
+let json = try await Tonamox.extractDocument(receiptImage)
 // → {"store":"OXXO","date":"2026-03-06","items":[...],"total":125.50,"currency":"MXN"}
 
 // Reusable instance
-let vlm = try await AuraLocal.vision(.qwen35_0_8b) { print($0) }
+let vlm = try await Tonamox.vision(.qwen35_0_8b) { print($0) }
 
 // Free-form image analysis
 let description = try await vlm.analyze("What items are on this receipt?", image: photo)
@@ -667,16 +669,16 @@ for try await token in vlm.streamVision("Describe this image", image: photo) {
 Specialized models optimized for receipts, invoices, and structured documents.
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 // FastVLM — outputs structured JSON
-let ocr = try await AuraLocal.specialized(.fastVLM_0_5b_fp16) { print($0) }
+let ocr = try await Tonamox.specialized(.fastVLM_0_5b_fp16) { print($0) }
 let json = try await ocr.extractDocument(receiptImage)
 
 // Granite Docling — outputs DocTags, converted to Markdown
-let docOCR = try await AuraLocal.specialized(.graniteDocling_258m)
+let docOCR = try await Tonamox.specialized(.graniteDocling_258m)
 let raw = try await docOCR.extractDocument(documentImage)
-let markdown = AuraLocal.parseDocTags(raw)
+let markdown = Tonamox.parseDocTags(raw)
 ```
 
 ### Specialized Models
@@ -692,7 +694,7 @@ let markdown = AuraLocal.parseDocTags(raw)
 ## Hardware Compatibility
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 // Check fit for the current device
 let result = HardwareAnalyzer.assess(.llama3_1_8b_gguf)
@@ -733,14 +735,14 @@ let results = HardwareAnalyzer.compatibleModels(profile: profile)
 
 ## Background Lifecycle (iOS)
 
-When an iOS app enters the background, AuraLocal cancels every running text generation (MLX, llama.cpp)
+When an iOS app enters the background, Tonamox cancels every running text generation (MLX, llama.cpp)
 and Core ML image generation, and refuses new ones until the app returns. The call throws
 `GenerationInterrupted` with the text produced so far. `BackgroundLifecycle` starts observing when a
 model loads; nothing to set up. With `aggressiveMemorySaving`, backgrounding also evicts every model
 except the most recently used.
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 do {
     reply = try await llm.chat(prompt)
@@ -764,7 +766,7 @@ Nothing is cancelled on macOS, where apps are not suspended. See the
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 struct ReceiptData: Codable {
     let store: String
@@ -783,7 +785,7 @@ struct ReceiptData: Codable {
 }
 
 func scanReceipt(_ image: PlatformImage) async throws -> ReceiptData {
-    let json = try await AuraLocal.extractDocument(image)
+    let json = try await Tonamox.extractDocument(image)
     return try JSONDecoder().decode(ReceiptData.self, from: Data(json.utf8))
 }
 ```
@@ -795,7 +797,7 @@ func scanReceipt(_ image: PlatformImage) async throws -> ReceiptData {
 `ConversationStore` provides a SQLite-backed store (no external dependencies) for persisting chat history. The LLM automatically loads a context window of the most recent turns that fit within the token budget.
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 let store = ConversationStore.shared
 
@@ -803,7 +805,7 @@ let store = ConversationStore.shared
 let conv = try await store.createConversation(model: .qwen3_1_7b, title: "Finance assistant")
 
 // Chat with automatic history — context window managed automatically
-let llm = try await AuraLocal.text(.qwen3_1_7b)
+let llm = try await Tonamox.text(.qwen3_1_7b)
 let reply  = try await llm.chat("What is 2+2?", in: conv.id)
 let reply2 = try await llm.chat("Why?", in: conv.id) // includes previous exchange
 
@@ -813,7 +815,7 @@ for try await token in llm.stream("Tell me more", in: conv.id) {
 }
 
 // One-liner (creates conversation automatically)
-let (greeting, convID) = try await AuraLocal.chat("Hello", model: .qwen3_1_7b)
+let (greeting, convID) = try await Tonamox.chat("Hello", model: .qwen3_1_7b)
 
 // List all conversations
 let conversations = try await store.allConversations()
@@ -833,7 +835,7 @@ try await llm.summarizeAndPrune(conversationID: conv.id)
 When a conversation exceeds the token budget, `summarizeAndPrune` uses the model itself to summarize older turns and replace them with a compact system-level summary — preserving semantic continuity without truncating abruptly.
 
 ```swift
-// AuraUI's TextChatTab calls this after every reply; with the AuraLocal API, call it yourself
+// TonamoxUI's TextChatTab calls this after every reply; with the Tonamox API, call it yourself
 // (a no-op below maxContextTokens)
 try await llm.summarizeAndPrune(
     conversationID: conv.id,
@@ -846,10 +848,10 @@ try await llm.summarizeAndPrune(
 
 ## Voice Interface
 
-`AuraVoice` provides a turn-based (half-duplex) voice pipeline using only Apple frameworks — no external dependencies, no network calls.
+`TonamoxVoice` provides a turn-based (half-duplex) voice pipeline using only Apple frameworks — no external dependencies, no network calls.
 
 ```
-Microphone → SFSpeechRecognizer (on-device) → AuraLocal.stream() → AVSpeechSynthesizer
+Microphone → SFSpeechRecognizer (on-device) → Tonamox.stream() → AVSpeechSynthesizer
 ```
 
 Sentences are streamed to TTS **while the LLM is still generating** — the assistant starts speaking after the first complete sentence, not after the full response.
@@ -859,7 +861,7 @@ Speech is recognized in one locale: `Config.locale`, else the device's first pre
 ### Drop-in button
 
 ```swift
-import AuraVoice
+import TonamoxVoice
 
 // Minimal — manages its own VoiceSession internally
 VoiceButton(llm: llm)
@@ -875,7 +877,7 @@ Text(session.response)    // live LLM response
 ### Full voice chat view
 
 ```swift
-import AuraVoice
+import TonamoxVoice
 
 // Complete UI: transcript bubble + response bubble + VoiceButton
 VoiceChatView(llm: llm)
@@ -887,7 +889,7 @@ VoiceChatView(llm: llm, conversationID: conv.id)
 ### Manual pipeline control
 
 ```swift
-import AuraVoice
+import TonamoxVoice
 
 let session = VoiceSession(llm: llm, conversationID: conv.id)
 
@@ -945,7 +947,7 @@ Add to your `Info.plist`:
 
 ## Document Library (RAG)
 
-`AuraDocs` provides a fully local Retrieval-Augmented Generation (RAG) pipeline. Index documents once, then ask questions in natural language. No API keys, no cloud services.
+`TonamoxDocs` provides a fully local Retrieval-Augmented Generation (RAG) pipeline. Index documents once, then ask questions in natural language. No API keys, no cloud services.
 
 ### Supported formats
 
@@ -976,16 +978,16 @@ automatically. See [Embedding providers](docs/guide/rag.md#embedding-providers).
 ### Quick start
 
 ```swift
-import AuraCore
-import AuraDocs
+import TonamoxCore
+import TonamoxDocs
 
 // 1. Configure once (e.g. in app startup)
-let llm      = try await AuraLocal.text(.qwen3_1_7b)
+let llm      = try await Tonamox.text(.qwen3_1_7b)
 let embedder = AutoEmbeddingProvider()
 
 let library = DocumentLibrary.shared
 await library.configure(embeddingProvider: embedder, llm: llm,
-                        visionLLM: try await AuraLocal.vision())   // needed to index images
+                        visionLLM: try await Tonamox.vision())   // needed to index images
 try await library.open()
 
 // 2. Index documents — progress delivered on @MainActor
@@ -1012,7 +1014,7 @@ for source in answer.sources {
 ### Document chat
 
 ```swift
-import AuraDocs
+import TonamoxDocs
 
 // DocumentChat keeps a message list and cites sources per message
 let chat = DocumentChat(library: library, llm: llm)
@@ -1057,7 +1059,7 @@ try await library.removeDocument(id: doc.id)
 Add `DocsTab` to any existing `TabView`:
 
 ```swift
-import AuraDocs
+import TonamoxDocs
 
 TabView {
     // ... existing tabs
@@ -1074,12 +1076,12 @@ first appearance instead.
 
 ## Prebuilt SwiftUI Interface
 
-`AuraUI` ships composable tab views — drop them into your **own** `TabView`. (There is no
+`TonamoxUI` ships composable tab views — drop them into your **own** `TabView`. (There is no
 prebuilt `ContentView`; the one in the Example app is demo code, not part of the library.)
 
 ```swift
 import SwiftUI
-import AuraUI
+import TonamoxUI
 
 @main
 struct MyApp: App {
@@ -1095,23 +1097,23 @@ struct MyApp: App {
 }
 ```
 
-For voice, add `AuraVoice` and place `VoiceChatView(llm:)` in a tab (it needs an `AuraLocal` instance).
+For voice, add `TonamoxVoice` and place `VoiceChatView(llm:)` in a tab (it needs an `Tonamox` instance).
 
 No tab downloads a model on its own. While the selected model is not on the device, `TextChatTab`, `VisionTab`,
-`OCRTab` and `DocsTab` show `ModelDownloadPlaceholder` (AuraCore): the model, what it is for, its size, the free
+`OCRTab` and `DocsTab` show `ModelDownloadPlaceholder` (TonamoxCore): the model, what it is for, its size, the free
 space and **Download**, then progress with Cancel, or the error with Retry. Pass `autoDownload: true` to any of them
 to download without asking, as before. Use the placeholder in your own screens the same way
 ([Download on demand](docs/api/core.md#download-on-demand)).
 
 | Tab | Module | Description |
 |-----|--------|-------------|
-| **Text** | `AuraUI` | Multi-conversation chat; model picker with downloaded models first, then MLX and GGUF sections |
-| **Vision** | `AuraUI` | Image analysis with standard and streaming modes |
-| **OCR** | `AuraUI` | Document and receipt extraction |
-| **Models** (`ModelSection`) | `AuraUI` | A `List` section, not a tab: download status, backend badge, fit badge per model |
-| **Hugging Face browser** | `AuraUI` | Views, not a tab: search, per-device verdicts, download, Downloads list and Try it ([AuraUI](docs/api/ui.md#hugging-face-browser)) |
-| **Voice** | `AuraVoice` | Turn-based voice chat; TTS voice picked per sentence |
-| **Docs** | `AuraDocs` | Document library and RAG chat |
+| **Text** | `TonamoxUI` | Multi-conversation chat; model picker with downloaded models first, then MLX and GGUF sections |
+| **Vision** | `TonamoxUI` | Image analysis with standard and streaming modes |
+| **OCR** | `TonamoxUI` | Document and receipt extraction |
+| **Models** (`ModelSection`) | `TonamoxUI` | A `List` section, not a tab: download status, backend badge, fit badge per model |
+| **Hugging Face browser** | `TonamoxUI` | Views, not a tab: search, per-device verdicts, download, Downloads list and Try it ([TonamoxUI](docs/api/ui.md#hugging-face-browser)) |
+| **Voice** | `TonamoxVoice` | Turn-based voice chat; TTS voice picked per sentence |
+| **Docs** | `TonamoxDocs` | Document library and RAG chat |
 
 `ModelSection` shows three badge types per model:
 - **MLX** (blue) — GPU inference via mlx-swift
@@ -1125,7 +1127,7 @@ to download without asking, as before. Use the placeholder in your own screens t
 `ModelManager` is the recommended way to load models. It prevents redundant downloads, shares instances across tabs, handles GGUF downloads transparently, and manages memory pressure automatically.
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 // Load from anywhere — returns cached instance if already loaded
 // For GGUF models, downloads the file from HuggingFace first
@@ -1156,7 +1158,7 @@ ModelManager.shared.evictAll()
 
 Downloads go to `ModelStorage.rootDirectory` — `<Application Support>/AuraLocal/Models`, excluded from iCloud and
 device backups — rather than Caches, which iOS empties when storage runs low. On iOS and in a sandboxed Mac app the
-folder is inside the app container; a non-sandboxed macOS process (the `aura` CLI, the AuraExample Mac app) uses
+folder is inside the app container; a non-sandboxed macOS process (the `tonamox` CLI, the TonamoxExample Mac app) uses
 `~/Library/Application Support/AuraLocal/Models`, shared between them. Models an earlier version downloaded into
 Caches still load from there; a sandboxed app moves them over on first use (rename only, never a copy or an
 overwrite), and a non-sandboxed Mac app can call `ModelStorage.migrateLegacyDownloads()`.
@@ -1175,7 +1177,7 @@ at its jetsam limit).
 On iOS, `ModelManager.load` judges a model against the app's memory limit (`HardwareProfile.memoryLimitBytes()`:
 available memory plus the app's footprint, capped at 74 % of RAM) and subtracts the estimated memory of the cached
 models from it. Least recently used models are evicted until the new one is no longer Too Large beside them; the
-load throws `AuraError.modelTooLarge` only when the model is Too Large on its own. See
+load throws `TonamoxError.modelTooLarge` only when the model is Too Large on its own. See
 [iOS](docs/guide/memory.md#ios).
 
 When the OS sends a memory warning (`DispatchSource.makeMemoryPressureSource` + `UIApplication.didReceiveMemoryWarningNotification`), all models except the most recently used are evicted immediately.
@@ -1204,12 +1206,12 @@ For GGUF models on macOS (models stored outside the sandbox):
 
 ## Concurrency Model
 
-AuraLocal is designed for Swift 6 strict concurrency:
+Tonamox is designed for Swift 6 strict concurrency:
 
 | Type | Isolation | Rationale |
 |------|-----------|-----------|
-| `AuraLocal` | `@MainActor` | Wraps MLX/llama.cpp callbacks that fire on main thread |
-| `AuraEngine` | `@MainActor` | Delegates to `InferenceBackend` protocol |
+| `Tonamox` | `@MainActor` | Wraps MLX/llama.cpp callbacks that fire on main thread |
+| `TonamoxEngine` | `@MainActor` | Delegates to `InferenceBackend` protocol |
 | `MLXBackend` | `@MainActor` | Owns MLX model container and GPU state |
 | `LlamaCppBackend` | `@MainActor` | Owns one GGUF turn engine (a llama.cpp context, or a `LlamaClient` for tool-call formats other than `<tool_call>` JSON); a turn that extends the last one reuses its KV cache, any other starts from an empty one |
 | `LayerStreamingBackend` | `@MainActor` | Same per-turn context, plus `MemoryBudgetManager` |
@@ -1229,15 +1231,15 @@ All streaming APIs use `AsyncThrowingStream` to bridge inference callbacks to Sw
 ## Architecture
 
 ```
-AuraCore
+TonamoxCore
 ├── InferenceBackend (protocol)
 │   ├── MLXBackend          →  MLXLLM / MLXVLM (Apple Silicon GPU, .mlx models)
 │   ├── LlamaCppBackend     →  LocalLLMClient → llama.cpp Metal (GGUF that fits in memory)
 │   └── LayerStreamingBackend → LocalLLMClient → mmap streaming (GGUF that does not fit)
 │
 ├── BackendRouter           →  selects backend by model.format + HardwareAnalyzer
-├── AuraEngine              →  thin delegator to InferenceBackend
-├── AuraLocal               →  public facade (.text / .vision / .specialized / .chat)
+├── TonamoxEngine              →  thin delegator to InferenceBackend
+├── Tonamox               →  public facade (.text / .vision / .specialized / .chat)
 │
 ├── HardwareAnalyzer        →  fit levels (excellent / good / marginal / streamingRequired / tooLarge)
 │                              GQA-aware KV cache estimates, streaming memory budget
@@ -1248,16 +1250,16 @@ AuraCore
 ├── GGUFModelDownloader     →  HuggingFace downloads with resume + @Published progress
 ├── Downloads/              →  ModelDownloads (resumable GGUF + MLX, ETag, HF token, free space) · DownloadRecords
 ├── Lifecycle/              →  GenerationInterrupted · DeviceConditions
-├── AuraSession             →  profile-driven turns; OutputSchema grammar (GGUF) + validated + repaired
+├── TonamoxSession             →  profile-driven turns; OutputSchema grammar (GGUF) + validated + repaired
 │
 ├── Hybrid/ + Remote/       →  HybridEscalator, EscalationRouter, providers, CostLedger
 ├── SystemTools/            →  Vision · NaturalLanguage · SoundAnalysis · Core ML · Create ML tools, SystemToolRegistry
 ├── ModelCompatibility/     →  ModelCompatibilityChecker, DevicePreset, CompatibilityReport
 │
 ├── ConversationStore       →  SQLite-backed chat history (actor)
-└── AuraLocal+History       →  context window · auto-title · summarize+prune
+└── Tonamox+History       →  context window · auto-title · summarize+prune
 
-AuraUI (optional) — composable views; you supply the TabView
+TonamoxUI (optional) — composable views; you supply the TabView
 ├── TextChatTab   →  TextChatViewModel  →  ConversationStore
 │                    Model picker: Downloaded, then MLX and GGUF sections
 ├── VisionTab     →  VisionViewModel
@@ -1266,14 +1268,14 @@ AuraUI (optional) — composable views; you supply the TabView
 └── HuggingFace/  →  HFModelSearchList · HFRepoDetailView · DownloadedModelsList
                      ModelDownloadCenter · HuggingFaceTokenSection  (docs/api/ui.md#hugging-face-browser)
 
-AuraVoice (optional)
+TonamoxVoice (optional)
 ├── VoiceSession          →  SFSpeechRecognizer (on-device STT)
-│                         →  AuraLocal.stream() + ConversationStore
+│                         →  Tonamox.stream() + ConversationStore
 │                         →  AVSpeechSynthesizer (on-device TTS)
 ├── VoiceButton           →  SwiftUI mic button with state animations
 └── VoiceChatView         →  Full voice chat UI  (VoiceChatView(llm:))
 
-AuraDocs (optional)
+TonamoxDocs (optional)
 ├── DocumentLibrary          →  add() · ask() · allDocuments() · refreshCorpus()
 ├── DocumentParserDispatcher →  PDF (PDFKit) · DOCX (ZIP+XML) · TXT · Image (VLM OCR)
 ├── DocumentChunker          →  sliding window · sentence boundaries · overlap
@@ -1282,24 +1284,24 @@ AuraDocs (optional)
 ├── DocumentChat             →  per-question Q&A · source citations · history in ConversationStore
 └── DocsTab                  →  SwiftUI tab · file picker · progress bar · chat sheet
 
-AuraImageGen (optional)
+TonamoxImageGen (optional)
 ├── CoreMLDiffusionEngine    →  Core ML Stable Diffusion on device (iOS + macOS): SD 2.1 base or an adopted model
 ├── CoreMLDiffusionInspector →  search Hugging Face, judge Core ML SD folders per device, pinned to a commit
 ├── ImagePlaygroundPolicy    →  egress-safe styles and options for Apple's Image Playground sheet
 └── MFluxEngine              →  FLUX + LoRA via the mflux subprocess (macOS)
 
 Sources/
-├── AuraCore/
+├── TonamoxCore/
 │   └── LlamaCpp/           (LlamaCppBackend, LayerStreamingBackend, MemoryBudgetManager,
 │                            GGUFModelDownloader, BackgroundLifecycle)
-├── AuraUI/
-├── AuraVoice/
-├── AuraDocs/
-├── AuraAgents/
-├── AuraAppleIntelligence/
-├── AuraImageGen/
-├── aura/                   (CLI)
-└── AuraExample/
+├── TonamoxUI/
+├── TonamoxVoice/
+├── TonamoxDocs/
+├── TonamoxAgents/
+├── TonamoxAppleIntelligence/
+├── TonamoxImageGen/
+├── tonamox/                   (CLI)
+└── TonamoxExample/
 
 Examples/
 └── ModelFinder/
@@ -1314,25 +1316,25 @@ Downloaded models live under ModelStorage.rootDirectory (<Application Support>/A
 
 ## License
 
-AuraLocal is dual-licensed: under the GNU Affero General Public License, or under a commercial license from the
+Tonamox is dual-licensed: under the GNU Affero General Public License, or under a commercial license from the
 copyright holder.
 
-**AGPL-3.0-or-later.** AuraLocal is free software: you can redistribute it and/or modify it under the terms of the
+**AGPL-3.0-or-later.** Tonamox is free software: you can redistribute it and/or modify it under the terms of the
 [GNU Affero General Public License](LICENSE) as published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 
 Copyright (C) 2026 iOSDevC
 
-AuraLocal is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+Tonamox is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
 warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more
 details.
 
-**Commercial license.** To use AuraLocal where the AGPL's terms don't fit, such as a closed-source app, an App
+**Commercial license.** To use Tonamox where the AGPL's terms don't fit, such as a closed-source app, an App
 Store release, or a network service whose source you don't publish, get a commercial license from the copyright
 holder: contact [iOSDevC](https://github.com/iOSDevC).
 
-- **What the AGPL means for your app:** an app or package that links AuraLocal and is distributed must be released
-  under AGPL-3.0-compatible terms, with its source available. If you modify AuraLocal and let people use it over a
+- **What the AGPL means for your app:** an app or package that links Tonamox and is distributed must be released
+  under AGPL-3.0-compatible terms, with its source available. If you modify Tonamox and let people use it over a
   network, you must offer them the source of your version too. The AGPL's conditions conflict with the App
   Store's terms.
 - **Earlier versions:** commits published before the license change (up to `1647874`, including the `v0.1.0` tag)
@@ -1341,5 +1343,5 @@ holder: contact [iOSDevC](https://github.com/iOSDevC).
   license possible.
 - **Dependencies** keep their own licenses (MIT, Apache-2.0, BSD); all are compatible with AGPL-3.0 and with the
   commercial license. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-- **Models** downloaded at run time are not part of AuraLocal and carry their own licenses; check each model
+- **Models** downloaded at run time are not part of Tonamox and carry their own licenses; check each model
   card before you use or redistribute one.

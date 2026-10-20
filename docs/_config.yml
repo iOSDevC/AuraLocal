@@ -1,6 +1,6 @@
-title: AuraLocal
-description: On-device LLM & VLM inference for iOS, macOS, and visionOS — MLX + llama.cpp/GGUF, local by default.
-baseurl: "/AuraLocal"
+title: TONAMOX
+description: Toolkit for local and remote LLM and VLM workflows on iOS, macOS, and visionOS — local by default.
+baseurl: "/Tonamox"
 url: "https://iosdevc.github.io"
 
 remote_theme: just-the-docs/just-the-docs@v0.10.1

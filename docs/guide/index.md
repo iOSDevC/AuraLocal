@@ -8,19 +8,19 @@ permalink: /guide/
 
 # Guide
 
-Step-by-step documentation for integrating AuraLocal into your app.
+Step-by-step documentation for integrating Tonamox into your app.
 
 ## On-device ML, not just LLMs
 
 [On-device ML tools]({{ '/guide/ml-tools' | relative_url }}) covers the Vision, NaturalLanguage, SoundAnalysis, Core ML and
-Create ML tools in `AuraCore`: what each one does, where it runs, Swift and `aura ml` examples, a
+Create ML tools in `TonamoxCore`: what each one does, where it runs, Swift and `tonamox ml` examples, a
 train → ship → classify walkthrough, and how to run your own Core ML model.
 
 ## Will this Hugging Face model run?
 
 [Finding compatible models]({{ '/guide/models' | relative_url }}#finding-compatible-models) checks any Hugging
-Face repo against the runtimes AuraLocal pins (mlx-swift-lm 3.31.3, llama.cpp b8851) and a device's memory
-budget without downloading the weights: from Swift (`ModelCompatibilityChecker`), the CLI (`aura models`) or
+Face repo against the runtimes Tonamox pins (mlx-swift-lm 3.31.3, llama.cpp b8851) and a device's memory
+budget without downloading the weights: from Swift (`ModelCompatibilityChecker`), the CLI (`tonamox models`) or
 the Model Finder example app.
 
 ## Images on device
@@ -44,7 +44,7 @@ templates without tool support) the decode stops as without tools
 
 [Downloading without loading]({{ '/guide/models' | relative_url }}#downloading-without-loading) covers
 `ModelDownloads`: resumable GGUF and MLX downloads, the Hugging Face token, the free-space check, and
-`DownloadRecords` for keeping downloads across launches. AuraUI's
+`DownloadRecords` for keeping downloads across launches. TonamoxUI's
 [Hugging Face browser]({{ '/api/ui' | relative_url }}#hugging-face-browser) puts search, per-device verdicts and
 downloads in your app.
 
@@ -57,16 +57,16 @@ When an iOS app backgrounds, its running generations stop and throw `GenerationI
 
 ## Sampling and tools
 
-`ModelManager.shared.load` and the `AuraLocal.text` / `.vision` / `.specialized` factories take `temperature:` and
+`ModelManager.shared.load` and the `Tonamox.text` / `.vision` / `.specialized` factories take `temperature:` and
 `topP:`, fixed for the instance's lifetime; temperature 0 is greedy on both backends
 ([Sampling]({{ '/guide/backends' | relative_url }}#sampling-temperature-and-top-p)). Tool calling needs a GGUF
-model or an MLX text model: with an MLX vision or document model, `load` and `AuraSession` throw
+model or an MLX text model: with an MLX vision or document model, `load` and `TonamoxSession` throw
 `ModelConfigurationError.toolsUnsupported(.mlx)` before loading anything.
 
 ## Constrained and structured output
 
 [Constrained Generation]({{ '/guide/backends' | relative_url }}#constrained-generation-gguf-only) restricts a GGUF
-reply to JSON or a GBNF grammar. `AuraSession` enforces a profile's `OutputSchema` by validation and repair and,
+reply to JSON or a GBNF grammar. `TonamoxSession` enforces a profile's `OutputSchema` by validation and repair and,
 on a GGUF model loaded in full (`LlamaCppBackend`) and without tools, also decodes under a grammar built from the
 schema ([Structured output]({{ '/api/core' | relative_url }}#structured-output)).
 
@@ -77,12 +77,12 @@ bring-your-own-key Anthropic or OpenAI model; GitHub Models was retired. `routeA
 once, redacted per `EscalationPolicy.piiRedaction` (cloud targets by default) and compressed; when it asks your
 `ConsentGate`, the gate sees that exact payload, and approval sends it unchanged
 ([Consent sees the exact payload]({{ '/guide/hybrid' | relative_url }}#consent-sees-the-exact-payload)).
-[`aura ask`]({{ '/guide/cli' | relative_url }}#ask-a-bigger-model-aura-ask) uses a local server unless you name a
+[`tonamox ask`]({{ '/guide/cli' | relative_url }}#ask-a-bigger-model-tonamox-ask) uses a local server unless you name a
 cloud provider or pass a `--base-url` (a public host there counts as cloud).
 
 ## Research: distributed inference over USB
 
 [Distributed Inference over USB (research)]({{ '/guide/distributed' | relative_url }}) records an evaluation of
 a Mac orchestrating USB-tethered iPhones for speculative decoding and embeddings: measured results, transport
-and iOS findings, and what AuraLocal would need. No mesh API ships; the only piece that did is the
+and iOS findings, and what Tonamox would need. No mesh API ships; the only piece that did is the
 multilingual-e5-small embedding provider.

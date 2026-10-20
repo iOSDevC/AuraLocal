@@ -3,13 +3,13 @@ layout: docs
 title: Document RAG
 parent: Guide
 nav_order: 7
-description: "Index PDFs, Word docs, and images locally with AuraDocs and ask questions in natural language."
+description: "Index PDFs, Word docs, and images locally with TonamoxDocs and ask questions in natural language."
 ---
 
 # Document RAG
 {: .no_toc }
 
-`AuraDocs` provides a fully local Retrieval-Augmented Generation pipeline. Index documents once — PDF, DOCX, images — and ask questions in natural language. No API keys, no cloud services, no external vector databases.
+`TonamoxDocs` provides a fully local Retrieval-Augmented Generation pipeline. Index documents once — PDF, DOCX, images — and ask questions in natural language. No API keys, no cloud services, no external vector databases.
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -36,12 +36,12 @@ Two-stage hybrid search: FTS5 for fast keyword recall, cosine similarity for sem
 ## Quick Start
 
 ```swift
-import AuraCore
-import AuraDocs
+import TonamoxCore
+import TonamoxDocs
 
 // 1. Setup
-let llm      = try await AuraLocal.text(.qwen3_1_7b)
-let vlm      = try await AuraLocal.vision(.qwen35_0_8b)  // optional: pass to enable image OCR
+let llm      = try await Tonamox.text(.qwen3_1_7b)
+let vlm      = try await Tonamox.vision(.qwen35_0_8b)  // optional: pass to enable image OCR
 let embedder = AutoEmbeddingProvider()
 let library  = DocumentLibrary.shared
 
@@ -93,8 +93,8 @@ for source in answer.sources {
 
 ```swift
 import Foundation
-import AuraCore
-import AuraDocs
+import TonamoxCore
+import TonamoxDocs
 
 let bundleURL = AutoEmbeddingProvider.defaultModelBundleURL   // or wherever you installed it
 let embedder = AutoEmbeddingProvider(embeddingModelAt: bundleURL)
@@ -196,14 +196,14 @@ bundle unless Core ML matches sentence-transformers (cosine ≥ 0.999 on `CPU_ON
 (`Application Support/AuraLocal/embeddings/multilingual-e5-small`), or with **Import embedding
 model…** in `DocsTab`.
 
-### Using the model without AuraDocs
+### Using the model without TonamoxDocs
 
-`CoreMLTextEmbeddingTool` (in `AuraCore`, listed with the other [on-device ML tools]({{ '/guide/ml-tools' | relative_url }})) is the tool underneath, usable for semantic search,
+`CoreMLTextEmbeddingTool` (in `TonamoxCore`, listed with the other [on-device ML tools]({{ '/guide/ml-tools' | relative_url }})) is the tool underneath, usable for semantic search,
 deduplication or clustering:
 
 ```swift
 import Foundation
-import AuraCore
+import TonamoxCore
 
 let e5 = CoreMLTextEmbeddingTool(bundleAt: bundleURL)   // id "coreml.text-embedding.multilingual-e5-small"
 guard await e5.availability().isAvailable else { return }
@@ -268,7 +268,7 @@ that is already set.
 ## Document Chat
 
 ```swift
-import AuraDocs
+import TonamoxDocs
 
 let chat = DocumentChat(library: library, llm: llm)
 
@@ -316,7 +316,7 @@ try await library.removeDocument(id: doc.id)
 ## Drop-in Tab
 
 ```swift
-import AuraDocs
+import TonamoxDocs
 
 TabView {
     DocsTab()

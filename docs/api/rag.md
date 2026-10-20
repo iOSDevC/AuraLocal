@@ -1,15 +1,15 @@
 ---
 layout: docs
-title: AuraDocs (RAG)
+title: TonamoxDocs (RAG)
 parent: API Reference
 nav_order: 4
-description: "AuraDocs API reference — DocumentLibrary, DocumentChat, DocsTab for on-device RAG."
+description: "TonamoxDocs API reference — DocumentLibrary, DocumentChat, DocsTab for on-device RAG."
 ---
 
-# AuraDocs — Document RAG
+# TonamoxDocs — Document RAG
 {: .no_toc }
 
-Fully local Retrieval-Augmented Generation pipeline. Index documents once, ask questions in natural language. Adds no packages beyond AuraCore.
+Fully local Retrieval-Augmented Generation pipeline. Index documents once, ask questions in natural language. Adds no packages beyond TonamoxCore.
 
 ```
 query → embed (TF-IDF, or multilingual-e5-small) → FTS5 top-20 → cosine re-rank top-5 → LLM
@@ -51,7 +51,7 @@ static let shared: DocumentLibrary
 
 ```swift
 // Actor-isolated, so call with await. visionLLM is needed to index image files.
-func configure(embeddingProvider: any EmbeddingProvider, llm: AuraLocal, visionLLM: AuraLocal? = nil)
+func configure(embeddingProvider: any EmbeddingProvider, llm: Tonamox, visionLLM: Tonamox? = nil)
 // open() also removes duplicate entries earlier versions stored for one file (keeping the newest with chunks),
 // and replaces their full-text triggers, rebuilding the search index once
 func open() async throws
@@ -141,7 +141,7 @@ Observable Q&A session with source citations.
 @MainActor
 public final class DocumentChat: ObservableObject
 
-init(library: DocumentLibrary, llm: AuraLocal, store: ConversationStore = .shared)
+init(library: DocumentLibrary, llm: Tonamox, store: ConversationStore = .shared)
 ```
 
 ```swift
@@ -185,7 +185,7 @@ Hashed TF-IDF: offline, nothing to download. IDF weights live in memory and star
 public actor TFIDFEmbeddingProvider: EmbeddingProvider
 init()
 static let vocabSize: Int                  // 4096, also `dimensions`
-static let vectorSpaceIdentifier: String   // "aura.tfidf-hash/4096", also `identifier`
+static let vectorSpaceIdentifier: String   // "tonamox.tfidf-hash/4096", also `identifier`
 func updateCorpus(texts: [String])         // IDF weights; embed() weighs unseen terms 1.0
 ```
 
@@ -212,7 +212,7 @@ A Core ML embedding bundle (multilingual-e5-small) with no fallback; `embedQuery
 ```swift
 public struct CoreMLEmbeddingProvider: EmbeddingProvider
 init(bundleAt url: URL, computeUnits: MLComputeUnits = .cpuAndNeuralEngine, compiledModelsDirectory: URL? = nil) throws
-let tool: CoreMLTextEmbeddingTool       // AuraCore
+let tool: CoreMLTextEmbeddingTool       // TonamoxCore
 let dimensions: Int
 let identifier: String                  // "model_id@revision"
 var modelName: String
@@ -223,7 +223,7 @@ func truncatedInputCount() async -> Int
 
 The init throws when the bundle is missing or invalid; the model itself loads on `warmUp()` or the
 first call. The underlying tool is documented in
-[AuraCore: Text embeddings]({{ '/api/core' | relative_url }}#text-embeddings-core-ml).
+[TonamoxCore: Text embeddings]({{ '/api/core' | relative_url }}#text-embeddings-core-ml).
 
 ### Index identity
 
@@ -240,8 +240,8 @@ func indexNeedsReembedding() async throws -> Bool
 func reembedAll(onProgress: @escaping @MainActor (String) -> Void = { _ in }) async throws
 // progress: "Re-embedding 400 chunks…", then "Re-embedding 50/400 chunks: 12%" per batch of 50
 @discardableResult
-func configureIfNeeded(embeddingProvider: any EmbeddingProvider, llm: AuraLocal,
-                       visionLLM: AuraLocal? = nil) -> Bool   // keeps a provider set earlier
+func configureIfNeeded(embeddingProvider: any EmbeddingProvider, llm: Tonamox,
+                       visionLLM: Tonamox? = nil) -> Bool   // keeps a provider set earlier
 ```
 
 ---
@@ -262,7 +262,7 @@ there), and TF-IDF otherwise. When the provider changed since the index was buil
 index before it becomes ready.
 
 ```swift
-import AuraDocs
+import TonamoxDocs
 
 TabView {
     DocsTab()                    // asks before downloading its models

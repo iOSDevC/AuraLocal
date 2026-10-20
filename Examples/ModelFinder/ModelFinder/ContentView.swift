@@ -1,12 +1,12 @@
 import SwiftUI
-import AuraCore
-import AuraUI
+import TonamoxCore
+import TonamoxUI
 
 enum AppTab: Hashable {
     case search, downloads, settings
 }
 
-/// A thin host for AuraUI's Hugging Face browser: search, downloads and the token.
+/// A thin host for TonamoxUI's Hugging Face browser: search, downloads and the token.
 struct ContentView: View {
     @State private var selectedTab = AppTab.search
 

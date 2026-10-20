@@ -3,7 +3,7 @@ layout: docs
 title: Memory Management
 parent: Guide
 nav_order: 4
-description: "How AuraLocal manages RAM on iOS and macOS — LRU cache, memory pressure, OOM prevention."
+description: "How Tonamox manages RAM on iOS and macOS — LRU cache, memory pressure, OOM prevention."
 ---
 
 # Memory Management
@@ -19,9 +19,9 @@ description: "How AuraLocal manages RAM on iOS and macOS — LRU cache, memory p
 
 ## Overview
 
-On-device LLMs can consume significant RAM. AuraLocal has multiple layers of protection against out-of-memory crashes (jetsam on iOS):
+On-device LLMs can consume significant RAM. Tonamox has multiple layers of protection against out-of-memory crashes (jetsam on iOS):
 
-1. **`HardwareAnalyzer`** — flags models that won't fit (pure analysis). Enforcement lives in `ModelManager.load`, which refuses a `.tooLarge` model up front by throwing `AuraError.modelTooLarge` **before** downloading it or risking a jetsam kill mid-load.
+1. **`HardwareAnalyzer`** — flags models that won't fit (pure analysis). Enforcement lives in `ModelManager.load`, which refuses a `.tooLarge` model up front by throwing `TonamoxError.modelTooLarge` **before** downloading it or risking a jetsam kill mid-load.
 2. **`ModelManager` LRU cache** — evicts the least-recently-used model when RAM is needed
 3. **`MemoryBudgetManager`** (layer-streaming backend only) — checks available memory every 32 tokens during generation and stops early if RAM becomes critical. When the OS reports *unknown* — which on iOS is exactly what happens once the process is at or over its jetsam limit — this is treated as **pressure**, never as "plenty free". Full-load llama.cpp and MLX do not check memory mid-generation.
 4. **`BackgroundLifecycle`** — when an iOS app enters the background, cancels every running local generation (text and Core ML images) and refuses new ones until it returns. Installed when a model loads. See [Background Lifecycle](#background-lifecycle-ios).
@@ -63,7 +63,7 @@ ModelManager.shared.evictAll()
 ## Per-Generation Budget (MemoryBudgetManager)
 
 During **layer-streaming** inference (`LayerStreamingBackend` only; full-load llama.cpp and MLX do not check), `MemoryBudgetManager` monitors RAM every 32 tokens. It is
-**internal** to AuraCore — there is no public singleton to call and no `availableMemoryGB`
+**internal** to TonamoxCore — there is no public singleton to call and no `availableMemoryGB`
 property on it. To read available RAM from your own code, use the public `HardwareProfile`:
 
 ```swift
@@ -99,7 +99,7 @@ the limit minus `phys_footprint`, so the sum is the limit itself. The cap is the
 reported 8142 MiB available.
 
 - `HardwareProfile.current().availableMemoryGB` carries this figure on iOS, so `DevicePreset.thisDevice()`
-  (the Model Finder, `aura models check`), `HardwareAnalyzer.assess` and the refusal in
+  (the Model Finder, `tonamox models check`), `HardwareAnalyzer.assess` and the refusal in
   `ModelManager.load` agree, and a verdict does not shrink while a model is loaded.
 - Because the limit does not shrink, `ModelManager.load` takes the estimated memory of the models it keeps
   cached off it: when the new model would be Too Large beside them, the least recently used are evicted
@@ -147,7 +147,7 @@ On the running Mac, `HardwareProfile.current()` reports the memory the kernel ca
 inactive + purgeable pages), not the Metal budget. `HardwareAnalyzer.assess`, `BackendRouter` and the
 refusal in `ModelManager.load` therefore judge a model against what is free at that moment, and can rate it
 lower, or stream it, while other apps hold memory. `DevicePreset.thisDevice()` (the Model Finder,
-`aura models check`) uses Metal's `recommendedMaxWorkingSetSize` instead, so on a Mac the two verdicts can
+`tonamox models check`) uses Metal's `recommendedMaxWorkingSetSize` instead, so on a Mac the two verdicts can
 differ. On iOS both use the app's memory limit.
 
 The context window is derived per model by `HardwareAnalyzer.recommendedContextWindow(for:)` from its
@@ -159,7 +159,7 @@ left after the weights.
 
 MLX uses the same window as its KV cache size (`maxKVSize`), fixed when the backend is created. Past it,
 MLX keeps the first 4 tokens and overwrites the oldest of the rest without an error; after such a
-generation `AuraLocal.lastContextOverflow` says how many tokens no longer fit. Entries without KV metadata
+generation `Tonamox.lastContextOverflow` says how many tokens no longer fit. Entries without KV metadata
 (`kvHeads == 0`) get the fallback window: 8192 or 4096 on a Mac, 2048 or 1024 on iOS.
 Architectures that build their own caches, such as Qwen 3.5 text models, Gemma 3 and 4, and LFM2, ignore
 the window: their cache still grows with the conversation, and `lastContextOverflow` stays `nil`.
@@ -173,7 +173,7 @@ use until `unload()` or an eviction.
 
 When the app enters the background, `BackgroundLifecycle.shared`:
 
-- cancels every generation running through `AuraLocal` (MLX, llama.cpp, layer streaming) or
+- cancels every generation running through `Tonamox` (MLX, llama.cpp, layer streaming) or
   `CoreMLDiffusionEngine`. Each call throws `GenerationInterrupted` with `reason == .appBackgrounded`;
   `partialText` holds the text produced so far (a stream has already yielded it, then finishes with the error);
 - sets `isPaused`. Until the app returns to the foreground, new generations throw the same error without starting;
@@ -233,16 +233,16 @@ let images = CoreMLDiffusionEngine(deviceGuard: DeviceConditions())
 ```
 
 The battery is read only when your app has turned on `UIDevice.current.isBatteryMonitoringEnabled`. That
-switch is process-wide, so AuraLocal never turns it on; without it, or on a Mac, the battery thresholds are
+switch is process-wide, so Tonamox never turns it on; without it, or on a Mac, the battery thresholds are
 ignored. Image generation reads the battery once when the run starts and the thermal state and Low Power
-Mode at every check. `deviceGuard` is set per `AuraLocal` instance, and instances from `ModelManager` are
+Mode at every check. `deviceGuard` is set per `Tonamox` instance, and instances from `ModelManager` are
 shared.
 
 ---
 
 ## Entitlement
 
-Two entitlements matter, and AuraLocal needs **both**:
+Two entitlements matter, and Tonamox needs **both**:
 
 - **Increased Memory Limit** — raises the resident (physical RAM) limit before jetsam kills you.
 - **Extended Virtual Addressing** — raises the *address-space* limit. llama.cpp loads GGUF weights
@@ -250,7 +250,7 @@ Two entitlements matter, and AuraLocal needs **both**:
   Without this, iOS caps the address space and **terminates the app** when a large mapping hits it,
   so mmap buys much less than it should.
 
-**Always add both for apps using AuraLocal:**
+**Always add both for apps using Tonamox:**
 
 ```xml
 <key>com.apple.developer.kernel.increased-memory-limit</key>

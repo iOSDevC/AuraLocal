@@ -1,12 +1,12 @@
 ---
 layout: docs
-title: AuraCore
+title: TonamoxCore
 parent: API Reference
 nav_order: 1
-description: "AuraCore API reference — AuraLocal, ModelManager, ConversationStore, HardwareAnalyzer."
+description: "TonamoxCore API reference — Tonamox, ModelManager, ConversationStore, HardwareAnalyzer."
 ---
 
-# AuraCore
+# TonamoxCore
 {: .no_toc }
 
 ## Table of contents
@@ -17,7 +17,7 @@ description: "AuraCore API reference — AuraLocal, ModelManager, ConversationSt
 
 ---
 
-## AuraLocal
+## Tonamox
 
 The main entry point. All methods are `@MainActor`.
 
@@ -30,7 +30,7 @@ static func text(
     temperature: Float? = nil,            // nil: backend default; 0 is greedy
     topP: Float? = nil,                   // nil: backend default; 0 < topP <= 1
     onProgress: @escaping @MainActor (String) -> Void = { _ in }
-) async throws -> AuraLocal
+) async throws -> Tonamox
 
 // Load a vision model
 static func vision(
@@ -38,7 +38,7 @@ static func vision(
     temperature: Float? = nil,
     topP: Float? = nil,
     onProgress: @escaping @MainActor (String) -> Void = { _ in }
-) async throws -> AuraLocal
+) async throws -> Tonamox
 
 // Load an OCR/document-specialized model
 static func specialized(
@@ -46,7 +46,7 @@ static func specialized(
     temperature: Float? = nil,
     topP: Float? = nil,
     onProgress: @escaping @MainActor (String) -> Void = { _ in }
-) async throws -> AuraLocal
+) async throws -> Tonamox
 ```
 
 `temperature` and `topP` hold for the instance's lifetime and behave as in
@@ -119,7 +119,7 @@ its task. These writes land after the loop has ended, so `chat(_:in:)` and `stre
 for the previous `stream(_:in:)` to finish, a stopped one included, before they store their prompt. Streams consumed
 outside history (`stream`, `streamVision`) store nothing and cancel their decode the same way.
 
-On a GGUF instance with tools (`ModelManager.load(_:tools:)`, an `AuraProfile` with tools) whose call format runs on
+On a GGUF instance with tools (`ModelManager.load(_:tools:)`, an `TonamoxProfile` with tools) whose call format runs on
 LocalLLMClient's `LlamaClient` (for example Llama 3.1's or Mistral's), stopping cuts the reply and, in history, stores
 it at once, but llama.cpp keeps decoding until the end of generation or a full context window, and the next turn on
 that instance waits for it. With `<tool_call>` JSON templates (Qwen2.5's, and templates without tool support) the
@@ -240,13 +240,13 @@ print(llm.lastToolTurn?.rounds ?? 0)
 - Output reaches the model as JSON with sorted keys and unescaped slashes. A value JSON cannot hold (a `Date`, a
   custom type, NaN) falls back to `key: value` pairs sorted by key.
 - `ModelManager` never caches an instance with tools, so these settings belong to that instance alone. In a session,
-  `AuraProfile.toolLoop`, `AuraSession.onToolEvent` and `AuraSession.lastToolTurn` do the same (see
-  [AuraSession](#aurasession)).
+  `TonamoxProfile.toolLoop`, `TonamoxSession.onToolEvent` and `TonamoxSession.lastToolTurn` do the same (see
+  [TonamoxSession](#aurasession)).
 
 {: .warning }
 > Tools on an MLX vision or document model, or on any MLX model in the iOS Simulator, throw
 > `ModelConfigurationError.toolsUnsupported(.mlx)`. On GGUF, models asked to write
-> calls as `<tool_call>` JSON (Qwen2.5's template, and any template without tool support) run on AuraLocal's own
+> calls as `<tool_call>` JSON (Qwen2.5's template, and any template without tool support) run on Tonamox's own
 > parser: every call in a reply runs, and a round's reply joins the conversation as the model wrote it. On a template
 > that renders tool turns natively (Qwen2.5's) the next reply then decodes only what the round added while another
 > round may run, and the reply after the last allowed round prefills the whole conversation; on a template without
@@ -315,8 +315,8 @@ if let stats = llm.lastGenerationStats {
 ```swift
 public struct GenerationStats: Sendable, Hashable {
     public enum Provenance: String, Sendable, Hashable, CaseIterable {
-        case runtime    // exact token counts (MLX); prefill and decode timed by AuraLocal
-        case measured   // AuraLocal's clock around the stream; output counted per piece; prompt estimated
+        case runtime    // exact token counts (MLX); prefill and decode timed by Tonamox
+        case measured   // Tonamox's clock around the stream; output counted per piece; prompt estimated
         case estimated  // counts from text length (UTF-8 bytes ÷ 4)
         var label: String
     }
@@ -335,10 +335,10 @@ public struct GenerationStats: Sendable, Hashable {
 
 | Backend | `source` | Prompt tokens | Output tokens | Durations |
 |---|---|---|---|---|
-| `MLXBackend` | `.runtime` | exact, the whole prompt | exact | AuraLocal's clock around mlx-swift-lm's token iterator. On a prompt-cache hit `promptTime` covers only the tokens prefilled; a tool turn sums prefill and decode over its replies and counts the last reply's prompt |
-| `LlamaCppBackend`, no tools; constrained calls | `.measured` | estimated from the text prefilled: the rendered prompt, or only its new part when the KV cache was reused | one per streamed piece (one per sampled token in LocalLLMClient 0.5.0) | AuraLocal's clock |
-| `LlamaCppBackend` / `LayerStreamingBackend` with tools | `.estimated` | estimated from the text the last round prefilled, as above | estimated | AuraLocal's clock |
-| `LayerStreamingBackend`, no tools | `.measured` | estimated from the text prefilled, as above | one per streamed piece | AuraLocal's clock |
+| `MLXBackend` | `.runtime` | exact, the whole prompt | exact | Tonamox's clock around mlx-swift-lm's token iterator. On a prompt-cache hit `promptTime` covers only the tokens prefilled; a tool turn sums prefill and decode over its replies and counts the last reply's prompt |
+| `LlamaCppBackend`, no tools; constrained calls | `.measured` | estimated from the text prefilled: the rendered prompt, or only its new part when the KV cache was reused | one per streamed piece (one per sampled token in LocalLLMClient 0.5.0) | Tonamox's clock |
+| `LlamaCppBackend` / `LayerStreamingBackend` with tools | `.estimated` | estimated from the text the last round prefilled, as above | estimated | Tonamox's clock |
+| `LayerStreamingBackend`, no tools | `.measured` | estimated from the text prefilled, as above | one per streamed piece | Tonamox's clock |
 | Remote (`HybridEscalator`) | — | — | — | no stats; provider-reported usage is in `HybridEscalator.Result.usage` |
 
 LocalLLMClient 0.5.0 exposes no tokenizer or prompt count, so llama.cpp prompt counts stay estimates. A constrained
@@ -348,7 +348,7 @@ protocol-extension default of `nil`. It also requires `generate(prompt:systemPro
 with no default, so a conformer written before constrained generation must add it; throwing
 `GenerationConstraintError.unsupportedBackend` is enough. No public API accepts a custom backend.
 
-Loaded state is queried on `ModelManager`, not on `AuraLocal`:
+Loaded state is queried on `ModelManager`, not on `Tonamox`:
 
 ```swift
 // Whether a model's weights are currently held in memory.
@@ -359,7 +359,7 @@ ModelManager.shared.isLoaded(_ model: Model) -> Bool
 
 ## ModelManager
 
-Shared singleton for loading and caching models. Preferred over direct `AuraLocal` factory calls — prevents redundant downloads and handles memory pressure.
+Shared singleton for loading and caching models. Preferred over direct `Tonamox` factory calls — prevents redundant downloads and handles memory pressure.
 Guide: [Memory Management]({{ '/guide/memory' | relative_url }}).
 
 ```swift
@@ -378,7 +378,7 @@ func load(
     temperature: Float? = nil,            // nil: backend default; 0 is greedy
     topP: Float? = nil,                   // nil: backend default; 0 < topP <= 1
     onProgress: (@MainActor (String) -> Void)? = nil
-) async throws -> AuraLocal
+) async throws -> Tonamox
 
 public enum ModelConfigurationError: LocalizedError, Equatable, Sendable {
     case toolsUnsupported(BackendKind)    // tools with an MLX vision or document model
@@ -393,7 +393,7 @@ the context is created. `nil` keeps the backend default (GGUF 0.7 / 0.95; MLX 0.
 0 for OCR, top-p off). Each model and setting is its own cached instance, a separate load of the model; see
 [Sampling]({{ '/guide/backends' | relative_url }}#sampling-temperature-and-top-p).
 
-Before downloading, `load` throws `AuraError.modelTooLarge` when `HardwareAnalyzer` rates the model
+Before downloading, `load` throws `TonamoxError.modelTooLarge` when `HardwareAnalyzer` rates the model
 `.tooLarge` on its own. It keeps at most `memoryBudget` instances loaded (a model at two settings counts twice)
 and evicts the least recently used to make room. On iOS, where `HardwareProfile.current()` reports the app's
 memory limit, it also evicts least-recently-used models until the new one is no longer `.tooLarge` beside the
@@ -453,7 +453,7 @@ public enum BackendKind: String, Sendable {
 func evict(_ model: Model)               // every sampling setting the model is loaded with
 func evictAll()
 func evictAllButMostRecent()             // also runs on memory pressure or a memory warning
-func release(_ instance: AuraLocal)      // unloads one instance; drops the cache entry only if it is the shared one
+func release(_ instance: Tonamox)      // unloads one instance; drops the cache entry only if it is the shared one
 private(set) var memoryBudget: Int       // max instances kept loaded (1–4; one per model and sampling setting),
                                          // sized once from available memory
 ```
@@ -555,26 +555,26 @@ public struct Turn: Identifiable, Codable, Sendable, Equatable {
 
 ---
 
-## AuraSession
+## TonamoxSession
 
-A conversation that can switch `AuraProfile`s mid-session; the engine is rebuilt for the new
-profile. `AuraSession` keeps no history: each `stream` call is a single turn with no earlier
+A conversation that can switch `TonamoxProfile`s mid-session; the engine is rebuilt for the new
+profile. `TonamoxSession` keeps no history: each `stream` call is a single turn with no earlier
 messages. `conversationID` stays the same across switches, as a key for you to store turns under
 (for example in `ConversationStore`).
 
 ```swift
 @MainActor
-public final class AuraSession
+public final class TonamoxSession
 init(conversationID: UUID = UUID(),
-     profile: AuraProfile,
-     makeEngine: @escaping @MainActor (AuraProfile) async throws -> any AuraProfileEngine = AuraSession.liveEngine) async throws
+     profile: TonamoxProfile,
+     makeEngine: @escaping @MainActor (TonamoxProfile) async throws -> any TonamoxProfileEngine = TonamoxSession.liveEngine) async throws
 
 let conversationID: UUID
-private(set) var profile: AuraProfile
+private(set) var profile: TonamoxProfile
 var maxRepairAttempts: Int = 2     // re-prompts after a reply that breaks profile.outputSchema
 var usesSchemaGrammar: Bool = true // GGUF in full, no tools: decode under a grammar built from outputSchema
 
-func switchProfile(to newProfile: AuraProfile) async throws
+func switchProfile(to newProfile: TonamoxProfile) async throws
 func stream(_ prompt: String, maxTokens: Int? = nil) -> AsyncThrowingStream<String, Error>
 func cancel()
 var onToolEvent: (@MainActor (ToolEvent) -> Void)?    // handed to the engine when a profile with tools streams
@@ -582,7 +582,7 @@ private(set) var lastToolTurn: ToolTurnSummary?       // the last generation's; 
 ```
 
 `stream` sends `profile.instructions` as the system prompt and defaults `maxTokens` to
-`profile.sampling.maxTokens`. The default `makeEngine`, `AuraSession.liveEngine`, loads the model through
+`profile.sampling.maxTokens`. The default `makeEngine`, `TonamoxSession.liveEngine`, loads the model through
 `ModelManager` with the profile's tools and `sampling.temperature` and `sampling.topP`. `init` and
 `switchProfile` throw `ModelConfigurationError` for tools on an MLX vision or document model (or any MLX model in
 the iOS Simulator) or an out-of-range temperature or top-p before building or tearing down an engine, whatever
@@ -590,16 +590,16 @@ the iOS Simulator) or an out-of-range temperature or top-p before building or te
 `stream` or a `switchProfile` cancels the previous one and waits for it to stop, also after `cancel()`, which returns without
 waiting. A `stream` or `switchProfile` called while a switch is rebuilding the engine waits for it,
 so that stream runs on the new profile. After a switch fails to build its engine, `stream` throws
-`AuraError.modelNotLoaded` until a later `switchProfile` succeeds.
+`TonamoxError.modelNotLoaded` until a later `switchProfile` succeeds.
 
 With tools, each stream gives the engine `profile.toolLoop` and `onToolEvent` (see
 [Tool calling](#tool-calling-gguf-and-mlx)); a `switchProfile` to a profile that differs only in `toolLoop` applies it
 without rebuilding the engine.
 
-### AuraProfile
+### TonamoxProfile
 
 ```swift
-public struct AuraProfile: Sendable, Identifiable, Equatable {
+public struct TonamoxProfile: Sendable, Identifiable, Equatable {
     let id: String
     var displayName: String
     var instructions: String            // the system prompt
@@ -616,14 +616,14 @@ public enum OutputSchema: Sendable, Equatable, Codable {
 }
 ```
 
-`AuraProfileCatalog.chat(model:)`, `.agent(model:tools:)` and `.securityReview(model:)` build the
+`TonamoxProfileCatalog.chat(model:)`, `.agent(model:tools:)` and `.securityReview(model:)` build the
 common profiles.
 
 ### Structured output
 
-With `outputSchema` set, `AuraSession` enforces the schema by **validation and repair** on every
+With `outputSchema` set, `TonamoxSession` enforces the schema by **validation and repair** on every
 backend. On a GGUF model loaded in full (`LlamaCppBackend`), and for a profile without tools, it also
-**constrains decoding** with a GBNF grammar that AuraLocal builds from the compiled schema (see
+**constrains decoding** with a GBNF grammar that Tonamox builds from the compiled schema (see
 [Schema grammars](#schema-grammars) below). Elsewhere the model can write anything, and the session
 checks what comes back.
 
@@ -643,7 +643,7 @@ checks what comes back.
 Without a schema, `stream` yields deltas as they are generated.
 
 ```swift
-let profile = AuraProfile(
+let profile = TonamoxProfile(
     id: "extract", displayName: "Extract",
     instructions: "Extract the person mentioned in the text.",
     model: .qwen3_1_7b,
@@ -654,13 +654,13 @@ let profile = AuraProfile(
          "required": ["name", "age"], "additionalProperties": false}
         """#))
 
-let session = try await AuraSession(profile: profile)
+let session = try await TonamoxSession(profile: profile)
 for try await json in session.stream("Ana turned 30 last week.") {
     print(json)   // e.g. {"name": "Ana", "age": 30}
 }
 ```
 
-`AuraLocal.chat` and `AuraLocal.stream` do not read profiles. To check their output, use the
+`Tonamox.chat` and `Tonamox.stream` do not read profiles. To check their output, use the
 validator directly:
 
 ```swift
@@ -704,7 +704,7 @@ Candidates, in order: the whole reply; then, with reasoning removed (`<think>…
 leading block closed by a lone `</think>`, an unclosed `<think>` to the end), the whole reply again,
 each ```` ```json ```` (or unlabelled) fenced block, and each top-level balanced `{…}` or `[…]`.
 Brackets inside strings are skipped, and values nested in one that parsed are not candidates.
-`extractJSON` returns the first candidate that parses. `conformingJSON` and `AuraSession` take the
+`extractJSON` returns the first candidate that parses. `conformingJSON` and `TonamoxSession` take the
 first that conforms and, when none does, report the violations of the first that parsed, so a
 citation such as `[1]` or a draft inside a reasoning block does not hide the answer.
 
@@ -717,7 +717,7 @@ conforming parser. Nesting deeper than 512 levels is rejected. Numbers compare a
 
 For a profile with an `outputSchema` and no tools, every generation, repairs included, runs under the
 schema's grammar on the dedicated client described in [Constrained Generation](#constrained-generation).
-The grammar applies when the session's engine is an `AuraLocal` (the default `liveEngine` returns one);
+The grammar applies when the session's engine is an `Tonamox` (the default `liveEngine` returns one);
 an engine of your own keeps validation only. It does not apply, and the session validates and repairs
 only, when:
 
@@ -849,7 +849,7 @@ public enum ModelFitLevel: Comparable, Sendable {
 
 ## ModelCompatibilityChecker
 
-Answers whether AuraLocal's pinned runtimes (`PinnedRuntimes.mlxSwiftLMVersion` and
+Answers whether Tonamox's pinned runtimes (`PinnedRuntimes.mlxSwiftLMVersion` and
 `PinnedRuntimes.llamaCppBuild`) can load and run a Hugging Face repo on a given device, and if not,
 why. It reads the repo listing, `config.json`, the safetensors weight map and the first bytes of
 GGUF or safetensors files through HTTP range requests; nothing is downloaded in full. It never
@@ -859,7 +859,7 @@ architecture could not be read.
 
 This is not `ModelCompatibility`, the RAM-fit result `HardwareAnalyzer.assess` returns for catalog
 models. Guide: [Finding compatible models]({{ '/guide/models' | relative_url }}#finding-compatible-models).
-CLI: `aura models search`, `aura models check`, `aura models devices`.
+CLI: `tonamox models search`, `tonamox models check`, `tonamox models devices`.
 
 ```swift
 let checker = ModelCompatibilityChecker()
@@ -895,7 +895,7 @@ public struct CompatibilityReport: Sendable {
     let repoID: String
     let target: DevicePreset
     let weightFormat: DetectedFormat         // .mlx .gguf .imageGeneration .unconvertedSafetensors .noWeights .unknown
-    let modelCategory: Model.Category?       // how AuraLocal would load it; nil when it cannot
+    let modelCategory: Model.Category?       // how Tonamox would load it; nil when it cannot
     let status: CompatibilityVerdict         // .runnable .runnableWithCaveats .notRunnable .unknown
     let findings: [CompatibilityFinding]     // blockers first, then caveats, then info
     let overview: ArchitectureFacts          // family, layers, trainedContext, kvHeads, headDim, hasVision, quantization,
@@ -1033,7 +1033,7 @@ var capabilities: ModelCapabilities    // see below
 ### ModelCapabilities
 
 `model.capabilities` is an `OptionSet` saying what a model takes and does, read from its catalog category, its
-`defaultDocumentPrompt` and the backend `BackendRouter` picks for it. AuraExample's Chat tab shows it as badges and
+`defaultDocumentPrompt` and the backend `BackendRouter` picks for it. TonamoxExample's Chat tab shows it as badges and
 offers image input and document extraction only where they work.
 
 | Capability | Set when | Enables |
@@ -1064,13 +1064,13 @@ func loadCachedRemote(maxAge: TimeInterval = 86_400)
 
 Where downloaded weights live: `<Application Support>/AuraLocal/Models`, excluded from backup. Inside the app
 container on iOS and in a sandboxed Mac app; `~/Library/Application Support/AuraLocal/Models`, shared, for a
-non-sandboxed macOS process (the `aura` CLI, an app without App Sandbox). Guide:
+non-sandboxed macOS process (the `tonamox` CLI, an app without App Sandbox). Guide:
 [Where models are stored]({{ '/guide/models' | relative_url }}#where-models-are-stored).
 
 ```swift
 public enum ModelStorage {
     static var rootDirectory: URL     // first access creates it, excludes it from backup, migrates Caches when sandboxed
-    // Renames AuraLocal's downloads out of Caches (never copies, never overwrites); idempotent
+    // Renames Tonamox's downloads out of Caches (never copies, never overwrites); idempotent
     @discardableResult static func migrateLegacyDownloads() -> ModelStorageMigration
 }
 
@@ -1184,7 +1184,7 @@ records.
 
 ### Download on demand
 
-`ModelManager.load`, `AuraLocal.text`/`vision`/`specialized` and the one-liners download a missing model before
+`ModelManager.load`, `Tonamox.text`/`vision`/`specialized` and the one-liners download a missing model before
 they load it. A screen that should ask first shows `ModelDownloadPlaceholder` while a model it needs is not on
 disk, and loads once the placeholder reports it ready. The SDK's own tabs (`DocsTab`, `TextChatTab`, `VisionTab`,
 `OCRTab`) do this by default.
@@ -1243,7 +1243,7 @@ It centers in the space it is given and scrolls at large Dynamic Type sizes, so 
 place of one control.
 
 `OnDemandDownloads` runs one transfer at a time through `ModelDownloads.download`, so files land where the
-backends load them from, and tracks models by file (`DownloadRecords.key(for:)`). AuraUI's
+backends load them from, and tracks models by file (`DownloadRecords.key(for:)`). TonamoxUI's
 `ModelDownloadCenter` counts its downloads as busy (a catalog row or the Hugging Face browser does not start the
 same file, Delete refuses it) and folds its `revision` into its own. The reverse is not checked: a placeholder
 can start a file that `ModelDownloadCenter` or a `ModelManager.load` is already downloading.
@@ -1252,7 +1252,7 @@ can start a file that `ModelDownloadCenter` or a `ModelManager.load` is already 
 
 ## BackgroundLifecycle (iOS)
 
-When the app enters the background it cancels every generation running through `AuraLocal` or
+When the app enters the background it cancels every generation running through `Tonamox` or
 `CoreMLDiffusionEngine`, and until the app returns new ones throw at once. Both throw
 `GenerationInterrupted`. With `aggressiveMemorySaving`, it also evicts every loaded model except the
 most recently used one. The observers are installed when a model loads or an image generation starts.
@@ -1271,7 +1271,7 @@ Nothing is cancelled on macOS.
 
 ### GenerationInterrupted
 
-Thrown when AuraLocal stops a generation itself. A stream yields the text first, then finishes with it.
+Thrown when Tonamox stops a generation itself. A stream yields the text first, then finishes with it.
 
 ```swift
 public struct GenerationInterrupted: Error, LocalizedError, Sendable, Equatable {
@@ -1288,7 +1288,7 @@ public struct GenerationInterrupted: Error, LocalizedError, Sendable, Equatable 
 
 Opt-in guard: assessed before a generation and every `checkInterval` tokens or denoising steps. At warn
 the generation continues and `onWarning` runs; at block it throws `GenerationInterrupted`. The battery is
-read only when the app has enabled `UIDevice.isBatteryMonitoringEnabled` (process-wide; AuraLocal never
+read only when the app has enabled `UIDevice.isBatteryMonitoringEnabled` (process-wide; Tonamox never
 sets it). Guide: [Device conditions]({{ '/guide/memory' | relative_url }}#device-conditions).
 
 ```swift
@@ -1364,9 +1364,9 @@ public enum SystemToolRegistry {
 `CoreMLTextEmbeddingTool` runs a sentence-embedding bundle such as multilingual-e5-small on-device.
 A bundle is a directory holding `embedding-model.json` (`TextEmbeddingManifest`), the `.mlpackage`
 or `.mlmodelc`, and the Hugging Face `tokenizer.json` and `tokenizer_config.json`. The tool is not
-in `SystemToolRegistry.all`; create it with the bundle's URL. AuraDocs wraps it in
+in `SystemToolRegistry.all`; create it with the bundle's URL. TonamoxDocs wraps it in
 [`CoreMLEmbeddingProvider`]({{ '/api/rag' | relative_url }}#coremlembeddingprovider).
-Guide: [Using the model without AuraDocs]({{ '/guide/rag' | relative_url }}#using-the-model-without-auradocs).
+Guide: [Using the model without TonamoxDocs]({{ '/guide/rag' | relative_url }}#using-the-model-without-auradocs).
 
 ```swift
 public struct CoreMLTextEmbeddingTool: SystemTool {
@@ -1434,7 +1434,7 @@ public struct EmbeddingIndexIdentity: Sendable, Equatable {
     let dimensions: Int
     init(identifier: String, dimensions: Int)
 
-    static let preTrackingIdentifier: String      // "aura.tfidf-hash/4096"
+    static let preTrackingIdentifier: String      // "tonamox.tfidf-hash/4096"
 
     enum Reconciliation { case upToDate, adopt, reembed }
     static func reconciliation(
@@ -1499,7 +1499,7 @@ public final class HybridEscalator {
         targets: [RemoteTarget]? = nil,    // nil = candidateTargets(policy:)
         onToken: @escaping @MainActor (String) -> Void = { _ in }
     ) async throws -> Result?              // nil = the router kept it local
-                                           // throws AuraError.escalationDeclined when the gate declines
+                                           // throws TonamoxError.escalationDeclined when the gate declines
 
     // Direct escalation to a chosen target: preparePayload(keepRatio: 0.5, redactPII:), then
     // escalate(_:to:). Checks no policy, consent or cost cap.
@@ -1668,7 +1668,7 @@ public struct RemoteTarget: Sendable {
 
 ### AskTargetResolver
 
-The provider choice behind `aura ask`, as a pure function: no network, no Keychain access of its own.
+The provider choice behind `tonamox ask`, as a pure function: no network, no Keychain access of its own.
 Without a `baseURL`, `.auto` / `.local` never return a cloud target; a prompt leaves the machine
 only when the caller names `.openAI` / `.anthropic` or passes a base URL. A `baseURL` is
 classified by its host alone: loopback or private network is `.localNetwork(.llamaServer)`,
@@ -1689,7 +1689,7 @@ public enum AskTargetResolver {
         case conflictingOptions(String)  // baseURL with .openAI/.anthropic, or .local with a public host
         case modelRequired               // baseURL without a model
         case invalidBaseURL(String)
-        var isUsageError: Bool           // true for the last three (aura exits 2; otherwise 1)
+        var isUsageError: Bool           // true for the last three (tonamox exits 2; otherwise 1)
     }
 
     static func resolve(
@@ -1710,7 +1710,7 @@ A `baseURL` host that is loopback, private (RFC 1918, IPv6 ULA), link-local, `lo
 
 ```swift
 // BYOK API keys — Keychain only (WhenUnlockedThisDeviceOnly, never iCloud-synced).
-// Accounts read by AuraLocal: "cloud.anthropic" · "cloud.openai" · "download.huggingface"
+// Accounts read by Tonamox: "cloud.anthropic" · "cloud.openai" · "download.huggingface"
 // (Hugging Face token for gated repos, KeychainDownloadAuth.huggingFaceAccount; also used by
 // ModelCompatibilityChecker) · "download.<host>" (bearer token for any other download host).
 // "cloud.github-models" is no longer read (GitHub Models was retired).

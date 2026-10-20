@@ -1,5 +1,5 @@
 import Foundation
-import AuraCore
+import TonamoxCore
 
 /// The spike's baseline: receipt fields read from a document by rule, with no model. A model has to beat it to be
 /// worth its memory on a 6 GB iPhone.

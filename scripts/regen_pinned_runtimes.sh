@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prints the sets in Sources/AuraCore/ModelCompatibility/PinnedRuntimes.swift from the pinned sources,
+# Prints the sets in Sources/TonamoxCore/ModelCompatibility/PinnedRuntimes.swift from the pinned sources,
 # so a pin bump can be diffed against the tables by hand.
 #
 # MLX: keys of `LLMTypeRegistry.shared` / `VLMTypeRegistry.shared` (the first `creators:` block of each

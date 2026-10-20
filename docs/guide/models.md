@@ -3,7 +3,7 @@ layout: docs
 title: Model Catalog
 parent: Guide
 nav_order: 3
-description: "All models supported by AuraLocal — MLX and GGUF models for iOS and macOS."
+description: "All models supported by Tonamox — MLX and GGUF models for iOS and macOS."
 ---
 
 # Model Catalog
@@ -19,12 +19,12 @@ description: "All models supported by AuraLocal — MLX and GGUF models for iOS 
 
 ## Format Overview
 
-AuraLocal supports two weight formats:
+Tonamox supports two weight formats:
 
 - <span class="badge badge-mlx">MLX</span> — Quantized Apple MLX arrays. GPU-accelerated on Apple Silicon. Best for ≤4B models on any Apple device.
 - <span class="badge badge-gguf">GGUF</span> — Universal quantized format used by llama.cpp. Best for 7B–70B models on Mac. Uses layer-streaming on iOS. <span class="badge badge-stream">STREAM</span>
 
-The complete catalog is `Sources/AuraCore/Resources/models.json`; `Model.allModels` returns it at runtime. Entries
+The complete catalog is `Sources/TonamoxCore/Resources/models.json`; `Model.allModels` returns it at runtime. Entries
 without a static member (e.g. `ornith_1_5_35b_a3b_mlx`, `minicpm5_1b`, `swift15_qwen38_27b_mlx`) are loaded by id; see
 [Catalog entries without a static member](#catalog-entries-without-a-static-member). Sizes in these tables are the
 catalog's `approximateSizeMB` (MiB) in binary MB / GB; [Verifying the catalog](#verifying-the-catalog) keeps them,
@@ -56,7 +56,7 @@ Fast, GPU-accelerated text generation. Downloads from `mlx-community` on Hugging
 cannot load it yet: its repo declares `model_type` `gemma4_unified`, which neither factory registers.
 
 ```swift
-let llm = try await AuraLocal.text(.qwen3_1_7b)
+let llm = try await Tonamox.text(.qwen3_1_7b)
 ```
 
 ---
@@ -74,7 +74,7 @@ Multimodal image + text models. Pass a `UIImage` or `NSImage` for analysis.
 | `.lfm25_vl_1_6b` | LFM 2.5 VL 1.6B | ~1.4 GB | — |
 
 ```swift
-let vlm = try await AuraLocal.vision(.qwen35_0_8b)
+let vlm = try await Tonamox.vision(.qwen35_0_8b)
 let description = try await vlm.analyze("What's in this photo?", image: photo)
 ```
 
@@ -92,13 +92,13 @@ Optimized for structured document and receipt extraction.
 
 ```swift
 // FastVLM — structured JSON output
-let ocr = try await AuraLocal.specialized(.fastVLM_0_5b_fp16)
+let ocr = try await Tonamox.specialized(.fastVLM_0_5b_fp16)
 let json = try await ocr.extractDocument(receiptImage)
 
 // Granite Docling — DocTags markup converted to Markdown
-let docOCR = try await AuraLocal.specialized(.graniteDocling_258m)
+let docOCR = try await Tonamox.specialized(.graniteDocling_258m)
 let raw = try await docOCR.extractDocument(documentScan)
-let markdown = AuraLocal.parseDocTags(raw)
+let markdown = Tonamox.parseDocTags(raw)
 ```
 
 ---
@@ -108,7 +108,7 @@ let markdown = AuraLocal.parseDocTags(raw)
 7B–70B models using the llama.cpp backend. Downloaded from HuggingFace as single `.gguf` files (Q4_K_M quantization).
 
 Use `ModelManager.shared.load(_:)`, which downloads the file, refuses `.tooLarge` models and then loads.
-`AuraLocal.text(_:)` does **not** download GGUF files — with an uncached GGUF it throws *GGUF file not found*.
+`Tonamox.text(_:)` does **not** download GGUF files — with an uncached GGUF it throws *GGUF file not found*.
 
 | Model case | Display name | File size | Min RAM (iOS) | Min RAM (macOS) |
 |-----------|-------------|-----------|--------------|----------------|
@@ -144,7 +144,7 @@ All GGUF models use **Q4_K_M** quantization by default — the best size/quality
 
 | Quantization | Size vs FP16 | Quality loss | Notes |
 |-------------|-------------|-------------|-------|
-| Q4_K_M | ~25% of FP16 | Minimal | **AuraLocal default** |
+| Q4_K_M | ~25% of FP16 | Minimal | **Tonamox default** |
 | Q5_K_M | ~31% of FP16 | Very minimal | Higher quality, more RAM |
 | Q8_0 | ~50% of FP16 | Near-zero | macOS only for 7B |
 
@@ -156,8 +156,8 @@ Models tagged with a `Model.Domain` (`code`, `security`, `finance`, `medicine`).
 
 | Model case | Display name | Format | Size | Domain | Notes |
 |-----------|-------------|--------|------|--------|-------|
-| `.medgemma_4b` | MedGemma 4B | MLX (vision) | ~2.8 GB | medicine | load with `AuraLocal.vision(_:)`; HAI-DEF license terms apply |
-| `.medgemma_1_5_4b` | MedGemma 1.5 4B | MLX (vision) | ~3.2 GB | medicine | load with `AuraLocal.vision(_:)`; HAI-DEF license terms apply |
+| `.medgemma_4b` | MedGemma 4B | MLX (vision) | ~2.8 GB | medicine | load with `Tonamox.vision(_:)`; HAI-DEF license terms apply |
+| `.medgemma_1_5_4b` | MedGemma 1.5 4B | MLX (vision) | ~3.2 GB | medicine | load with `Tonamox.vision(_:)`; HAI-DEF license terms apply |
 | `.mediphi_3_8b_mlx` | MediPhi Instruct 3.8B | MLX | ~2.0 GB | medicine | English |
 | `.apollo2_1_5b_gguf` | Apollo2 1.5B (GGUF) | GGUF | ~1.0 GB | medicine | |
 | `.medpsy_1_7b_gguf` | MedPsy 1.7B (GGUF) | GGUF | ~1.2 GB | medicine | validated in English by its author |
@@ -192,7 +192,7 @@ These entries are in `models.json` but have no `Model.<id>` constant; look them 
 
 ```swift
 if let model = ModelRegistry.shared.model(id: "minicpm5_1b") {
-    let llm = try await AuraLocal.text(model)
+    let llm = try await Tonamox.text(model)
     print(try await llm.chat("Hello"))
 }
 ```
@@ -203,15 +203,15 @@ if let model = ModelRegistry.shared.model(id: "minicpm5_1b") {
 
 `scripts/verify_catalog.py` checks every `models.json` entry against live Hugging Face data, prints the differences
 and exits 1 when any remain. It uses only the Python standard library and reads layers, KV heads, head width,
-`kvLayers`, `experts`, the trained context and the loaded weight bytes from `aura models check <repo> --json`, the
-code behind `aura models check --entry`.
+`kvLayers`, `experts`, the trained context and the loaded weight bytes from `tonamox models check <repo> --json`, the
+code behind `tonamox models check --entry`.
 
 ```sh
-swift build --product aura                       # the script runs .build/debug/aura (or --aura <path>)
+swift build --product tonamox                       # the script runs .build/debug/tonamox (or --tonamox <path>)
 uv run scripts/verify_catalog.py                 # report only
 uv run scripts/verify_catalog.py --fix           # also write the fixable corrections to both catalog copies
 uv run scripts/verify_catalog.py --only gemma4_12b,granite4_tiny --report /tmp/catalog.json
-uv run scripts/verify_catalog.py --no-aura           # repos, files and sizes only, no aura build needed
+uv run scripts/verify_catalog.py --no-tonamox           # repos, files and sizes only, no tonamox build needed
 ```
 
 | Field | Live source | `--fix` |
@@ -220,19 +220,19 @@ uv run scripts/verify_catalog.py --no-aura           # repos, files and sizes on
 | `license` | the same listing's `cardData.license`, or `cardData.license_name` when that is `other` (`CatalogEntry.catalogLicense`); a card with no license is a note, and a difference only when the catalog has one | yes |
 | `ggufFilename` | the repo listing: the exact name at the repo root; a split (`-0000N-of-0000M`) or subfolder file is a difference | case-only mismatches |
 | MLX files | a top-level `config.json` and `*.safetensors` | — |
-| `approximateSizeMB` | GGUF: that file's size; MLX: the safetensors `aura` loads (`weightsBytes`); drift above `--size-tolerance` (2 %) | yes, in MiB |
-| `numLayers`, `kvHeads`, `headDim` | `aura`'s `architecture` object: `config.json`, or the header of the entry's own GGUF (`--gguf`) | yes |
+| `approximateSizeMB` | GGUF: that file's size; MLX: the safetensors `tonamox` loads (`weightsBytes`); drift above `--size-tolerance` (2 %) | yes, in MiB |
+| `numLayers`, `kvHeads`, `headDim` | `tonamox`'s `architecture` object: `config.json`, or the header of the entry's own GGUF (`--gguf`) | yes |
 | `kvLayers`, `experts` | the same; `kvLayers` stays out when every layer keeps the whole context at one width, and `experts` is MLX only | yes |
 | `maxContextLength` | the trained context: a cap above it, or no cap while it is below 32768 | yes |
 
-Requests stay under `--max-requests` (450) per 300 s, below Hugging Face's 500; each `aura` call is charged at an
+Requests stay under `--max-requests` (450) per 300 s, below Hugging Face's 500; each `tonamox` call is charged at an
 upper bound (5 plus 2 per top-level safetensors file). A 429 waits for `Retry-After`, else the `RateLimit` header's
-`t=`, else 15 s doubling up to 300 s; an `aura` report that met a 429 is retried after 60 s, doubling. `HF_TOKEN`, when set, is sent to huggingface.co with the script's own requests;
-`aura` uses the Keychain token. `--device` (default `mac-64gb`) only affects the "not runnable" notes, which report
+`t=`, else 15 s doubling up to 300 s; an `tonamox` report that met a 429 is retried after 60 s, doubling. `HF_TOKEN`, when set, is sent to huggingface.co with the script's own requests;
+`tonamox` uses the Keychain token. `--device` (default `mac-64gb`) only affects the "not runnable" notes, which report
 the pinned runtimes and never fail the run. Differences that must stay go in `scripts/catalog-exceptions.json`
 (`{"entries": {"<id>": {"fields": ["approximateSizeMB"], "reason": "…"}}}`), which the run lists without failing.
 
-**Last run, 2026-10-16 (`--no-aura`):** 53 entries, 0 differences once `--fix` had written 46 licenses. Repos, files
+**Last run, 2026-10-16 (`--no-tonamox`):** 53 entries, 0 differences once `--fix` had written 46 licenses. Repos, files
 and sizes were unchanged since 2026-10-14. The architecture fields were not read again. Seven model cards declare no
 license, so these entries have none: `josiefied_qwen3_1_7b`, `josiefied_qwen3_4b`, `josiefied_qwen3_8b`,
 `llama32_3b_uncensored_gguf`, `gemma4_12b`, `fingpt_sentiment_lfm2_1_2b_gguf` and `ornith_1_5_35b_a3b_mlx`. The
@@ -267,7 +267,7 @@ or Swift Open License terms, or record no license.
 ## Hardware Compatibility Check
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 // Check a specific model on the current device
 let result = HardwareAnalyzer.assess(.llama3_1_8b_gguf)
@@ -369,7 +369,7 @@ measured on this hardware yet. `estimatedDecodeTokensPerSecond` and `speedLevel`
 ## Finding compatible models
 
 A download that *fits* is not a download that *runs*. `ModelCompatibilityChecker` answers the second question
-for any Hugging Face repo: will AuraLocal, with the runtimes it pins — **mlx-swift-lm 3.31.3** (MLX) and
+for any Hugging Face repo: will Tonamox, with the runtimes it pins — **mlx-swift-lm 3.31.3** (MLX) and
 **llama.cpp b8851** (GGUF, via LocalLLMClient 0.5.0) — load and run it on a given device, and if not, exactly why.
 
 It reads the repo listing (`/api/models/{id}?blobs=true`), `config.json`, `model.safetensors.index.json` and, with
@@ -383,7 +383,7 @@ the repo listing, an MLX `config.json` or a GGUF architecture — and the checke
 Hugging Face token saved in the Keychain (`download.huggingface`).
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 let checker = ModelCompatibilityChecker()
 let report = await checker.check("mlx-community/Qwen3.5-27B-4bit", on: .mac32GB)
@@ -422,14 +422,14 @@ decides it. Any blocker means **Won't run**.
 | `mlx.model-type` | top-level `model_type` is in neither `LLMTypeRegistry` (54 types) nor `VLMTypeRegistry` (17) | the factories dispatch on the top-level key; `text_config.model_type` does not count |
 | `mlx.weight-prefixes` | a `qwen3_5` / `qwen3_5_moe` tensor outside `language_model`, `model`, `lm_head`, `vision_tower`, `mtp` — or, for vision weights whose safetensors `__metadata__.format` is `mlx`, outside `language_model` and `vision_tower` | the pinned `sanitize` maps only those (the VLM one returns MLX-format weights unchanged); anything else fails `update(parameters:verify: [.all])` |
 | `mlx.towers` | a type registered only as an LLM (e.g. `gemma3n`) whose weights hold vision or audio towers (`vision_tower`, `audio_tower`, `embed_vision`, `embed_audio`, `multi_modal_projector`…) | its pinned text model has no such modules and no LLM-only sanitize drops them |
-| `mlx.extra-safetensors` | a top-level `*.safetensors` missing from the weight map, or a map that points at some missing files; a map that references **none** of the shipped files is only a caveat (stale index) | AuraLocal's downloaders fetch every top-level `*.safetensors` and `loadWeights` merges every one without reading the index, so a stale index is replaced by the shipped files' headers |
+| `mlx.extra-safetensors` | a top-level `*.safetensors` missing from the weight map, or a map that points at some missing files; a map that references **none** of the shipped files is only a caveat (stale index) | Tonamox's downloaders fetch every top-level `*.safetensors` and `loadWeights` merges every one without reading the index, so a stale index is replaced by the shipped files' headers |
 | `mlx.rope` | a rope type `RoPEUtils.initializeRope` does not implement, or a `longrope` without its three fields | `initializeRope` calls `fatalError` — the app crashes |
 | `mlx.category` | a VLM-only type without vision tensors | vision needs a registered VLM type **and** vision weights; otherwise the model loads as text |
 | `gguf.architecture` | `general.architecture` not in b8851's `LLM_ARCH_NAMES`, added later (`qwen4exp` → b10660), or an encoder / diffusion architecture | llama.cpp rejects unknown architectures |
 | `gguf.qwen35-nextn` | `qwen35` / `qwen35moe` with `nextn_predict_layers` > 0 | b8851 marks recurrent layers arithmetically and demands `ssm_*` tensors the MTP block lacks; fixed upstream in b9180 (PR #22673) |
 | `gguf.shards` | every quant is split (`-0000N-of-0000M`); a caveat when only some are | the GGUF path loads one file |
 | `fit` | the weights (MLX) or every single-file quant (GGUF) are too large for the device | `HardwareAnalyzer.assess` against the device budget |
-| `imagegen` | a text-to-image pipeline on an iPhone preset (a caveat on a Mac: mflux support is not verified) | the chat runtimes do not run diffusion repos; on iPhone, AuraImageGen runs Core ML Stable Diffusion 1.x/2.x folders that `CoreMLDiffusionInspector` accepts ([Image Generation]({{ '/guide/imagegen' | relative_url }}#other-models-from-hugging-face)) |
+| `imagegen` | a text-to-image pipeline on an iPhone preset (a caveat on a Mac: mflux support is not verified) | the chat runtimes do not run diffusion repos; on iPhone, TonamoxImageGen runs Core ML Stable Diffusion 1.x/2.x folders that `CoreMLDiffusionInspector` accepts ([Image Generation]({{ '/guide/imagegen' | relative_url }}#other-models-from-hugging-face)) |
 | `license` | never blocks: flags gated repos, a missing license, non-commercial (`cc-by-nc*`) and custom (`other`) licenses by name, and licenses with use restrictions (OpenRAIL and BLOOM RAIL variants, Llama 2–4, Gemma, DeepSeek, Tongyi Qianwen, Apple AMLR, CC-BY-SA-4.0, GPL-3.0, AGPL-3.0) | |
 
 `mlx.tokenizer`, `gguf.header`, `gguf.projector` and `context` add caveats and context (missing tokenizer files,
@@ -444,13 +444,13 @@ whole context at one width); MLX entries also carry `experts`. Every GGUF quant 
 binary: catalog `approximateSizeMB` is MiB, because `HardwareAnalyzer` divides it by 1024 to get GiB. Layer, KV-head
 and head-width values past 4096, 1024 and 8192 come from a corrupt or hostile file and count as unknown.
 
-The pinned tables live in `Sources/AuraCore/ModelCompatibility/PinnedRuntimes.swift`; `scripts/regen_pinned_runtimes.sh`
+The pinned tables live in `Sources/TonamoxCore/ModelCompatibility/PinnedRuntimes.swift`; `scripts/regen_pinned_runtimes.sh`
 prints the new sets when a pin moves, and `ModelCompatibilityTests` fails when the MLX sets drift from the
 `mlx-swift-lm` checkout.
 
 ### Known incompatibilities
 
-Verified on 2026-09-29 with `aura models check <repo> --device mac-32gb` (M1 Pro, 20.0 GB measured budget):
+Verified on 2026-09-29 with `tonamox models check <repo> --device mac-32gb` (M1 Pro, 20.0 GB measured budget):
 
 | Repository | Verdict | Deciding finding |
 |------------|---------|------------------|
@@ -504,20 +504,20 @@ says where it comes from (the CLI and the app show it). The 32 GB figure was mea
 ### From the command line
 
 ```
-aura models search "<query>" [--format mlx|gguf] [--device <preset>] [--limit N]
-aura models check <owner/repo | URL> [--device <preset>] [--gguf <file>] [--json] [--entry]
-aura models devices
+tonamox models search "<query>" [--format mlx|gguf] [--device <preset>] [--limit N]
+tonamox models check <owner/repo | URL> [--device <preset>] [--gguf <file>] [--json] [--entry]
+tonamox models devices
 ```
 
 `search` checks every hit (four at a time) and prints a verdict table; `check` prints every finding, the
 per-quant fit table and the `models.json` entry; `--entry` prints only the entry, `--json` the whole report (with an
 `architecture` object that survives blockers, and HF's `gated` mode). `--gguf <file>` picks the GGUF whose header is read.
 `--device` defaults to `this-device`; `--limit` defaults to 15 (1–100). See also the
-[CLI reference]({{ '/guide/cli' | relative_url }}#model-compatibility-aura-models).
+[CLI reference]({{ '/guide/cli' | relative_url }}#model-compatibility-tonamox-models).
 
 ### The example apps
 
-Both example apps use AuraUI's Hugging Face browser (`HFModelSearchList`, `HFRepoDetailView`,
+Both example apps use TonamoxUI's Hugging Face browser (`HFModelSearchList`, `HFRepoDetailView`,
 `HuggingFaceTokenSection`, and in ModelFinder `DownloadedModelsList`; see the
 [UI API]({{ '/api/ui' | relative_url }}#hugging-face-browser)),
 built on the same checker and on [`ModelDownloads`](#downloading-without-loading): search with format and sort
@@ -526,7 +526,7 @@ view with the findings, the per-quant fit table, **Copy catalog entry**, **Open 
 rated runnable, a **Download** section (quant picker, size and free space, progress, Cancel/Resume, **Try it** once
 finished). A gated repo shows **Add a token**, which opens the token form in place.
 
-- **AuraExample** (iOS 18.6+ and macOS 26.2+): each section finds and downloads its own kind of model.
+- **TonamoxExample** (iOS 18.6+ and macOS 26.2+): each section finds and downloads its own kind of model.
   - **Chat** is one chat for text, images and documents. Tap the model name above the conversation to open the
     model sheet: **Browse the catalog** lists the catalog's chat models that fit this device (Text, Vision,
     Documents (OCR) and the domain sections, with Download, Cancel and Delete per row and Test on domain rows; on
@@ -544,7 +544,7 @@ finished). A gated repo shows **Add a token**, which opens the token form in pla
   - **Voice** talks to a downloaded model that chats from text, loading the one last picked there (or the first
     that fits) when the tab opens, with **Try again** if the load fails; get more in Chat.
   - **Image** has its own Core ML finder (see [Image generation]({{ '/guide/imagegen' | relative_url }})).
-  - **Library** (AuraDocs' `DocsTab`) shows a download placeholder until Qwen3 1.7B and FastVLM are on the device,
+  - **Library** (TonamoxDocs' `DocsTab`) shows a download placeholder until Qwen3 1.7B and FastVLM are on the device,
     and downloads them only when you tap **Download**. On a Mac the **Agents** tab does the same for the models it
     configures the document library with. Library imports its embedding model from Files instead of searching:
     it is a Core ML bundle that `scripts/embeddings/convert_e5_coreml.py` converts and checks on a Mac
@@ -558,8 +558,8 @@ finished). A gated repo shows **Add a token**, which opens the token form in pla
   macOS 15): the same views in a split view with a device picker (this device, iPhone classes, Macs), a Downloads
   tab and a Settings tab. Its README explains how to generate and open the project.
 
-On the Simulator the format filter starts on GGUF, MLX models are left out of AuraExample's catalog list and
-disabled in its Chat and Voice pickers, in AuraUI's Text menu and in Try it (MLX can't run there; picked anywhere
+On the Simulator the format filter starts on GGUF, MLX models are left out of TonamoxExample's catalog list and
+disabled in its Chat and Voice pickers, in TonamoxUI's Text menu and in Try it (MLX can't run there; picked anywhere
 else, they fail to load with an error), and "this device" reports the Mac's memory, not an iPhone's.
 
 ---
@@ -618,7 +618,7 @@ try ModelDownloads.delete(model)                                // file + .parti
   `<root>/huggingface/hub/models--<org>--<repo>/snapshots/main/<folder>`. It resumes `.partial` files, deletes
   files from any other revision first, and sends no token unless you pass `auth`. `planFolder`, `localFolder`,
   `completedFolder` (the finished folder, in the storage root or in Caches), `isFolderComplete`, `deleteRepo` (the
-  whole repo) and `deleteFolder(repoID:folder:)` (one folder; the others stay) go with it. AuraImageGen downloads its
+  whole repo) and `deleteFolder(repoID:folder:)` (one folder; the others stay) go with it. TonamoxImageGen downloads its
   Core ML Stable Diffusion this way
   (see [Image generation]({{ '/guide/imagegen' | relative_url }})).
 - **What MLX fetches**: top-level `*.safetensors`, `*.json` and `*.jinja` files of `main` only (mlx-swift-lm's
@@ -645,12 +645,12 @@ try ModelDownloads.delete(model)                                // file + .parti
   [Concurrent downloads](#concurrent-downloads)).
   An error response never becomes a model file.
 - **Token**: gated repos need a read token in the Keychain item that `ModelDownloads`, `GGUFModelDownloader`,
-  `ChunkedDownloader` and `ModelCompatibilityChecker` read, as does AuraUI's `ModelSection` through `ModelDownloads` (the MLX load path does not; service
+  `ChunkedDownloader` and `ModelCompatibilityChecker` read, as does TonamoxUI's `ModelSection` through `ModelDownloads` (the MLX load path does not; service
   `dev.auralocal.remote`, account `download.huggingface`): `KeychainDownloadAuth.saveHuggingFaceToken(_:)`,
   `deleteHuggingFaceToken()`, `hasHuggingFaceToken`. It is sent to `huggingface.co` / `hf.co` only, never to the
   CDN a file redirects to. On iOS the item belongs to the app that saved it.
 - **Limits**: no background `URLSession`, so a transfer stops when the app is suspended and resumes from the
-  partial file later. `delete`, `deleteFolder` and `deleteRepo` do not wait for a running download; AuraUI refuses
+  partial file later. `delete`, `deleteFolder` and `deleteRepo` do not wait for a running download; TonamoxUI refuses
   them while one writes the files.
 
 ### Concurrent downloads
@@ -658,7 +658,7 @@ try ModelDownloads.delete(model)                                // file + .parti
 Two downloads that would write the same `.partial` files never run at once, whichever API starts them:
 `ModelDownloads.download` and `downloadFolder`, `GGUFModelDownloader` (the GGUF path of `ModelManager.load`), the
 MLX load path and `ChunkedDownloader`. Starting the same model twice — two sampling settings, a load while the
-Library downloads it, the `aura` CLI and AuraExample at once — is safe:
+Library downloads it, the `tonamox` CLI and TonamoxExample at once — is safe:
 
 - **What is reserved**: a GGUF or `ChunkedDownloader` file by its path; a Hugging Face snapshot
   (`…/snapshots/main`) as a whole, since its MLX files and every `downloadFolder` folder of the repo share it. Two
@@ -675,25 +675,25 @@ Library downloads it, the `aura` CLI and AuraExample at once — is safe:
   for the file, and its cancelled call returns only once its `URLSession` has stopped, so a file it was verifying
   is left as a `.partial` for the next caller instead of being moved into place under it. A paused
   `GGUFModelDownloader` keeps its file reserved until it resumes and finishes, or is cancelled.
-- **Across processes**: processes sharing the storage root (on macOS the `aura` CLI, apps without App Sandbox and
+- **Across processes**: processes sharing the storage root (on macOS the `tonamox` CLI, apps without App Sandbox and
   `swift test`) also take an advisory `flock` on `<file>.lock` or `snapshots/main.lock` next to the destination,
   polled without blocking a thread. The lock file is removed on release unless a delete replaced it meanwhile; one
   left by a crash is simply taken over, since the kernel drops the lock with the process.
 - **Validation**: before a finished `.partial` is moved into place it must still exist with the size just
-  written. If something else changed it — another tool, or an AuraLocal build older than this guard writing the
+  written. If something else changed it — another tool, or an Tonamox build older than this guard writing the
   same folder — the download throws `DownloadConflictError.partialChanged(path:)`, replaces nothing, and the next
   download resumes or restarts the file.
 
 ### Where models are stored
 
-`ModelStorage.rootDirectory` is `<Application Support>/AuraLocal/Models`. Every AuraLocal download path writes
+`ModelStorage.rootDirectory` is `<Application Support>/AuraLocal/Models`. Every Tonamox download path writes
 under it: `ModelDownloads`, `GGUFModelDownloader` (the GGUF path of `ModelManager.load`), the MLX load path and
-AuraImageGen's Core ML folders. The first access creates the folder and sets `isExcludedFromBackup` on it, so
+TonamoxImageGen's Core ML folders. The first access creates the folder and sets `isExcludedFromBackup` on it, so
 multi-gigabyte weights stay out of iCloud and device backups (and Time Machine), and iOS does not purge them the
 way it purges Caches when storage runs low.
 
 - **iOS, sandboxed Mac app**: the folder is inside the app's container; apps do not share models.
-- **Non-sandboxed macOS process** (the `aura` CLI, an app without App Sandbox such as AuraExample, `swift test`):
+- **Non-sandboxed macOS process** (the `tonamox` CLI, an app without App Sandbox such as TonamoxExample, `swift test`):
   `~/Library/Application Support/AuraLocal/Models`, shared by all of them, so one download serves each.
 - **Compiled Core ML caches** (`Caches/AuraLocal/CompiledModels`) and the remote catalog cache stay in Caches: both
   are rebuilt when missing.
@@ -711,7 +711,7 @@ working:
   a partial for that file; an MLX or Core ML `.partial` in Caches is not resumed (the file starts over in the
   storage root) unless it was migrated first.
 - **Migration**: `ModelStorage.migrateLegacyDownloads()` moves `.gguf` and `.gguf.partial` files under
-  `<Caches>/models/` and AuraLocal's `snapshots/main` folders under `<Caches>/huggingface/hub/` to the same
+  `<Caches>/models/` and Tonamox's `snapshots/main` folders under `<Caches>/huggingface/hub/` to the same
   relative paths in the storage root. Each item is renamed with `RENAME_EXCL`: never copied, never moved over
   something already there, and a partial keeps its ETag record. A conflict or a failed rename (another volume,
   permissions) leaves the item in Caches, where the read fallback still finds it; nothing is deleted. Another
@@ -719,7 +719,7 @@ working:
   `ModelStorageMigration` lists `moved`, `conflicts` and `failures`; a second call finds nothing.
 - **When it runs**: by itself on the first access to the storage root in a sandboxed process (every iOS app). A
   non-sandboxed macOS process never moves anything on its own, because `~/Library/Caches` is shared with every
-  other process of the user, older AuraLocal builds included; call `migrateLegacyDownloads()` yourself once nothing
+  other process of the user, older Tonamox builds included; call `migrateLegacyDownloads()` yourself once nothing
   else reads the old paths. The one exception is `ModelDownloads.download` resuming a GGUF, which moves that
   file's partial.
 
@@ -730,7 +730,7 @@ print(report.moved, report.conflicts, report.failures)
 
 ### SHA-256 verification
 
-Hugging Face publishes a SHA-256 for every LFS file (`lfs.oid`). Each download path AuraLocal runs compares it with
+Hugging Face publishes a SHA-256 for every LFS file (`lfs.oid`). Each download path Tonamox runs compares it with
 the downloaded bytes before the file is moved into place:
 
 - `ModelDownloads.download` / `downloadFolder` and the MLX load path read it from the tree listing they already
@@ -787,7 +787,7 @@ DownloadRecords.standard.remove(model)
   entries stay. `DownloadRecords.remove(_:)` calls it.
 - Record only sized models. A `Model.fromURL(_:displayName:)` model has size 0, which the load-time memory guard
   always rates as fitting.
-- AuraUI's `ModelDownloadCenter` does all of this for the browser views: it records downloads started from a
+- TonamoxUI's `ModelDownloadCenter` does all of this for the browser views: it records downloads started from a
   search result and recorded files it resumes, never a catalog or unsized model. The Model Finder's old
   `downloadRecords` key is copied over once.
 
@@ -832,10 +832,10 @@ the card's `license_name` when its license is `other`), recorded in the catalog 
 
 ## Uncensored / Abliterated Models
 
-AuraLocal ships a curated set of uncensored and abliterated models for use cases that require unrestricted output — creative writing, security research, adult content platforms, or any context where the developer controls the system prompt entirely.
+Tonamox ships a curated set of uncensored and abliterated models for use cases that require unrestricted output — creative writing, security research, adult content platforms, or any context where the developer controls the system prompt entirely.
 
 {: .warning }
-> These models have alignment data removed. You are responsible for appropriate use within your app. AuraLocal does not endorse harmful or illegal use of model output.
+> These models have alignment data removed. You are responsible for appropriate use within your app. Tonamox does not endorse harmful or illegal use of model output.
 
 ### What the labels mean
 
@@ -864,7 +864,7 @@ flagged uncensored, so `Model.uncensoredModels` returns it. It has no static mem
 [Catalog entries without a static member](#catalog-entries-without-a-static-member).
 
 ```swift
-let llm = try await AuraLocal.text(.josiefied_qwen3_1_7b)
+let llm = try await Tonamox.text(.josiefied_qwen3_1_7b)
 for try await token in llm.stream("Write a story with no restrictions.") {
     print(token, terminator: "")
 }
@@ -895,10 +895,10 @@ let reply = try await llm.chat("No restrictions. Answer anything.")
 ### Filtering uncensored models in code
 
 Only `Model.uncensoredModels` lists them. `textModels`, `visionModels`, `specializedModels`, `ggufModels`,
-`mlxModels`, `runnableModels`, `models(in:)` and `HardwareAnalyzer.compatibleModels()` leave them out: AuraUI's
+`mlxModels`, `runnableModels`, `models(in:)` and `HardwareAnalyzer.compatibleModels()` leave them out: TonamoxUI's
 pickers list an uncensored model only once it is downloaded, and the hardware recommendations only when the app
 passes it in. `Model.allModels` and the static members (`.josiefied_qwen3_1_7b`…) still reach them, and
-AuraExample's Catalog shows them behind a toggle.
+TonamoxExample's Catalog shows them behind a toggle.
 
 ```swift
 // All uncensored / abliterated models

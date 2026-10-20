@@ -658,7 +658,7 @@
 
     /* Syntax tokens */
     .k  { color: #fb923c; }  /* keywords: import, let, var, func, for, in, try, await, switch, case */
-    .t  { color: #60a5fa; }  /* types: AuraLocal, Model, ModelManager */
+    .t  { color: #60a5fa; }  /* types: Tonamox, Model, ModelManager */
     .s  { color: #4ade80; }  /* strings */
     .c  { color: #3f3f46; }  /* comments */
     .n  { color: #c084fc; }  /* numbers, enum cases */
@@ -893,11 +893,11 @@
   ============================================================ -->
   <header class="nav" role="banner">
     <div class="nav-inner">
-      <a href="{{ '/' | relative_url }}" class="nav-logo" aria-label="AuraLocal home">
+      <a href="{{ '/' | relative_url }}" class="nav-logo" aria-label="TONAMOX home">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
         </svg>
-        AuraLocal
+        TONAMOX
       </a>
       <nav class="nav-links" aria-label="Primary">
         <a href="{{ '/guide/quickstart' | relative_url }}">Quick Start</a>
@@ -1155,8 +1155,8 @@
               <path d="M12 19h8"/>
             </svg>
           </div>
-          <h3>aura CLI</h3>
-          <p>A headless integration harness — <code>aura providers</code>, <code>tools</code>, <code>ask</code>, <code>ocr</code>, <code>ml</code>, <code>imagegen</code> and <code>models</code>. Build it from source with <code>swift build -c release --product aura</code>; the Homebrew tap is not published yet.</p>
+          <h3>tonamox CLI</h3>
+          <p>A headless integration harness — <code>tonamox providers</code>, <code>tools</code>, <code>ask</code>, <code>ocr</code>, <code>ml</code>, <code>imagegen</code> and <code>models</code>. Build it from source with <code>swift build -c release --product tonamox</code>; the Homebrew tap is not published yet.</p>
         </div>
 
         <div class="feature-card">
@@ -1180,7 +1180,7 @@
             </svg>
           </div>
           <h3>Will It Run?</h3>
-          <p>ModelCompatibilityChecker reads a Hugging Face repo's config and weight headers and says whether the pinned runtimes can run it on a device, and why not. ModelDownloads fetches it with resume; AuraUI's Hugging Face browser puts search and download in your app.</p>
+          <p>ModelCompatibilityChecker reads a Hugging Face repo's config and weight headers and says whether the pinned runtimes can run it on a device, and why not. ModelDownloads fetches it with resume; TonamoxUI's Hugging Face browser puts search and download in your app.</p>
         </div>
 
         <div class="feature-card">
@@ -1231,13 +1231,13 @@
                 <div class="chrome-dots"><span class="chrome-dot r"></span><span class="chrome-dot y"></span><span class="chrome-dot g"></span></div>
                 <span class="chrome-file">ContentView.swift</span>
               </div>
-              <pre><code><span class="k">import</span> <span class="t">AuraCore</span>
+              <pre><code><span class="k">import</span> <span class="t">TonamoxCore</span>
 
 <span class="c">// One-liner</span>
-<span class="k">let</span> reply = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">chat</span>(<span class="s">"Summarize my expenses"</span>)
+<span class="k">let</span> reply = <span class="k">try</span> <span class="k">await</span> <span class="t">Tonamox</span>.<span class="f">chat</span>(<span class="s">"Summarize my expenses"</span>)
 
 <span class="c">// Reusable instance — model loaded once</span>
-<span class="k">let</span> llm = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">text</span>(.<span class="n">qwen3_1_7b</span>) { progress <span class="k">in</span>
+<span class="k">let</span> llm = <span class="k">try</span> <span class="k">await</span> <span class="t">Tonamox</span>.<span class="f">text</span>(.<span class="n">qwen3_1_7b</span>) { progress <span class="k">in</span>
     print(progress)  <span class="c">// "Downloading Qwen3 1.7B: 42%"</span>
 }
 
@@ -1263,7 +1263,7 @@
                 <div class="chrome-dots"><span class="chrome-dot r"></span><span class="chrome-dot y"></span><span class="chrome-dot g"></span></div>
                 <span class="chrome-file">ContentView.swift</span>
               </div>
-              <pre><code><span class="k">import</span> <span class="t">AuraCore</span>
+              <pre><code><span class="k">import</span> <span class="t">TonamoxCore</span>
 
 <span class="c">// ModelManager handles download + backend selection</span>
 <span class="k">let</span> llm = <span class="k">try</span> <span class="k">await</span> <span class="t">ModelManager</span>.shared.<span class="f">load</span>(.<span class="n">llama3_1_8b_gguf</span>)
@@ -1295,19 +1295,19 @@
                 <div class="chrome-dots"><span class="chrome-dot r"></span><span class="chrome-dot y"></span><span class="chrome-dot g"></span></div>
                 <span class="chrome-file">ScannerView.swift</span>
               </div>
-              <pre><code><span class="k">import</span> <span class="t">AuraCore</span>
+              <pre><code><span class="k">import</span> <span class="t">TonamoxCore</span>
 
 <span class="c">// Vision model — free-form analysis</span>
-<span class="k">let</span> vlm = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">vision</span>(.<span class="n">qwen35_0_8b</span>)
+<span class="k">let</span> vlm = <span class="k">try</span> <span class="k">await</span> <span class="t">Tonamox</span>.<span class="f">vision</span>(.<span class="n">qwen35_0_8b</span>)
 <span class="k">let</span> desc = <span class="k">try</span> <span class="k">await</span> vlm.<span class="f">analyze</span>(<span class="s">"What's in this photo?"</span>, image: photo)
 
 <span class="c">// Receipt extraction — the default prompt asks for JSON (not validated)</span>
-<span class="k">let</span> ocr = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">specialized</span>(.<span class="n">fastVLM_0_5b_fp16</span>)
+<span class="k">let</span> ocr = <span class="k">try</span> <span class="k">await</span> <span class="t">Tonamox</span>.<span class="f">specialized</span>(.<span class="n">fastVLM_0_5b_fp16</span>)
 <span class="k">let</span> json = <span class="k">try</span> <span class="k">await</span> ocr.<span class="f">extractDocument</span>(receiptImage)
 <span class="c">// → e.g. {"store":"OXXO","total":125.50,"items":[...]}</span>
 
 <span class="c">// One-liner</span>
-<span class="k">let</span> receipt = <span class="k">try</span> <span class="k">await</span> <span class="t">AuraLocal</span>.<span class="f">extractDocument</span>(receiptImage)</code></pre>
+<span class="k">let</span> receipt = <span class="k">try</span> <span class="k">await</span> <span class="t">Tonamox</span>.<span class="f">extractDocument</span>(receiptImage)</code></pre>
             </div>
           </div>
 
@@ -1320,7 +1320,7 @@
                 <div class="chrome-dots"><span class="chrome-dot r"></span><span class="chrome-dot y"></span><span class="chrome-dot g"></span></div>
                 <span class="chrome-file">VoiceView.swift</span>
               </div>
-              <pre><code><span class="k">import</span> <span class="t">AuraVoice</span>
+              <pre><code><span class="k">import</span> <span class="t">TonamoxVoice</span>
 
 <span class="c">// Drop-in button — manages its own session</span>
 <span class="t">VoiceButton</span>(llm: llm)
@@ -1351,7 +1351,7 @@ session.<span class="f">cancel</span>()      <span class="c">// stop recording, 
                 <div class="chrome-dots"><span class="chrome-dot r"></span><span class="chrome-dot y"></span><span class="chrome-dot g"></span></div>
                 <span class="chrome-file">LibrarySetup.swift</span>
               </div>
-              <pre><code><span class="k">import</span> <span class="t">AuraDocs</span>
+              <pre><code><span class="k">import</span> <span class="t">TonamoxDocs</span>
 
 <span class="k">let</span> library = <span class="t">DocumentLibrary</span>.shared
 <span class="k">await</span> library.<span class="f">configure</span>(embeddingProvider: <span class="t">AutoEmbeddingProvider</span>(), llm: llm)
@@ -1469,7 +1469,7 @@ print(answer.text)
       <div class="section-header">
         <span class="section-label">Modules</span>
         <h2 id="modules-heading">Import only what you need</h2>
-        <p>Start with AuraCore and add capabilities incrementally.</p>
+        <p>Start with TonamoxCore and add capabilities incrementally.</p>
       </div>
 
       <div class="modules-grid">
@@ -1487,11 +1487,11 @@ print(answer.text)
               </svg>
             </div>
             <div>
-              <h3>AuraCore</h3>
-              <p class="module-name">import AuraCore</p>
+              <h3>TonamoxCore</h3>
+              <p class="module-name">import TonamoxCore</p>
             </div>
           </div>
-          <p>Inference engine, model management, conversation persistence, and hardware analysis. Required by every module except AuraAppleIntelligence.</p>
+          <p>Inference engine, model management, conversation persistence, and hardware analysis. Required by every module except TonamoxAppleIntelligence.</p>
           <span class="module-link">
             API Reference
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -1507,8 +1507,8 @@ print(answer.text)
               </svg>
             </div>
             <div>
-              <h3>AuraUI</h3>
-              <p class="module-name">import AuraUI</p>
+              <h3>TonamoxUI</h3>
+              <p class="module-name">import TonamoxUI</p>
             </div>
           </div>
           <p>Prebuilt SwiftUI views: <code>TextChatTab</code>, <code>VisionTab</code> and <code>OCRTab</code> to place in your own <code>TabView</code>, <code>ModelSection</code> (a model list section that downloads through <code>ModelDownloads</code>), and a Hugging Face browser: search, per-device verdicts and downloads.</p>
@@ -1528,8 +1528,8 @@ print(answer.text)
               </svg>
             </div>
             <div>
-              <h3>AuraVoice</h3>
-              <p class="module-name">import AuraVoice</p>
+              <h3>TonamoxVoice</h3>
+              <p class="module-name">import TonamoxVoice</p>
             </div>
           </div>
           <p>Turn-based voice pipeline. SFSpeechRecognizer &rarr; LLM streaming &rarr; AVSpeechSynthesizer, with sentence-level pipelining.</p>
@@ -1550,8 +1550,8 @@ print(answer.text)
               </svg>
             </div>
             <div>
-              <h3>AuraDocs</h3>
-              <p class="module-name">import AuraDocs</p>
+              <h3>TonamoxDocs</h3>
+              <p class="module-name">import TonamoxDocs</p>
             </div>
           </div>
           <p>Local RAG pipeline. Index PDF, DOCX, text and, with a vision model, images. FTS5 + cosine re-ranking stored in SQLite. No external dependencies.</p>
@@ -1571,8 +1571,8 @@ print(answer.text)
               </svg>
             </div>
             <div>
-              <h3>AuraImageGen</h3>
-              <p class="module-name">import AuraImageGen</p>
+              <h3>TonamoxImageGen</h3>
+              <p class="module-name">import TonamoxImageGen</p>
             </div>
           </div>
           <p>Text-to-image. Core ML Stable Diffusion on iPhone and Mac (SD 2.1 built in, ~1.07 GB once, or an SD 1.x/2.x model adopted from Hugging Face), FLUX + LoRA via mflux on macOS, and egress-safe settings for Apple's Image Playground sheet.</p>
@@ -1591,8 +1591,8 @@ print(answer.text)
               </svg>
             </div>
             <div>
-              <h3>AuraAgents</h3>
-              <p class="module-name">import AuraAgents</p>
+              <h3>TonamoxAgents</h3>
+              <p class="module-name">import TonamoxAgents</p>
             </div>
           </div>
           <p>Reusable multi-agent orchestration. The AgentCrew pipeline on FoundationModels; when your EscalationPolicy allows (off by default), its Architect step escalates to a bigger model if its local draft looks weak. iOS 26 / macOS 26.</p>
@@ -1602,7 +1602,7 @@ print(answer.text)
           </span>
         </a>
 
-        <a href="https://github.com/iOSDevC/AuraLocal/tree/main/Sources/AuraAppleIntelligence" class="module-card" target="_blank" rel="noopener">
+        <a href="https://github.com/iOSDevC/AuraLocal/tree/main/Sources/TonamoxAppleIntelligence" class="module-card" target="_blank" rel="noopener">
           <div class="module-top">
             <div class="module-icon" style="background:rgba(96,165,250,0.1);border:1px solid rgba(96,165,250,0.2);color:var(--blue);">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1611,8 +1611,8 @@ print(answer.text)
               </svg>
             </div>
             <div>
-              <h3>AuraAppleIntelligence</h3>
-              <p class="module-name">import AuraAppleIntelligence</p>
+              <h3>TonamoxAppleIntelligence</h3>
+              <p class="module-name">import TonamoxAppleIntelligence</p>
             </div>
           </div>
           <p>Apple FoundationModels agents, tool-calling, and @Generable structured output. Requires iOS 26 / macOS 26 with Apple Intelligence.</p>
@@ -1635,7 +1635,7 @@ print(answer.text)
       <div class="section-header">
         <span class="section-label">License</span>
         <h2 id="license-heading">AGPL-3.0 or commercial</h2>
-        <p>AuraLocal is dual-licensed: under the GNU Affero General Public License, or under a commercial license from the copyright holder.</p>
+        <p>Tonamox is dual-licensed: under the GNU Affero General Public License, or under a commercial license from the copyright holder.</p>
       </div>
 
       <div class="modules-grid">
@@ -1653,7 +1653,7 @@ print(answer.text)
               <p class="module-name">AGPL-3.0-or-later</p>
             </div>
           </div>
-          <p>An app or package that links AuraLocal and is distributed must be released under AGPL-3.0-compatible terms, with its source available. If you modify AuraLocal and let people use it over a network, you must offer them the source of your version too.</p>
+          <p>An app or package that links Tonamox and is distributed must be released under AGPL-3.0-compatible terms, with its source available. If you modify Tonamox and let people use it over a network, you must offer them the source of your version too.</p>
           <span class="module-link">
             LICENSE
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -1711,7 +1711,7 @@ print(answer.text)
               <p class="module-name">their own licenses</p>
             </div>
           </div>
-          <p>Dependencies keep their own licenses (MIT, Apache-2.0, BSD); all are compatible with AGPL-3.0 and with the commercial license. Models downloaded at run time are not part of AuraLocal and carry their own licenses; check each model card before you use or redistribute one.</p>
+          <p>Dependencies keep their own licenses (MIT, Apache-2.0, BSD); all are compatible with AGPL-3.0 and with the commercial license. Models downloaded at run time are not part of Tonamox and carry their own licenses; check each model card before you use or redistribute one.</p>
           <span class="module-link">
             Third-party notices
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -1738,7 +1738,7 @@ print(answer.text)
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--accent)" aria-hidden="true">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
         </svg>
-        AuraLocal
+        TONAMOX
       </div>
       <nav class="footer-links" aria-label="Footer">
         <a href="{{ '/guide/quickstart' | relative_url }}">Quick Start</a>

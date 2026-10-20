@@ -1,6 +1,6 @@
 import XCTest
 import CoreGraphics
-import AuraCore
+import TonamoxCore
 @testable import ReceiptSpike
 
 final class ReceiptSpikeTests: XCTestCase {

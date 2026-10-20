@@ -3,7 +3,7 @@ layout: docs
 title: Quick Start
 parent: Guide
 nav_order: 0
-description: "Get AuraLocal running in your iOS or macOS app in under 5 minutes."
+description: "Get Tonamox running in your iOS or macOS app in under 5 minutes."
 ---
 
 # Quick Start
@@ -23,25 +23,25 @@ Get on-device LLM inference running in your app in under 5 minutes.
 
 You need Xcode 16.3 or later (Swift 6.1).
 
-In Xcode: **File → Add Package Dependencies** → enter `https://github.com/iOSDevC/AuraLocal`, set **Dependency Rule** to **Commit** and paste a commit SHA from `main`. Then, in your app target's **Build Settings**, set **C++ and Objective-C Interoperability** to **C++ / Objective-C++** (`SWIFT_OBJC_INTEROP_MODE = objcxx`). Every target that imports `AuraCore`, or a module built on it, needs it.
+In Xcode: **File → Add Package Dependencies** → enter `https://github.com/iOSDevC/AuraLocal`, set **Dependency Rule** to **Commit** and paste a commit SHA from `main`. Then, in your app target's **Build Settings**, set **C++ and Objective-C Interoperability** to **C++ / Objective-C++** (`SWIFT_OBJC_INTEROP_MODE = objcxx`). Every target that imports `TonamoxCore`, or a module built on it, needs it.
 
 In `Package.swift`:
 ```swift
 // swift-tools-version: 6.0
-platforms: [.iOS(.v18), .macOS(.v15)],   // AuraLocal's minimums (visionOS: .v2)
+platforms: [.iOS(.v18), .macOS(.v15)],   // Tonamox's minimums (visionOS: .v2)
 dependencies: [
     .package(url: "https://github.com/iOSDevC/AuraLocal", revision: "<commit SHA from main>"),
 ],
 targets: [
     .target(
         name: "MyTarget",
-        dependencies: [.product(name: "AuraCore", package: "AuraLocal")],
+        dependencies: [.product(name: "TonamoxCore", package: "Tonamox")],
         swiftSettings: [.interoperabilityMode(.Cxx)]  // required
     )
 ]
 ```
 
-AuraLocal depends on LocalLLMClient by revision, so SwiftPM rejects a version requirement (`from:` or `exact:`) on AuraLocal. Pin a commit SHA from `main` instead. `branch: "main"` also resolves, but it moves with every push.
+Tonamox depends on LocalLLMClient by revision, so SwiftPM rejects a version requirement (`from:` or `exact:`) on Tonamox. Pin a commit SHA from `main` instead. `branch: "main"` also resolves, but it moves with every push.
 
 ---
 
@@ -61,10 +61,10 @@ In Xcode, open your target's **Signing & Capabilities** tab and add **Increased 
 ## 3. Your First Chat
 
 ```swift
-import AuraCore
+import TonamoxCore
 
 // Simplest possible usage — one line
-let reply = try await AuraLocal.chat("Hello, what can you do?")
+let reply = try await Tonamox.chat("Hello, what can you do?")
 print(reply)
 ```
 
@@ -81,15 +81,15 @@ Load the model once and reuse it for multiple calls:
 
 ```swift
 import Combine
-import AuraCore
+import TonamoxCore
 
 @MainActor
 class MyViewModel: ObservableObject {
     @Published var response = ""
-    private var llm: AuraLocal?
+    private var llm: Tonamox?
 
     func setup() async throws {
-        llm = try await AuraLocal.text(.qwen3_1_7b) { progress in
+        llm = try await Tonamox.text(.qwen3_1_7b) { progress in
             print(progress)  // "Downloading Qwen3 1.7B: 42%"
         }
     }
@@ -107,11 +107,11 @@ class MyViewModel: ObservableObject {
 
 ## 5. Drop-in SwiftUI Interface
 
-Add `AuraUI` for ready-made chat, vision, and OCR views. Compose the public tab views in your own `TabView`:
+Add `TonamoxUI` for ready-made chat, vision, and OCR views. Compose the public tab views in your own `TabView`:
 
 ```swift
 import SwiftUI
-import AuraUI
+import TonamoxUI
 
 @main
 struct MyApp: App {
@@ -136,7 +136,7 @@ download on the first send or run instead.
 
 `TextChatTab(offersHuggingFaceSearch: true)` starts the model menu with **Find on Hugging Face…**, which searches,
 checks and downloads models for this device. To list those downloads again after a relaunch, call
-`DownloadRecords.standard.registerDownloaded()` (`import AuraCore`) in your `App`'s `init`, before the first view
+`DownloadRecords.standard.registerDownloaded()` (`import TonamoxCore`) in your `App`'s `init`, before the first view
 reads the model lists. See [The example apps]({{ '/guide/models' | relative_url }}#the-example-apps).
 
 ---

@@ -1,0 +1,102 @@
+import XCTest
+@testable import TonamoxCore
+
+/// Every `Model` constant is `registry.model(id:) ?? models.first(where: { $0.format == .gguf })!`.
+/// That `??` is silent: while the MLX products were undeclared, `canImport(MLXLLM)` was false,
+/// ModelRegistry filtered all 32 MLX entries out, and all 32 MLX constants resolved to the SAME
+/// arbitrary GGUF — the first in file order. `Model.qwen3_0_6b`, a 400 MB model, WAS a 4.7 GB
+/// Llama 3.1 8B. Nothing failed; the app just quietly sized memory and picked backends off a
+/// model the caller never asked for. These tests make that fallback loud.
+final class CatalogIntegrityTests: XCTestCase {
+
+    /// The canary. If MLX ever gets un-declared again, this fails instead of lying.
+    func testModelConstantsResolveToTheModelTheyName() {
+        XCTAssertEqual(Model.qwen3_0_6b.id, "qwen3_0_6b",
+            "qwen3_0_6b resolved to '\(Model.qwen3_0_6b.id)' — the silent GGUF fallback is back")
+        XCTAssertEqual(Model.qwen3_0_6b.format, .mlx)
+        XCTAssertLessThan(Model.qwen3_0_6b.approximateSizeMB, 1_500,
+            "a 0.6B model cannot weigh \(Model.qwen3_0_6b.approximateSizeMB) MB")
+    }
+
+    /// No two distinct constants may collapse onto one model — that is the fallback's signature.
+    func testDistinctConstantsAreDistinctModels() {
+        let ids = [Model.qwen3_0_6b.id, Model.qwen3_1_7b.id, Model.qwen3_4b.id, Model.llama3_1_8b_gguf.id]
+        XCTAssertEqual(Set(ids).count, ids.count, "constants collapsed onto one model: \(ids)")
+    }
+
+    /// The bundled catalog must reach users, not be filtered down to a third of itself.
+    func testCatalogIsNotSilentlyHidden() {
+        let models = ModelRegistry.shared.models
+        let mlx = models.filter { $0.format == .mlx }
+        #if canImport(MLXLLM)
+        XCTAssertGreaterThan(mlx.count, 0, "MLX is linked, so MLX models must be offered")
+        XCTAssertEqual(Model.mlxModels.count, mlx.filter { !$0.isUncensored }.count)
+        #else
+        XCTAssertEqual(mlx.count, 0, "no MLX backend linked — unrunnable entries must stay hidden")
+        #endif
+        XCTAssertGreaterThan(models.filter { $0.format == .gguf }.count, 0)
+    }
+
+    /// Uncensored models are in the registry but only `uncensoredModels` lists them; the pickers and the hardware
+    /// recommendations read the other collections.
+    func testUncensoredModelsAreListedOnlyOnRequest() {
+        let uncensored = Model.uncensoredModels
+        XCTAssertFalse(uncensored.isEmpty, "the bundled catalog has uncensored entries")
+        XCTAssertTrue(uncensored.allSatisfy(\.isUncensored))
+        XCTAssertTrue(Set(uncensored).isSubset(of: Set(Model.allModels)))
+
+        let listed: [String: [Model]] = [
+            "listedModels": Model.listedModels, "textModels": Model.textModels, "visionModels": Model.visionModels,
+            "specializedModels": Model.specializedModels, "ggufModels": Model.ggufModels,
+            "mlxModels": Model.mlxModels, "runnableModels": Model.runnableModels,
+            "compatibleModels()": HardwareAnalyzer.compatibleModels().map(\.model),
+        ]
+        for (name, models) in listed {
+            XCTAssertFalse(models.contains(where: \.isUncensored), "\(name) lists an uncensored model")
+        }
+        for domain in Model.Domain.allCases {
+            XCTAssertFalse(Model.models(in: domain).contains(where: \.isUncensored), domain.rawValue)
+        }
+        XCTAssertEqual(Model.listedModels.count + uncensored.count, Model.allModels.count)
+    }
+
+    /// AppState sizes its memory budget from these two; both were the 4.7 GB fallback.
+    func testModelsUsedForMemoryBudgetingAreReal() {
+        XCTAssertEqual(Model.qwen3_1_7b.id, "qwen3_1_7b")
+        XCTAssertLessThan(Model.qwen3_1_7b.approximateSizeMB, 3_000)
+    }
+
+    func testMedicalCandidatesUseTheirVerifiedBackendsAndArtifacts() throws {
+        let medGemma15 = try XCTUnwrap(ModelRegistry.shared.model(id: "medgemma_1_5_4b"))
+        XCTAssertEqual(medGemma15.repoID, "mlx-community/medgemma-1.5-4b-it-4bit")
+        XCTAssertEqual(medGemma15.format, .mlx)
+        XCTAssertNil(medGemma15.ggufFilename)
+        XCTAssertEqual(medGemma15.domain, .medicine)
+
+        let mediPhi = try XCTUnwrap(ModelRegistry.shared.model(id: "mediphi_3_8b_mlx"))
+        XCTAssertEqual(mediPhi.repoID, "bisonnetworking/MediPhi-Instruct-mlx-4bit")
+        XCTAssertEqual(mediPhi.format, .mlx)
+        XCTAssertNil(mediPhi.ggufFilename)
+
+        let apollo = try XCTUnwrap(ModelRegistry.shared.model(id: "apollo2_1_5b_gguf"))
+        XCTAssertEqual(apollo.format, .gguf)
+        XCTAssertEqual(apollo.ggufFilename, "Apollo2-1.5B.Q4_K_M.gguf")
+
+        let medPsy = try XCTUnwrap(ModelRegistry.shared.model(id: "medpsy_1_7b_gguf"))
+        XCTAssertEqual(medPsy.format, .gguf)
+        XCTAssertEqual(medPsy.ggufFilename, "medpsy-1.7b-q4_k_m-imat.gguf")
+    }
+
+    #if canImport(MLXLLM)
+    func testMedicalMLXTurnTerminatorsMatchTheirModelCards() {
+        XCTAssertEqual(
+            MLXBackend.configuration(for: .mediphi_3_8b_mlx).extraEOSTokens,
+            ["<|end|>"]
+        )
+        XCTAssertEqual(
+            MLXBackend.configuration(for: .medgemma_1_5_4b).extraEOSTokens,
+            ["<end_of_turn>"]
+        )
+    }
+    #endif
+}
