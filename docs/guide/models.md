@@ -662,16 +662,20 @@ Library downloads it, the `aura` CLI and AuraExample at once — is safe:
   folders of one repo therefore download one after the other. Different files and different repos download in
   parallel.
 - **Waiting**: callers take turns in arrival order. A later call waits, then finds the finished file, snapshot or
-  folder and returns it without a transfer. `ChunkedDownloader` reuses the file only when the call it waited for, in
-  the same process, fetched the same URL and expected SHA-256; otherwise it downloads again.
+  folder and returns it without a transfer. `ChunkedDownloader` keeps a file already at the destination when the
+  call it waited for, in the same process, fetched the same URL and expected SHA-256, or when the file hashes to the
+  `expectedSHA256` you pass (as one another process just finished does); otherwise it downloads again and replaces
+  the file.
 - **Cancelling**: a waiting call that is cancelled ends at once and leaves the running download alone. Cancelling
   the running one stops its transfer; the next waiting call resumes from the `.partial`, so the download goes on
-  while anyone still waits for it. A paused `GGUFModelDownloader` keeps its file reserved until it resumes and
-  finishes, or is cancelled.
+  while anyone still waits for it. `GGUFModelDownloader.cancel()` also ends that downloader's calls still waiting
+  for the file, and its cancelled call returns only once its `URLSession` has stopped, so a file it was verifying
+  is left as a `.partial` for the next caller instead of being moved into place under it. A paused
+  `GGUFModelDownloader` keeps its file reserved until it resumes and finishes, or is cancelled.
 - **Across processes**: processes sharing the storage root (on macOS the `aura` CLI, apps without App Sandbox and
   `swift test`) also take an advisory `flock` on `<file>.lock` or `snapshots/main.lock` next to the destination,
-  polled without blocking a thread. The lock file is removed on release; one left by a crash is simply taken over,
-  since the kernel drops the lock with the process.
+  polled without blocking a thread. The lock file is removed on release unless a delete replaced it meanwhile; one
+  left by a crash is simply taken over, since the kernel drops the lock with the process.
 - **Validation**: before a finished `.partial` is moved into place it must still exist with the size just
   written. If something else changed it — another tool, or an AuraLocal build older than this guard writing the
   same folder — the download throws `DownloadConflictError.partialChanged(path:)`, replaces nothing, and the next

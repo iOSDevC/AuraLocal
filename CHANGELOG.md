@@ -115,6 +115,11 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   load path and `ChunkedDownloader` wait for each other per file or per Hugging Face snapshot, in one process and,
   through a `flock` on a lock file next to the destination, across processes sharing the storage root (the `aura`
   CLI and AuraExample on a Mac). The later call returns the finished model without a transfer.
+- `ChunkedDownloader` replaces a file already at the destination instead of failing with "an item with the same
+  name already exists" on a single-stream download, and keeps it without a transfer when it hashes to the
+  `expectedSHA256` passed.
+- `GGUFModelDownloader.cancel()` also ends calls of that downloader still waiting for the file, and a download
+  cancelled while it verifies is no longer moved into place after the next download of the file started.
 - RAG document IDs survive relaunches, and vectors from a provider the index no longer matches are never stored.
 - The memory safeguards that were documented but inert (`evictAllButMostRecent`, the iOS OOM guards).
 - `scripts/package-cli.sh` finds the build products of newer SwiftPM (`.build/out/Products/Release`), and the

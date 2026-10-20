@@ -984,8 +984,9 @@ Caches; `DownloadedModels.modelsDirectory` is the GGUF root downloads write to a
 root that is read. `GGUFModelDownloader` (the GGUF path of `ModelManager.load`) and
 `ChunkedDownloader.download(from:to:fileName:expectedSHA256:onProgress:)` throw `ModelIntegrityError` too; the
 latter checks only a hash you pass. `GGUFModelDownloader` and the MLX load path throw `DownloadConflictError` too.
-`ChunkedDownloader` waits for another download to the same destination and, when that one ran in the same
-process and fetched the same URL and hash, returns its file without a transfer.
+`ChunkedDownloader` waits for another download to the same destination. It returns the file there without a
+transfer when that download ran in the same process and fetched the same URL and hash, or when the file hashes to
+the `expectedSHA256` passed; otherwise it downloads again and replaces the file.
 
 ### DownloadRecords
 
