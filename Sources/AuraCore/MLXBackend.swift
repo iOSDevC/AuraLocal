@@ -18,9 +18,11 @@ import AppKit
 
 /// Inference backend powered by Apple's MLX framework.
 ///
-/// Loads the full model into unified memory via `LLMModelFactory` or
-/// `VLMModelFactory` and delegates generation to `MLXLMCommon.generate()`.
-/// Best for models that fit entirely in device RAM (typically up to 4B on iOS).
+/// Loads the full model into unified memory via `LLMModelFactory` or `VLMModelFactory` and samples with
+/// mlx-swift-lm's `TokenIterator`. Best for models that fit entirely in device RAM (typically up to 4B on iOS).
+///
+/// A text model's generations keep their KV cache, and the next one prefills only the tokens its prompt does not
+/// share with it (``MLXPromptCache``).
 @MainActor
 final class MLXBackend: InferenceBackend {
 
@@ -28,11 +30,22 @@ final class MLXBackend: InferenceBackend {
 
     private var modelContainer: ModelContainer?
     private let model: Model
-    let parameters: GenerateParameters
+    /// Read when a generation starts; tests change `prefillStepSize` to reproduce a reused cache's prefill split.
+    var parameters: GenerateParameters
     private(set) var lastGenerationStats: GenerationStats?
     private(set) var lastContextOverflow: ContextWindowOverflow?
+    /// Replaced rather than emptied, so a decode still running keeps the one it started with.
+    private var promptCache = MLXPromptCache()
+    /// Off, every generation prefills its whole prompt (A/B tests). Changing it starts a new, empty cache.
+    var reusesPromptCache = true {
+        didSet { promptCache = MLXPromptCache() }
+    }
 
     var isLoaded: Bool { modelContainer != nil }
+    /// Hits and misses of the current prompt cache; read between generations.
+    var promptCacheStats: MLXPromptCache.ReuseStats { promptCache.stats }
+
+    private var reusesTextCache: Bool { reusesPromptCache && model.category == .text }
 
     // MARK: - Init
 
@@ -113,25 +126,8 @@ final class MLXBackend: InferenceBackend {
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        guard let container = modelContainer else {
-            throw AuraError.modelNotLoaded
-        }
-
-        var msgs: [[String: String]] = []
-        if let sys = systemPrompt {
-            msgs.append(["role": "system", "content": sys])
-        }
-        msgs.append(["role": "user", "content": prompt])
-        let capturedMessages = msgs
-
-        return try await performGeneration(
-            container: container,
-            prepareInput: { context in
-                try await context.processor.prepare(input: .init(messages: capturedMessages))
-            },
-            maxTokens: maxTokens,
-            onToken: onToken
-        )
+        try await respond(to: Self.messages(prompt: prompt, systemPrompt: systemPrompt), maxTokens: maxTokens,
+                          onToken: onToken)
     }
 
     /// Nothing in the MLX path applies a grammar to the logits.
@@ -154,7 +150,6 @@ final class MLXBackend: InferenceBackend {
         guard let container = modelContainer else {
             throw AuraError.modelNotLoaded
         }
-
         var tempURL: URL?
         let capturedInput: UserInput
         if let img = image, let url = saveImageToTemp(img) {
@@ -171,14 +166,11 @@ final class MLXBackend: InferenceBackend {
         }
 
         nonisolated(unsafe) let unsafeInput = capturedInput
-        return try await performGeneration(
-            container: container,
-            prepareInput: { context in
-                try await context.processor.prepare(input: unsafeInput)
-            },
-            maxTokens: maxTokens,
-            onToken: onToken
-        )
+        let request = MLXDecodeRequest(budget: maxTokens, toolSpecs: nil, earlierText: "",
+                                       reusesCache: image == nil && reusesTextCache)
+        return try await reply(container: container, request: request, onToken: onToken) { context in
+            try await context.processor.prepare(input: unsafeInput)
+        }
     }
 
     func generate(
@@ -186,98 +178,65 @@ final class MLXBackend: InferenceBackend {
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        guard let container = modelContainer else {
-            throw AuraError.modelNotLoaded
-        }
-
-        return try await performGeneration(
-            container: container,
-            prepareInput: { context in
-                try await context.processor.prepare(input: .init(messages: messages))
-            },
-            maxTokens: maxTokens,
-            onToken: onToken
-        )
+        try await respond(to: messages.map(Self.message), maxTokens: maxTokens, onToken: onToken)
     }
 
     func unload() {
         modelContainer = nil
+        promptCache = MLXPromptCache()
     }
 
     // MARK: - Core generation
 
-    private struct Output: Sendable {
-        let text: String
-        let stats: GenerationStats
-        let overflow: ContextWindowOverflow?
-    }
-
-    private func performGeneration(
-        container: ModelContainer,
-        prepareInput: @escaping @Sendable (ModelContext) async throws -> LMInput,
+    /// One reply to `messages`.
+    private func respond(
+        to messages: [[String: any Sendable]],
         maxTokens: Int,
         onToken: @escaping @MainActor (String) -> Void
     ) async throws -> String {
-        lastGenerationStats = nil
-        let params = self.parameters
-        lastContextOverflow = nil
-        let output = try await container.perform { (context: ModelContext) async throws -> Output in
-            let start = ContinuousClock.now
-            var firstToken: ContinuousClock.Instant?
-            var lastToken: ContinuousClock.Instant?
-            let input = try await prepareInput(context)
-            let result = try MLXLMCommon.generate(
-                input: input,
-                parameters: params,
-                context: context
-            ) { tokens in
-                let now = ContinuousClock.now
-                if firstToken == nil { firstToken = now }
-                lastToken = now
-                guard !Task.isCancelled else { return .stop }
-
-                let partial = context.tokenizer.decode(tokenIds: tokens)
-                Task { @MainActor in
-                    guard !Task.isCancelled else { return }
-                    onToken(partial)
-                }
-                return tokens.count >= maxTokens ? .stop : .more
-            }
-            // `result.generateTime` also covers the step that drew the stop token, which `generationTokenCount`
-            // leaves out; timing the callbacks matches llama.cpp's first-to-last-piece span.
-            let decodeTime = firstToken.flatMap { first in lastToken.map { GenerationStats.seconds($0 - first) } } ?? 0
-            let stats = GenerationStats(
-                backend: .mlx,
-                source: .runtime,
-                promptTokens: result.promptTokenCount,
-                generatedTokens: result.generationTokenCount,
-                promptTime: result.promptTime,
-                timeToFirstToken: GenerationStats.seconds((firstToken ?? ContinuousClock.now) - start),
-                decodeTime: decodeTime
-            )
-            let overflow = params.maxKVSize.flatMap {
-                ContextWindowOverflow.detect(promptTokens: result.promptTokenCount,
-                                             generatedTokens: result.generationTokenCount, windowSize: $0)
-            }.flatMap { candidate in
-                Self.cacheHonorsWindow(context.model, params) ? candidate : nil
-            }
-            return Output(text: context.tokenizer.decode(tokenIds: result.tokenIds), stats: stats, overflow: overflow)
+        guard let container = modelContainer else {
+            throw AuraError.modelNotLoaded
         }
-        lastGenerationStats = output.stats
-        lastContextOverflow = output.overflow
-        return output.text
+        let request = MLXDecodeRequest(budget: maxTokens, toolSpecs: nil, earlierText: "",
+                                       reusesCache: reusesTextCache)
+        return try await reply(container: container, request: request, onToken: onToken) { context in
+            try await context.processor.prepare(input: UserInput(messages: messages))
+        }
     }
 
-    /// Several architectures (Qwen3.5 text, Gemma 3/4, LFM2…) build their own caches and ignore `maxKVSize`, so
-    /// nothing was dropped there. Comparing the caches built with and without it tells them apart.
-    nonisolated private static func cacheHonorsWindow(_ model: any LanguageModel, _ params: GenerateParameters) -> Bool {
-        var unbounded = params
-        unbounded.maxKVSize = nil
-        return model.newCache(parameters: params).map(\.maxSize)
-            != model.newCache(parameters: unbounded).map(\.maxSize)
+    private func reply(
+        container: ModelContainer,
+        request: MLXDecodeRequest,
+        onToken: @escaping @MainActor (String) -> Void,
+        prepare: @escaping @Sendable (ModelContext) async throws -> LMInput
+    ) async throws -> String {
+        lastGenerationStats = nil
+        lastContextOverflow = nil
+        let parameters = self.parameters
+        let promptCache = self.promptCache
+        let outcome = try await container.perform { (context: ModelContext) async throws -> MLXDecodeOutcome in
+            let started = ContinuousClock.now
+            let input = try await prepare(context)
+            return try MLXDecodeLoop.run(input, request: request, context: context, parameters: parameters,
+                                         promptCache: promptCache, started: started, onToken: onToken)
+        }
+        lastGenerationStats = MLXDecodeOutcome.stats(of: [outcome])
+        lastContextOverflow = outcome.overflow
+        return outcome.text
     }
 
     // MARK: - Helpers
+
+    nonisolated static func messages(prompt: String, systemPrompt: String?) -> [[String: any Sendable]] {
+        let user: [String: any Sendable] = ["role": "user", "content": prompt]
+        guard let systemPrompt else { return [user] }
+        let system: [String: any Sendable] = ["role": "system", "content": systemPrompt]
+        return [system, user]
+    }
+
+    nonisolated private static func message(_ entry: [String: String]) -> [String: any Sendable] {
+        entry.mapValues { $0 as any Sendable }
+    }
 
     private func saveImageToTemp(_ image: PlatformImage) -> URL? {
         let url = FileManager.default.temporaryDirectory
