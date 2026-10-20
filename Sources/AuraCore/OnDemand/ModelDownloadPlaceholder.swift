@@ -109,6 +109,7 @@ public struct ModelDownloadPlaceholder: View {
             Text(message)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .multilineTextAlignment(.center)
     }
