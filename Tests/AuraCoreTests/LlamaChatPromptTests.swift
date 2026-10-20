@@ -245,6 +245,25 @@ final class LlamaChatPromptTests: XCTestCase {
                        try LlamaPromptRenderer(template: Self.chatML + "\n\n").render([.user("Hi")]))
     }
 
+    /// Whether the next round can keep the KV cache (``GGUFPromptReuse``) depends on how the template takes a result.
+    func testOnlyANativeToolTurnLetsTheNextRoundExtendTheReply() throws {
+        let reuse = GGUFPromptReuse(boundaries: ["<|im_start|>", "<|im_end|>"])
+        let request: [LlamaChatMessage] = [.user("Echo hi")]
+        let reply = "<tool_call>\n{\"name\": \"echo\", \"arguments\": {\"text\": \"hi\"}}\n</tool_call>"
+        let round = request + [.assistant(reply), .tool(#"{"text":"hi"}"#)]
+
+        let native = LlamaPromptRenderer(template: Self.taggedChatML, tools: [AnyLLMTool(EchoTool())])
+        let resident = try native.render(request, toolRoundsRemain: true) + reply
+        let rest = reuse.suffix(of: try native.render(round, toolRoundsRemain: true), after: resident)
+        XCTAssertEqual(rest?.hasPrefix("<|im_end|>\n<|im_start|>tool\n"), true, rest ?? "missed")
+
+        let text = LlamaPromptRenderer(template: Self.chatML, tools: [AnyLLMTool(EchoTool())])
+        let held = try text.render(request, toolRoundsRemain: true) + reply
+        let next = try text.render(round, toolRoundsRemain: true)
+        XCTAssertTrue(next.hasPrefix(held + "\n<tool_response>"), next)
+        XCTAssertNil(reuse.suffix(of: next, after: held), "the result joins the reply's turn after a newline")
+    }
+
     /// Qwen2.5's way of writing a call.
     private static let taggedChatML = """
     {%- if tools %}{{- 'TOOLS|' }}{%- endif %}{%- for message in messages %}\

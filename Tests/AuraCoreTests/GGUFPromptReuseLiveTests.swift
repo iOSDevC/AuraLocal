@@ -16,6 +16,7 @@ final class GGUFPromptReuseLiveTests: XCTestCase {
         "My neighbour Tomás is worried about stings. What can I tell him?", "Where could I sell the honey?",
         "How should I store it?", "Name one flower bees like.", "What do bees drink?", "What is my name?",
     ]
+    private static let padding = " Please answer kindly, keep it practical, and mention one detail I could try this week."
 
     // MARK: - Tests
 
@@ -30,7 +31,7 @@ final class GGUFPromptReuseLiveTests: XCTestCase {
             let reused = try await measuredTurn(history, on: reusing, maxTokens: 96)
             XCTAssertEqual(reused.text, fresh.text, "turn \(rows.count + 1)")
             XCTAssertEqual(reused.promptTokens, fresh.promptTokens, "turn \(rows.count + 1): the cache holds the prompt")
-            rows.append(Row(turn: rows.count + 1, full: fresh, reused: reused))
+            rows.append(Self.row(rows.count + 1, full: fresh, reused: reused))
             history.append(.assistant(fresh.text))
         }
         print(Row.table(rows, title: "10 turns at 4096, \(try modelURL().lastPathComponent), reuse vs full prefill"))
@@ -64,7 +65,7 @@ final class GGUFPromptReuseLiveTests: XCTestCase {
             let fresh = try await measuredTurn(history, on: baseline, maxTokens: 64)
             let reused = try await measuredTurn(history, on: reusing, maxTokens: 64)
             if reused.text != fresh.text { diverged.append(rows.count + 1) }
-            rows.append(Row(turn: rows.count + 1, full: fresh, reused: reused))
+            rows.append(Self.row(rows.count + 1, full: fresh, reused: reused))
             history.append(.assistant(fresh.text))
         }
         print(Row.table(rows, title: "10 turns after a ~2k-token system prompt, \(try modelURL().lastPathComponent)")
@@ -119,14 +120,13 @@ final class GGUFPromptReuseLiveTests: XCTestCase {
     func testWindowTrimmingFallsBackToAFullPrefill() async throws {
         let reusing = try await makeEngine(context: 1024)
         let baseline = try await makeEngine(context: 1024, reuses: false)
-        let padding = " Please answer kindly, keep it practical, and mention one detail I could try this week."
         var history: [LlamaChatMessage] = [.system(Self.system)]
         var reusedTurns = 0
         var trimmedTurns = 0
         var dropped = 0
         var diverged: [Int] = []
         for turn in 0..<22 {
-            history.append(.user(Self.questions[turn % Self.questions.count] + padding))
+            history.append(.user(Self.questions[turn % Self.questions.count] + Self.padding))
             let fresh = try await baseline.respond(to: history, maxTokens: 48, shouldStop: nil) { _ in }
             let reply = try await reusing.respond(to: history, maxTokens: 48, shouldStop: nil) { _ in }
             XCTAssertFalse(reply.text.isEmpty, "turn \(turn + 1) returned nothing")
@@ -151,24 +151,36 @@ final class GGUFPromptReuseLiveTests: XCTestCase {
     /// before's prompt, then the reply's tokens, then the new part on its own. Different replies with reuse can then
     /// only come from llama.cpp computing the reply's cache one token at a time instead of in one batch.
     func testAReusedPromptTokenizesLikeTheWholePrompt() async throws {
-        let engine = try await makeEngine(context: 2048)
+        try await assertReusedPromptsTokenizeLikeWholePrompts(context: 2048, maxTokens: 96, padding: "", turns: 6)
+        // The first prompts of testWindowTrimmingFallsBackToAFullPrefill, whose turn 5 can reply differently.
+        try await assertReusedPromptsTokenizeLikeWholePrompts(context: 1024, maxTokens: 48, padding: Self.padding,
+                                                              turns: 5)
+    }
+
+    private func assertReusedPromptsTokenizeLikeWholePrompts(context size: Int, maxTokens: Int, padding: String,
+                                                             turns: Int) async throws {
+        let engine = try await makeEngine(context: size)
         let context = try XCTUnwrap(engine.contextForTesting)
         var history: [LlamaChatMessage] = [.system(Self.system)]
         var held: (text: String, tokens: [Int32])?
-        for question in Self.questions.prefix(6) {
-            history.append(.user(question))
+        let reuse = GGUFPromptReuse(boundaries: ["<|im_end|>", "<end_of_turn>", "<|eot_id|>"])
+        for question in Self.questions.prefix(turns) {
+            history.append(.user(question + padding))
             let prompt = try engine.renderer.render(history)
             let whole = Self.tokens(of: prompt, in: context)
             if let held {
-                let suffix = try XCTUnwrap(GGUFPromptReuse(boundaries: ["<|im_end|>", "<end_of_turn>", "<|eot_id|>"])
-                    .suffix(of: prompt, after: held.text), "the prompt extends the last one and its reply")
+                let suffix = try XCTUnwrap(reuse.suffix(of: prompt, after: held.text),
+                                           "the prompt extends the last one and its reply")
                 XCTAssertEqual(whole, held.tokens + Self.tokens(of: suffix, in: context), question)
             }
             var pieces: [String] = []
-            let reply = try await engine.respond(to: history, maxTokens: 96, shouldStop: nil) { pieces.append($0) }
-            XCTAssertLessThan(pieces.count, 96, "the reply ended by itself")
-            // One token per piece: each piece is one sampled token's text.
-            held = (prompt + reply.text, whole + pieces.flatMap { Self.tokens(of: $0, in: context) })
+            let reply = try await engine.respond(to: history, maxTokens: maxTokens, shouldStop: nil) { pieces.append($0) }
+            XCTAssertLessThan(pieces.count, maxTokens, "the reply ended by itself")
+            let replyTokens = pieces.flatMap { Self.tokens(of: $0, in: context) }
+            XCTAssertEqual(replyTokens.count, pieces.count, "each piece is one sampled token's text")
+            try await engine.waitForDecoder()
+            XCTAssertEqual(Self.cachedTokens(in: context), whole.count + pieces.count, "the cache holds the prompt and reply")
+            held = (prompt + reply.text, whole + replyTokens)
             history.append(.assistant(reply.text))
         }
     }
@@ -221,14 +233,14 @@ final class GGUFPromptReuseLiveTests: XCTestCase {
     }
 
     private struct Row {
-        let turn: Int
+        let index: Int
         let full: Turn
         let reused: Turn
 
         static func table(_ rows: [Row], title: String) -> String {
             let header = "turn | prompt tok | prefilled full / reuse | wall full / reuse (ms) | first piece full / reuse (ms)"
             let lines = rows.map { row in
-                "\(row.turn) | \(row.full.promptTokens) | \(row.full.decodedTokens) / \(row.reused.decodedTokens) | "
+                "\(row.index) | \(row.full.promptTokens) | \(row.full.decodedTokens) / \(row.reused.decodedTokens) | "
                     + "\(milliseconds(row.full.elapsed)) / \(milliseconds(row.reused.elapsed)) | "
                     + "\(milliseconds(row.full.firstPiece)) / \(milliseconds(row.reused.firstPiece))"
             }
@@ -242,6 +254,10 @@ final class GGUFPromptReuseLiveTests: XCTestCase {
         private static func milliseconds(_ duration: Duration) -> Int {
             Int(duration.components.seconds * 1000 + duration.components.attoseconds / 1_000_000_000_000_000)
         }
+    }
+
+    private static func row(_ index: Int, full: Turn, reused: Turn) -> Row {
+        Row(index: index, full: full, reused: reused)
     }
 
     /// Token counts come from the KV position: after a turn that ended by itself it holds the prompt and one token
@@ -267,6 +283,10 @@ final class GGUFPromptReuseLiveTests: XCTestCase {
         let prompt = after - pieces + (cut ? 1 : 0)
         return Turn(text: reply.text, elapsed: elapsed, firstPiece: first ?? elapsed, promptTokens: prompt,
                     decodedTokens: reused ? prompt - before : prompt, wasReused: reused, cut: cut)
+    }
+
+    private static func cachedTokens(in context: LocalLLMClientLlama.Context) -> Int {
+        Int(context.position)
     }
 
     private static func tokens(of text: String, in context: LocalLLMClientLlama.Context) -> [Int32] {
