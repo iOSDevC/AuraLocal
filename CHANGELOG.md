@@ -47,11 +47,12 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
     method.
 - **Behaviour change:** with an `outputSchema`, no tools and a GGUF model on `LlamaCppBackend`, each `AuraSession`
   generation (repairs included) runs on a dedicated constrained llama.cpp client: replies follow the schema's
-  structure by construction, with required properties in `required` order and optional ones by name; each
-  generation pays a client build and grammar sampling (1.0–1.35 s against 0.41–0.60 s per reply on Qwen2.5-0.5B,
-  M1 Pro; see [Schema grammars](docs/guide/backends.md#schema-grammars)). This includes
-  `aura receipt extract|eval --model` with a GGUF model. MLX and layer-streaming keep validation only.
-  `usesSchemaGrammar = false` restores the previous path.
+  structure by construction, with required properties in `required` order and optional ones by name; objects
+  carry only their declared properties, even when `additionalProperties` allows more; each generation pays a
+  client build and grammar sampling (1.0–1.35 s against 0.41–0.60 s per reply on Qwen2.5-0.5B, M1 Pro; see
+  [Schema grammars](docs/guide/backends.md#schema-grammars)). This includes `aura receipt extract|eval --model`
+  with such a model. MLX and layer-streaming keep validation only. `usesSchemaGrammar = false` restores the
+  previous path.
 
 ### Added
 

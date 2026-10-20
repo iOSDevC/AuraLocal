@@ -620,9 +620,14 @@ Objects carry only their declared properties, even when `additionalProperties` a
 ones first, in `required` order, then the optional ones sorted by name. That order can differ from the
 one the model would write unprompted, which may cost answer quality. An object admits any members
 instead when it has more than 16 properties and none required, or when its combinators name a
-property it does not declare (unless `additionalProperties` is `false`). A free-form object can repeat a
-member name, which validation then rejects. A grammar of more than 512 rules or 64 KiB admits any JSON
-value.
+property it does not declare (unless `additionalProperties` is `false`). A property, `items` or
+`additionalProperties` schema that a combinator next to it also constrains admits any value. A free-form
+object can repeat a member name, which validation then rejects. A grammar of more than 512 rules or 64 KiB
+admits any JSON value.
+
+Numbers have no digit limit. A string admits no `\u` escape of a UTF-16 surrogate, so each character
+it admits is one Unicode scalar, as `minLength` and `maxLength` count them; a character outside the
+Basic Multilingual Plane is written as UTF-8.
 
 Each constrained generation builds a dedicated llama.cpp client and samples the grammar over the whole
 vocabulary; [Schema grammars]({{ '/guide/backends' | relative_url }}#schema-grammars) in the backends guide

@@ -65,8 +65,8 @@ loading anything.
 
 [Constrained Generation]({{ '/guide/backends' | relative_url }}#constrained-generation-gguf-only) restricts a GGUF
 reply to JSON or a GBNF grammar. `AuraSession` enforces a profile's `OutputSchema` by validation and repair and,
-on a GGUF model without tools, also decodes under a grammar built from the schema
-([Structured output]({{ '/api/core' | relative_url }}#structured-output)).
+on a GGUF model loaded in full (`LlamaCppBackend`) and without tools, also decodes under a grammar built from the
+schema ([Structured output]({{ '/api/core' | relative_url }}#structured-output)).
 
 ## Ask a bigger model
 

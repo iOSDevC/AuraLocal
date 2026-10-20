@@ -310,9 +310,9 @@ Memory was not measured for schema grammars; the per-call peak above was measure
 
 - The grammar fixes the member order (required properties in `required` order), so a reply can start differently
   from what the model would write unprompted. With `required: ["age", "name"]` both models wrote `age` first.
-- `maxTokens` still cuts a reply, and a string or a free-form object can run until it does: on an open-ended prompt
-  under the schema `{}`, Qwen2.5-0.5B repeated members until `maxTokens` (200). A cut reply fails validation and is
-  repaired.
+- `maxTokens` still cuts a reply, and a string, a number or a free-form object can run until it does: on an
+  open-ended prompt under the schema `{}`, Qwen2.5-0.5B repeated members until `maxTokens` (200). A cut reply fails
+  validation and is repaired.
 - Bounds the grammar cannot express (`maximum`, lengths above 64) still cost repairs.
 
 ---
