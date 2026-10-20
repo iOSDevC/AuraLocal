@@ -68,7 +68,7 @@ public struct ModelDownloadPlaceholder: View {
     private var downloads: OnDemandDownloads { .shared }
 
     public var body: some View {
-        // Centred when it fits; scrolls at large Dynamic Type sizes.
+        // Centered when it fits; scrolls at large Dynamic Type sizes.
         ViewThatFits(in: .vertical) {
             content
             ScrollView { content }
