@@ -25,7 +25,8 @@ struct ContentView: View {
     init() {
         let defaults = UserDefaults.standard
         let name = defaults.string(forKey: "auraExample.openTab") ?? defaults.string(forKey: "auraExample.selectedTab")
-        _selectedTab = State(initialValue: name.flatMap(AppTab.init(rawValue:)) ?? .chat)
+        let restored = name.flatMap(AppTab.init(rawValue:)) ?? .chat
+        _selectedTab = State(initialValue: AppTab.shown.contains(restored) ? restored : .chat)
     }
 
     var body: some View {
@@ -61,13 +62,15 @@ struct ContentView: View {
                     MLToolsTab()
                 }
 
-                // AgentCrew — requires iOS 26+ with Apple Intelligence
-                if #available(iOS 26, macOS 26, *) {
+                // AgentCrew needs Apple Intelligence (OS 26); its long pipeline suits a Mac, not a phone.
+                #if !os(iOS)
+                if #available(macOS 26, visionOS 26, *) {
                     Tab("Agents", systemImage: "cpu", value: AppTab.agents) {
                         AgentCrewInlineView()
                             .environmentObject(appState)
                     }
                 }
+                #endif
             }
         }
         .tabViewStyle(.sidebarAdaptable)
@@ -77,6 +80,15 @@ struct ContentView: View {
 
 enum AppTab: String {
     case chat, voice, image, library, models, hybrid, ml, agents
+
+    /// Tabs this platform shows; a remembered tab outside it falls back to Chat.
+    static var shown: Set<AppTab> {
+        #if os(iOS)
+        [.chat, .voice, .image, .library, .models, .hybrid, .ml]
+        #else
+        [.chat, .voice, .image, .library, .models, .hybrid, .ml, .agents]
+        #endif
+    }
 }
 
 // MARK: - AgentCrew Inline View

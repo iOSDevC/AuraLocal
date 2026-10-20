@@ -489,7 +489,7 @@ development-signed (runs on this Mac); to distribute it, re-sign with a Develope
 identity and notarize (`xcrun notarytool submit … && xcrun stapler staple …`).
 Requires macOS 26 (AgentCrew).
 
-AuraExample also runs on iPhone (iOS 18.6+; the Agents tab needs iOS 26). Each section gets its own models:
+AuraExample also runs on iPhone (iOS 18.6+); the Agents tab is Mac-only (macOS 26). Each section gets its own models:
 **Chat** (text, images and documents in one conversation, with Text, Vision, OCR and Tools badges per model)
 downloads from the catalog or searches Hugging Face for chat models that run on the phone, **Voice** uses the
 downloaded text models, and **Models** (under More) lists what is on disk with its size and Delete. See
