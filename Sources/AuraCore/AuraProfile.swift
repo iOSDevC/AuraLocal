@@ -102,8 +102,8 @@ public struct SamplingParams: Sendable, Equatable, Codable {
 
 /// A structured-output contract carried by a profile. Enforced by validation and repair: ``AuraSession`` checks each
 /// reply with ``OutputSchemaValidator`` and re-prompts with the violations (at most ``AuraSession/maxRepairAttempts``
-/// times). Not constrained decoding: llama.cpp fixes a grammar when the context is created, and ``ModelManager``
-/// caches one per model and sampling; there is no JSON-Schema-to-GBNF converter, and MLX has no grammar engine.
+/// times). On a GGUF model loaded in full, and for a profile without tools, each generation is also constrained by a
+/// grammar built from the schema (``AuraSession/usesSchemaGrammar``). MLX and layer-streaming validate only.
 public enum OutputSchema: Sendable, Equatable, Codable {
     /// A JSON Schema document, limited to the keywords ``OutputSchemaValidator`` supports. Anything else,
     /// including a GBNF grammar, is rejected with ``OutputSchemaError`` when the profile is applied.
