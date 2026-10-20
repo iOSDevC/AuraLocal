@@ -288,6 +288,11 @@ private struct RequiredModelRow: View {
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
+            if Self.isSimulator && need.entry.format == .mlx {
+                Label("MLX can't run in the Simulator; this model loads on a device.", systemImage: "iphone")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
@@ -321,6 +326,12 @@ private struct RequiredModelRow: View {
             }
         }
     }
+
+    #if targetEnvironment(simulator)
+    private static let isSimulator = true
+    #else
+    private static let isSimulator = false
+    #endif
 
     private static func bytes(_ count: Int64) -> String {
         count.formatted(.byteCount(style: .file))
