@@ -253,6 +253,48 @@ final class OutputSchemaGrammarTests: XCTestCase {
         XCTAssertNotEqual(try rootReference(closed), "jobject", "closed objects cannot gain members anyway")
     }
 
+    func testCombinatorsReachingIntoASubschemaWidenIt() throws {
+        let nested = #"""
+            {"type":"object","required":["address"],
+             "properties":{"address":{"type":"object","properties":{"street":{"type":"string"}}}},
+             "allOf":[{"properties":{"address":{"required":["city"]}}}]}
+            """#
+        XCTAssertEqual(try rules(nested), #"""
+            root ::= s2
+            s1 ::= "\"address\"" ws ":" ws jvalue
+            s2 ::= "{" ws s1 "}" ws
+            """#, "no rules left over from the widened subschema")
+
+        let deeper = #"""
+            {"type":"object","required":["a"],"properties":{"a":{"type":"object","properties":{"x":{"type":"string"}}}},
+             "allOf":[{"anyOf":[{"properties":{"a":{"required":["y"]}}},{"required":["a"]}]}]}
+            """#
+        let viaExtraSchema = #"""
+            {"type":"object","required":["a"],"properties":{"a":{"type":"object","properties":{"x":{"type":"string"}}}},
+             "allOf":[{"additionalProperties":{"required":["y"]}}]}
+            """#
+        for schema in [deeper, viaExtraSchema] {
+            XCTAssertTrue(try rules(schema).contains(#"s1 ::= "\"a\"" ws ":" ws jvalue"#), schema)
+        }
+        let items = #"""
+            {"type":"array","items":{"type":"object","properties":{"a":{"type":"string"}}},
+             "allOf":[{"items":{"required":["b"]}}]}
+            """#
+        XCTAssertEqual(try rootReference(items), "jarray")
+        let map = #"""
+            {"type":"object","additionalProperties":{"type":"object","properties":{"x":{"type":"string"}}},
+             "allOf":[{"properties":{"k":{"required":["y"]}},"required":["k"]}]}
+            """#
+        XCTAssertEqual(try rootReference(map), "jobject")
+
+        let excluded = #"{"type":"object","required":["a"],"properties":{"a":false},"allOf":[{"properties":{"a":{}}}]}"#
+        XCTAssertNil(try grammar(excluded), "a widened subschema that admits nothing stays unsatisfiable")
+        let untouched = #"""
+            {"type":"object","required":["a"],"properties":{"a":{"type":"string"}},"allOf":[{"required":["a"]}]}
+            """#
+        XCTAssertTrue(try rules(untouched).contains(#"s1 ::= "\"a\"" ws ":" ws jstring"#))
+    }
+
     func testAdditionalPropertiesSchemaOnly() throws {
         XCTAssertEqual(try rules(#"{"type":"object","additionalProperties":{"type":"integer"}}"#), #"""
             root ::= s1
@@ -390,6 +432,11 @@ final class OutputSchemaGrammarTests: XCTestCase {
         """#,
         #"{"type":"object","additionalProperties":{"type":"boolean"}}"#,
         #"{"oneOf":[{"const":"a\"b\\c\u0001"},{"enum":[1,2.5,-3e2,null,true]}]}"#,
+        #"""
+        {"type":"object","required":["address"],
+         "properties":{"address":{"type":"object","properties":{"street":{"type":"string"}}}},
+         "allOf":[{"properties":{"address":{"required":["city"]}}}]}
+        """#,
     ]
 
     func testEveryGrammarIsWellFormed() throws {

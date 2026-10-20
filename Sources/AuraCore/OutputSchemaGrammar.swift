@@ -181,6 +181,27 @@ struct SchemaGrammarBuilder {
         return combinatorBranches(of: rules).reduce(into: own) { $0.formUnion(memberNames(in: $1)) }
     }
 
+    /// Whether a combinator left to validation, at any depth, constrains the subschema `location` finds in a branch.
+    private static func branches(of rules: SchemaRules, reach location: (SchemaRules) -> Bool) -> Bool {
+        combinatorBranches(of: rules).contains { branch in
+            guard case .rules(let inner) = branch else { return false }
+            return location(inner) || branches(of: inner, reach: location)
+        }
+    }
+
+    private static func hasValueSchema(_ rules: SchemaRules) -> Bool {
+        guard case .rules = rules.additionalProperties else { return false }
+        return true
+    }
+
+    /// A subschema a combinator also constrains admits any value, since the combinator may require members it does not
+    /// declare. Its rules are built on a copy and dropped, so only satisfiability is kept.
+    private mutating func reference(for node: SchemaNode, constrainedElsewhere: Bool) -> String? {
+        guard constrainedElsewhere else { return reference(for: node) }
+        var scratch = self
+        return scratch.reference(for: node).map { _ in "jvalue" }
+    }
+
     // MARK: Types
 
     private static func inferredTypes(of rules: SchemaRules) -> [SchemaType] {
@@ -231,7 +252,9 @@ struct SchemaGrammarBuilder {
     private mutating func arrayReference(_ rules: SchemaRules) -> String? {
         guard let count = Self.cappedBounds(rules.minItems, rules.maxItems) else { return nil }
         var itemRule: String? = "jvalue"
-        if let items = rules.items { itemRule = reference(for: items) }
+        if let items = rules.items {
+            itemRule = reference(for: items, constrainedElsewhere: Self.branches(of: rules) { $0.items != nil })
+        }
         guard let item = itemRule, count.max != 0 else {
             return (rules.minItems ?? 0) > 0 ? nil : define(#""[" ws "]" ws"#)
         }
@@ -258,7 +281,7 @@ struct SchemaGrammarBuilder {
 
     // Narrower than the schema but satisfiable: only declared members, since extra ones would risk duplicate keys.
     private mutating func objectReference(_ rules: SchemaRules) -> String? {
-        if rules.properties.isEmpty && rules.required.isEmpty { return mapReference(rules.additionalProperties) }
+        if rules.properties.isEmpty && rules.required.isEmpty { return mapReference(rules) }
         if Self.branchesNameUndeclaredMembers(rules) { return "jobject" }
         let requiredKeys = Self.uniqued(rules.required)
         let optionalKeys = rules.properties.keys.filter { !requiredKeys.contains($0) }.sorted()
@@ -279,9 +302,9 @@ struct SchemaGrammarBuilder {
     }
 
     private mutating func valueReference(for key: String, in rules: SchemaRules) -> String? {
-        if let declared = rules.properties[key] { return reference(for: declared) }
-        guard let extra = rules.additionalProperties else { return "jvalue" }
-        return reference(for: extra)
+        let subschema = rules.properties[key] ?? rules.additionalProperties ?? .constant(true)
+        let reached = Self.branches(of: rules) { $0.properties[key] != nil || Self.hasValueSchema($0) }
+        return reference(for: subschema, constrainedElsewhere: reached)
     }
 
     private static func pair(_ key: String, _ value: String) -> String {
@@ -305,9 +328,10 @@ struct SchemaGrammarBuilder {
     }
 
     /// An object with no declared members: any names, each value admitted by `additionalProperties`.
-    private mutating func mapReference(_ extra: SchemaNode?) -> String {
-        guard let extra else { return "jobject" }
-        guard let value = reference(for: extra) else { return define(#""{" ws "}" ws"#) }
+    private mutating func mapReference(_ rules: SchemaRules) -> String {
+        guard let extra = rules.additionalProperties else { return "jobject" }
+        let reached = Self.branches(of: rules) { !$0.properties.isEmpty || Self.hasValueSchema($0) }
+        guard let value = reference(for: extra, constrainedElsewhere: reached) else { return define(#""{" ws "}" ws"#) }
         if value == "jvalue" { return "jobject" }
         let member = #"jstring ":" ws "# + value
         return define(#""{" ws ( "# + member + #" ( "," ws "# + member + #" )* )? "}" ws"#)
