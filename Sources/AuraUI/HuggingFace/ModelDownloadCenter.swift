@@ -142,8 +142,11 @@ public final class ModelDownloadCenter {
     // MARK: Catalog rows
 
     /// Reserves a file for a catalog row's own download, so two transfers never write one `.partial`.
-    func claim(_ key: String) -> Bool {
-        guard activeKey != key, !claimedKeys.contains(key) else { return false }
+    func claim(_ candidate: Model) -> Bool {
+        let key = DownloadRecords.key(for: candidate)
+        guard activeKey != key, !claimedKeys.contains(key), !OnDemandDownloads.shared.isDownloading(candidate) else {
+            return false
+        }
         claimedKeys.insert(key)
         return true
     }
