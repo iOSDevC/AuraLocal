@@ -252,11 +252,13 @@ print(llm.lastToolTurn?.rounds ?? 0)
 
 {: .warning }
 > On MLX, calls are parsed in the format mlx-swift-lm infers from the model's `config.json` (JSON in `<tool_call>`
-> tags when it infers none): a model that writes another format gets no calls, and a call whose text does not
-> parse is dropped. Every call in a reply runs, the same tool twice included, and every generated token counts
-> against `maxTokens`, call text included. The tools reach the template only as `tools`, so a template that ignores
-> them leaves the model unaware of them. Each reply prefills only what the prompt cache does not hold. Checked on
-> Qwen3 0.6B 4-bit only. See
+> tags when it infers none): a model that writes another format gets no calls. With tagged formats (JSON in
+> `<tool_call>`, xmlFunction, gemma…) a call whose text does not parse is dropped, neither run nor shown. With
+> Llama 3's untagged format, a `{…}` that does not parse streams as text, and text after a `{` that never closes
+> is lost at the end of the reply. Every call in a reply runs, the same tool twice included, and every generated
+> token counts against `maxTokens`, call text included. The tools reach the template only as `tools`, so a
+> template that ignores them leaves the model unaware of them. Each reply prefills only what the prompt cache does
+> not hold. Checked on Qwen3 0.6B 4-bit only. See
 > [Prompt cache and tool rounds]({{ '/guide/backends' | relative_url }}#prompt-cache-and-tool-rounds-mlx).
 
 ### History Methods
@@ -576,8 +578,9 @@ private(set) var lastToolTurn: ToolTurnSummary?       // the last generation's; 
 `stream` sends `profile.instructions` as the system prompt and defaults `maxTokens` to
 `profile.sampling.maxTokens`. The default `makeEngine`, `AuraSession.liveEngine`, loads the model through
 `ModelManager` with the profile's tools and `sampling.temperature` and `sampling.topP`. `init` and
-`switchProfile` throw `ModelConfigurationError` for tools on an MLX model or an out-of-range temperature or top-p
-before building or tearing down an engine, whatever `makeEngine` is. One generation runs at a time: a new
+`switchProfile` throw `ModelConfigurationError` for tools on an MLX vision or document model (or any MLX model in
+the iOS Simulator) or an out-of-range temperature or top-p before building or tearing down an engine, whatever
+`makeEngine` is. One generation runs at a time: a new
 `stream` or a `switchProfile` cancels the previous one and waits for it to stop, also after `cancel()`, which returns without
 waiting. A `stream` or `switchProfile` called while a switch is rebuilding the engine waits for it,
 so that stream runs on the new profile. After a switch fails to build its engine, `stream` throws

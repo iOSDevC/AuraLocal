@@ -238,7 +238,8 @@ final class MLXToolLoopLiveTests: XCTestCase {
 
     // MARK: - Prompt cache reuse
 
-    /// A hit leaves the cache exactly as a full prefill split at the reused token would: the reply is bit-identical.
+    /// When every reused token was prefilled, a hit leaves the cache exactly as a full prefill split at the reused
+    /// token would: the reply is bit-identical.
     /// An unsplit full prefill can still differ, as any change of prefill split can (fp16 rounding), so the exact
     /// reference reproduces the split with `prefillStepSize`.
     func testAHitMatchesAFullPrefillSplitAtTheSameToken() async throws {

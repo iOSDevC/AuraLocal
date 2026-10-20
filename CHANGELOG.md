@@ -41,7 +41,7 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   prefilling the prompt and returning one token's text.
 - **Behaviour change (MLX prompt cache):** an MLX text model keeps the KV cache of its last generation, so the
   next prompt prefills only the tokens it does not share with it (prefill over an 8-turn conversation with Qwen3
-  0.6B: 0.46–0.61 s against 1.44–1.61 s). The cache stays in memory until `unload()` or an eviction. A greedy
+  0.6B: 0.46–0.61 s against 1.44–1.80 s). The cache stays in memory until `unload()` or an eviction. A greedy
   reply can differ from a full prefill's after a few dozen tokens, as with any change of prefill split; on a hit
   `lastGenerationStats.promptTime` covers only the tokens prefilled, so `prefillTokensPerSecond` overstates
   prefill speed, and AuraExample's model evaluation no longer shows it. MLX stats are timed by AuraLocal around

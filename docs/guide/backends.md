@@ -146,15 +146,17 @@ Used for all `.mlx` format models, from Granite Docling 258M up to Ornith 1.5 35
   layer of Gemma 3 once the conversation outgrows its window) and a prompt at or past `maxKVSize` get a new cache
   and a full prefill. Vision and document models, and a call with an image, always prefill in full. There is no
   public switch.
-- **What it saves:** over an 8-turn greedy conversation with Qwen3 0.6B 4-bit on an M1 Pro (two `swift test`
+- **What it saves:** over an 8-turn greedy conversation with Qwen3 0.6B 4-bit on an M1 Pro (four `swift test`
   runs), 7 prompts reused the cache, 86% of prompt tokens were not prefilled again, and prefill took 0.46–0.61 s in
-  all against 1.44–1.61 s without the cache (the 8th turn, 494 tokens: 53 ms against 321 ms in the first run). A
+  all against 1.44–1.80 s without the cache (the 8th turn, 494 tokens: 53 ms against 321 ms in the first run). A
   template that rewrites earlier assistant turns stops the reuse where it rewrites them: Qwen3 drops the `<think>`
   block of earlier replies, so each turn prefills the previous reply and the new user turn again.
-- **Same tokens, not always the same text:** a hit leaves the cache as a full prefill split at the same token
-  would, and the reply matches that bit for bit. fp16 results still depend on how a prompt is split into batches,
-  so a greedy reply can drift from an unsplit full prefill after a few dozen tokens: in that conversation 4 of 8
-  replies differed, as many as changing only the prefill chunk size, with no reuse, changed.
+- **Same tokens, not always the same text:** when every reused token was prefilled (as between Qwen3 turns,
+  whose template drops the earlier reply's think block), a hit leaves the cache as a full prefill split at the
+  same token would, and the reply matches that bit for bit. Reused reply tokens (tool rounds, or templates that
+  keep the reply verbatim) keep the K/V their decode steps wrote. fp16 results also depend on how a prompt is
+  split into batches, so a greedy reply can drift from an unsplit full prefill after a few dozen tokens: in that
+  conversation 4 of 8 replies differed, as many as changing only the prefill chunk size, with no reuse, changed.
 - **Memory and stats:** the cache stays allocated between generations, as large as the conversation's KV;
   `unload()`, and so an eviction, frees it. On a hit `lastGenerationStats.promptTime` covers only the tokens
   prefilled while `promptTokens` counts the whole prompt, so `prefillTokensPerSecond` is not a prefill speed. To
@@ -165,8 +167,10 @@ Used for all `.mlx` format models, from Granite Docling 258M up to Ornith 1.5 35
   of the turn, in which every generated token counts, call text included.
   - **Parsing:** mlx-swift-lm's parser for the format it infers from the model's `config.json` (`model_type`), or
     JSON in `<tool_call>` tags when it infers none. A model that writes another format gets no calls and its call
-    text streams as text; a call whose text does not parse is dropped, neither run nor shown. Every call in a
-    reply runs, the same tool twice included.
+    text streams as text. With tagged formats (JSON in `<tool_call>`, xmlFunction, gemma…) a call whose text
+    does not parse is dropped, neither run nor shown. With Llama 3's untagged format (Llama 3.2 1B and 3B,
+    Cogito v1 3B in the catalog), a `{…}` that does not parse streams as text, and text after a `{` that never
+    closes is lost at the end of the reply. Every call in a reply runs, the same tool twice included.
   - **What the model sees:** the tools go to the chat template as `tools`, with no instructions of AuraLocal's, so
     a model whose template ignores `tools` never learns about them. A round goes back as an assistant turn with
     `tool_calls` and a `tool` turn per result (with `tool_call_id` and `name`); when the template throws on that,
