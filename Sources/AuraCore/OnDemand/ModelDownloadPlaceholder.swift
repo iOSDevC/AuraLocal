@@ -168,6 +168,12 @@ public struct ModelDownloadPlaceholder: View {
                 Text("The partial download is kept; downloading again resumes it.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+            } else if !unusableHere.isEmpty {
+                // The feature can't run here, so the download would only cost time and disk.
+                Label("Run this on an iPhone, iPad or Mac: MLX models can't run in the Simulator.",
+                      systemImage: "iphone")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             } else if !missing.isEmpty {
                 Button {
                     downloads.download(missing.map(\.entry))
@@ -192,6 +198,15 @@ public struct ModelDownloadPlaceholder: View {
 
     private var missing: [RequiredModel] {
         needed.filter { !disk.downloaded.contains($0.id) }
+    }
+
+    /// Missing models this device can't run (MLX in the Simulator).
+    private var unusableHere: [RequiredModel] {
+        #if targetEnvironment(simulator)
+        missing.filter { $0.entry.format == .mlx }
+        #else
+        []
+        #endif
     }
 
     private var isDownloading: Bool {
@@ -290,11 +305,13 @@ private struct RequiredModelRow: View {
                       systemImage: "memorychip")
                     .font(.footnote)
                     .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if Self.isSimulator && need.entry.format == .mlx {
                 Label("MLX can't run in the Simulator; this model loads on a device.", systemImage: "iphone")
                     .font(.footnote)
                     .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)   // ViewThatFits otherwise truncates it to one line
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
