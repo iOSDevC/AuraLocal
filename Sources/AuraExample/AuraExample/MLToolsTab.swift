@@ -8,7 +8,7 @@ import AuraCore
 
 struct MLToolsTab: View {
     private enum Pane: String, CaseIterable, Identifiable {
-        case tools = "Tools", text = "Text", image = "Image", audio = "Audio", train = "Train"
+        case tools = "Tools", text = "Text", image = "Image", audio = "Audio", train = "Train", agent = "Agent"
         var id: String { rawValue }
     }
 
@@ -30,6 +30,7 @@ struct MLToolsTab: View {
                 case .image: MLImageToolsView()
                 case .audio: MLAudioToolsView()
                 case .train: MLTrainingView()
+                case .agent: AgentDemoListView()
                 }
             }
             .navigationTitle("On-device ML")
