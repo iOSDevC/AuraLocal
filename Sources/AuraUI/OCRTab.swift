@@ -95,7 +95,7 @@ public struct OCRTab: View {
             ModelDownloadPlaceholder(
                 "Download \(selectedModel.displayName)",
                 message: "Documents are read on this device. Pick another model above, or download this one.",
-                models: [RequiredModel(selectedModel, purpose: "Extracts text and structure from photos of documents.")]
+                models: [RequiredModel(selectedModel, purpose: "Extracts text and structure from photos of documents")]
             )
         }
     }

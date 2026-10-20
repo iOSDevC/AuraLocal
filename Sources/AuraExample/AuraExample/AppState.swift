@@ -91,9 +91,9 @@ final class AppState: ObservableObject {
 
     /// The language model, plus the vision model when both fit in memory together. §Fix #19: leave 15 % headroom.
     private static func neededModels() -> [RequiredModel] {
-        let answers = RequiredModel(.qwen3_1_7b, purpose: "Answers the agents' questions about your documents.")
+        let answers = RequiredModel(.qwen3_1_7b, purpose: "Answers the agents' questions about your documents")
         let joint = Model.qwen3_1_7b.estimatedRuntimeMemoryGB + Model.fastVLM_0_5b_fp16.estimatedRuntimeMemoryGB
         guard joint <= HardwareProfile.current().availableMemoryGB * 0.85 else { return [answers] }
-        return [answers, RequiredModel(.fastVLM_0_5b_fp16, purpose: "Reads the text in images you add.")]
+        return [answers, RequiredModel(.fastVLM_0_5b_fp16, purpose: "Reads the text in images you add")]
     }
 }

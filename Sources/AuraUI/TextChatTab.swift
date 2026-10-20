@@ -118,7 +118,7 @@ public struct TextChatTab: View {
             ModelDownloadPlaceholder(
                 "Download \(selectedModel.displayName)",
                 message: "Chat runs on this device. Pick another model from the menu, or download this one.",
-                models: [RequiredModel(selectedModel, purpose: "Chats and keeps your conversations on this device.")]
+                models: [RequiredModel(selectedModel, purpose: "Chats and keeps your conversations on this device")]
             )
         }
     }

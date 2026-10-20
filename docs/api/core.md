@@ -1037,7 +1037,7 @@ extension Model { var approximateSizeBytes: Int64 }  // approximateSizeMB × 1,0
 
 ```swift
 struct LibraryScreen: View {
-    let needed = [RequiredModel(.qwen3_1_7b, purpose: "Answers questions about your documents.")]
+    let needed = [RequiredModel(.qwen3_1_7b, purpose: "Answers questions about your documents")]
     @State private var isReady = false
 
     var body: some View {
@@ -1052,10 +1052,11 @@ struct LibraryScreen: View {
 }
 ```
 
-The placeholder lists each model with its purpose and approximate size (`approximateSizeMB`), the total still to
-download (less any `.partial` bytes already on disk), the free space from `ModelDownloads.availableDiskBytes()`
+The placeholder lists each model with its purpose, its approximate size (`approximateSizeMB`) and what a cancelled
+download left on disk, the total still to download (less those `.partial` bytes), the free space from `ModelDownloads.availableDiskBytes()`
 and, when the download plus the 20 % margin `ModelDownloads` requires may not fit, a warning; a model rated
-*Too Large* for the device's free memory gets a warning too. Nothing touches the network until the user taps
+*Too Large* for the device's free memory gets a warning too, and so does an MLX model in the Simulator, where it
+downloads but cannot load. Nothing touches the network until the user taps
 **Download**. While it runs each row shows bytes and percent and the button becomes **Cancel download**; a failed
 model shows its error and the button becomes **Retry download**. Leaving the screen does not stop a download.
 It centers in the space it is given and scrolls at large Dynamic Type sizes, so it works as a whole screen or in

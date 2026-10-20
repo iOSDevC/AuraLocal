@@ -173,7 +173,7 @@ public struct VisionTab: View {
             ModelDownloadPlaceholder(
                 "Download \(selectedModel.displayName)",
                 message: "Images are analyzed on this device. Pick another model in Settings, or download this one.",
-                models: [RequiredModel(selectedModel, purpose: "Describes images and answers questions about them.")]
+                models: [RequiredModel(selectedModel, purpose: "Describes images and answers questions about them")]
             )
         }
     }

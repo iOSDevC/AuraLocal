@@ -18,8 +18,8 @@ public struct DocsTab: View {
 
     /// The models the tab loads: Qwen3 1.7B answers, FastVLM reads images.
     public static let neededModels = [
-        RequiredModel(.qwen3_1_7b, purpose: "Answers questions about your documents."),
-        RequiredModel(.fastVLM_0_5b_fp16, purpose: "Reads the text in images you add."),
+        RequiredModel(.qwen3_1_7b, purpose: "Answers questions about your documents"),
+        RequiredModel(.fastVLM_0_5b_fp16, purpose: "Reads the text in images you add"),
     ]
 
     @StateObject private var vm = DocsViewModel()

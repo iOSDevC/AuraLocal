@@ -6,7 +6,8 @@ import SwiftUI
 public struct RequiredModel: Identifiable, Hashable, Sendable {
     /// The model to download.
     public let entry: Model
-    /// What the feature does with it, in a few words: "Answers questions about your documents".
+    /// What the feature does with it, in a few words and without a final period: "Answers questions about your
+    /// documents". VoiceOver reads it between the name and the size.
     public let purpose: String
 
     public init(_ entry: Model, purpose: String) {
@@ -117,6 +118,7 @@ public struct ModelDownloadPlaceholder: View {
             ForEach(needed) { need in
                 RequiredModelRow(need: need,
                                  isDownloaded: disk.downloaded.contains(need.id),
+                                 partialBytes: disk.bytesOnDisk[need.id] ?? 0,
                                  isTooLarge: disk.tooLarge.contains(need.id),
                                  status: downloads.phase(of: need.entry))
                 if need.id != needed.last?.id {
@@ -263,6 +265,7 @@ private struct DiskState: Equatable {
 private struct RequiredModelRow: View {
     let need: RequiredModel
     let isDownloaded: Bool
+    let partialBytes: Int64
     let isTooLarge: Bool
     let status: OnDemandDownloads.Phase
 
@@ -319,6 +322,11 @@ private struct RequiredModelRow: View {
                 Label(message, systemImage: "exclamationmark.triangle.fill")
                     .font(.footnote)
                     .foregroundStyle(.red)
+            case .idle where partialBytes > 0:
+                Text("About \(Self.bytes(need.entry.approximateSizeBytes)) · \(Self.bytes(partialBytes)) already "
+                     + "downloaded")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             case .idle:
                 Text("About \(Self.bytes(need.entry.approximateSizeBytes))")
                     .font(.footnote)

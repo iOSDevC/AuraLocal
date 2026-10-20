@@ -14,7 +14,7 @@ struct VoiceTab: View {
                     ModelDownloadPlaceholder(
                         "Download \(selectedModel.displayName)",
                         message: "Voice chat listens, answers and speaks on this device.",
-                        models: [RequiredModel(selectedModel, purpose: "Answers what you say.")]
+                        models: [RequiredModel(selectedModel, purpose: "Answers what you say")]
                     ) {
                         Task { await vm.load(model: selectedModel) }
                     }
