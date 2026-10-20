@@ -85,7 +85,9 @@ struct HybridSettingsView: View {
                 }
             }
         }
+        #if os(macOS)
         .frame(minWidth: 460, minHeight: 520)
+        #endif
         .onAppear { hasRetiredGitHubToken = KeychainStore.hasKey(for: Self.retiredGitHubModelsAccount) }
     }
 
@@ -187,7 +189,9 @@ struct ConsentSheet: View {
             .interactiveDismissDisabled()
             .onDisappear { gate.resolve(false) }   // safety: never leak the continuation
         }
+        #if os(macOS)
         .frame(minWidth: 420, minHeight: 420)
+        #endif
     }
 
     private func payloadSection(_ payload: EscalationPayload) -> some View {

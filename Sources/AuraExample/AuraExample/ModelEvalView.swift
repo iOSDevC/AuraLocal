@@ -43,7 +43,9 @@ struct ModelEvalView: View {
             }
         }
         .navigationTitle("Evaluate")
+        #if os(macOS)
         .frame(minWidth: 460, minHeight: 560)
+        #endif
     }
 
     private var speedColor: Color {

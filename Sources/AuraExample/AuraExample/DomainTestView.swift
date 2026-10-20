@@ -138,7 +138,9 @@ struct DomainTestView: View {
                 ConsentSheet(request: request, gate: consentGate)
             }
         }
+        #if os(macOS)
         .frame(minWidth: 460, minHeight: 560)
+        #endif
     }
 
     @MainActor

@@ -28,7 +28,9 @@ struct ModelSearchSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
             }
         }
+        #if os(macOS)
         .frame(minWidth: 460, minHeight: 520)
+        #endif
     }
 
     private var controls: some View {
