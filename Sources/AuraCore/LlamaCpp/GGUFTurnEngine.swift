@@ -91,37 +91,56 @@ enum GGUFTurnEngines {
     /// need LocalLLMClient's parser, which only a `LlamaClient` owns.
     static func load(url: URL, parameter: LlamaClient.Parameter, tools: [any LLMTool]) async throws
         -> any GGUFTurnEngine {
-        let metadata = await metadata(of: url)
-        let renderer = renderer(for: metadata, tools: tools)
-        return try await engine(url: url, parameter: parameter, renderer: renderer,
-                                boundaries: metadata?.controlTokenTexts ?? [])
+        try await engine(url: url, parameter: parameter, plan: await plan(url: url, tools: tools))
     }
 
     /// The engine ``load(url:parameter:tools:)`` builds for `renderer`.
-    static func engine(url: URL, parameter: LlamaClient.Parameter, renderer: LlamaPromptRenderer,
-                       boundaries: [String]? = nil) async throws -> any GGUFTurnEngine {
-        if renderer.tools.isEmpty || renderer.asksForTaggedToolCalls {
-            let core = try await LlamaTurnCore.load(url: url, parameter: parameter, boundaries: boundaries)
-            return LlamaTurnEngine(renderer: renderer, core: core)
+    static func engine(url: URL, parameter: LlamaClient.Parameter,
+                       renderer: LlamaPromptRenderer) async throws -> any GGUFTurnEngine {
+        try await engine(url: url, parameter: parameter, plan: await plan(for: renderer, boundaries: nil))
+    }
+
+    private static func engine(url: URL, parameter: LlamaClient.Parameter, plan: Plan) async throws
+        -> any GGUFTurnEngine {
+        if plan.ownsContext {
+            let core = try await LlamaTurnCore.load(url: url, parameter: parameter, boundaries: plan.boundaries)
+            return LlamaTurnEngine(renderer: plan.renderer, core: core)
         }
-        let client = try await LlamaToolTurnEngine.makeClient(url: url, parameter: parameter, tools: renderer.tools)
-        return LlamaToolTurnEngine(url: url, parameter: parameter, renderer: renderer, client: client)
+        let client = try await LlamaToolTurnEngine.makeClient(url: url, parameter: parameter,
+                                                              tools: plan.renderer.tools)
+        return LlamaToolTurnEngine(url: url, parameter: parameter, renderer: plan.renderer, client: client)
+    }
+
+    /// What picking an engine needs from the file.
+    struct Plan: Sendable {
+        let renderer: LlamaPromptRenderer
+        /// The vocabulary's special-token texts; `nil` reads them from the file when the context loads.
+        let boundaries: [String]?
+        /// No tools, or tools written as `<tool_call>` JSON: the engine drives its own `Context`.
+        let ownsContext: Bool
+    }
+
+    /// Worked out off the main actor: finding the special tokens walks the whole vocabulary, and parsing the
+    /// template and probing its call format grow with the template.
+    nonisolated static func plan(url: URL, tools: [any LLMTool]) async -> Plan {
+        let metadata = try? GGUFChatMetadata.read(from: url)
+        return await plan(for: renderer(for: metadata, tools: tools), boundaries: metadata?.controlTokenTexts ?? [])
+    }
+
+    nonisolated static func plan(for renderer: LlamaPromptRenderer, boundaries: [String]?) async -> Plan {
+        Plan(renderer: renderer, boundaries: boundaries,
+             ownsContext: renderer.tools.isEmpty || renderer.asksForTaggedToolCalls)
     }
 
     /// The template and special tokens llama.cpp itself uses. Metadata this parser rejects but llama.cpp loads
     /// falls back to a labelled transcript rather than failing the load.
     nonisolated static func renderer(for url: URL, tools: [any LLMTool]) async -> LlamaPromptRenderer {
-        renderer(for: await metadata(of: url), tools: tools)
+        renderer(for: try? GGUFChatMetadata.read(from: url), tools: tools)
     }
 
     nonisolated static func renderer(for metadata: GGUFChatMetadata?, tools: [any LLMTool]) -> LlamaPromptRenderer {
         guard let metadata else { return LlamaPromptRenderer(template: nil, tools: tools.map { AnyLLMTool($0) }) }
         return LlamaPromptRenderer(metadata: metadata, tools: tools)
-    }
-
-    /// Read off the main actor: finding the special tokens walks the whole vocabulary.
-    nonisolated static func metadata(of url: URL) async -> GGUFChatMetadata? {
-        try? GGUFChatMetadata.read(from: url)
     }
 
     /// Waits for `task`, or throws `CancellationError` as soon as the caller is cancelled while `task` runs on.
