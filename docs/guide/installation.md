@@ -23,8 +23,7 @@ description: "Add Tonamox to your iOS, macOS, or visionOS project via Swift Pack
 > terms, with its source available, and if you modify Tonamox and let people use it over a network, you must
 > offer them the source of your version too. The AGPL's conditions conflict with the App Store's terms; a
 > closed-source app, an App Store release, or a network service whose source you don't publish needs the
-> commercial license. Commits published before the change (up to `1647874`, including the `v0.1.0` tag) remain
-> available under the MIT License they shipped with. Models you download carry their own licenses. See
+> commercial license. Models you download carry their own licenses. See
 > [License]({{ '/license' | relative_url }}).
 
 ## Requirements

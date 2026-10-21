@@ -2,7 +2,7 @@
 layout: docs
 title: License
 nav_order: 4
-description: "Tonamox is dual-licensed: AGPL-3.0-or-later, or a commercial license from iOSDevC. Earlier commits stay under MIT; dependencies and models keep their own licenses."
+description: "Tonamox is dual-licensed: AGPL-3.0-or-later, or a commercial license from iOSDevC. Dependencies and models keep their own licenses."
 ---
 
 # License
@@ -48,12 +48,6 @@ holder. See [Commercial license](#commercial-license).
 ## Commercial license
 
 Contact [iOSDevC](https://github.com/iOSDevC), the copyright holder, on GitHub.
-
-## Earlier MIT versions
-
-Commits published before the license change (up to `1647874`, including the
-[`v0.1.0`](https://github.com/iOSDevC/Tonamox/releases/tag/v0.1.0) tag) remain available under the MIT License
-they shipped with.
 
 ## Contributions
 
