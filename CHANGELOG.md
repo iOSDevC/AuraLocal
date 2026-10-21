@@ -1,9 +1,9 @@
 # Changelog
 
-Notable changes to AuraLocal. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Notable changes to TONAMOX. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-Swift package consumers pin AuraLocal by `revision:` (a version requirement cannot resolve; see
-[Installation](docs/guide/installation.md#pin-a-commit)), so a tag marks a release and locates the `aura` CLI
+Swift package consumers pin TONAMOX by `revision:` (a version requirement cannot resolve; see
+[Installation](docs/guide/installation.md#pin-a-commit)), so a tag marks a release and locates the `tonamox` CLI
 tarball; it is not a version you can require.
 
 ## [Unreleased] (planned 1.4.0)
@@ -13,7 +13,7 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 
 ### License
 
-- AuraLocal is now licensed under **AGPL-3.0-or-later**, or under a commercial license from the copyright holder
+- TONAMOX is now licensed under **AGPL-3.0-or-later**, or under a commercial license from the copyright holder
   (af056da). Commits up to and including 1647874, among them every earlier tag (`v0.1.0`, `v1.0.0`–`v1.3.0`),
   remain under the MIT License. See [License](README.md#license).
 - Contributions are accepted under the terms in [CONTRIBUTING.md](CONTRIBUTING.md) and must be signed off.
@@ -21,6 +21,10 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 
 ### Breaking changes
 
+- **Renamed to TONAMOX.** The repository is `github.com/iOSDevC/Tonamox`, the modules are `TonamoxCore`,
+  `TonamoxUI`, `TonamoxVoice`, `TonamoxDocs`, `TonamoxAgents`, `TonamoxAppleIntelligence` and `TonamoxImageGen`, the main
+  type is `Tonamox` (with `TonamoxProfile`, `TonamoxSession`, `TonamoxError`), and the CLI is `tonamox`. On-disk
+  folders keep the `AuraLocal` name, so existing downloads stay in place.
 - `InferenceBackend` has a new requirement, `generate(prompt:systemPrompt:maxTokens:constraint:onToken:)`.
   A custom backend must implement it; one that cannot enforce the constraint throws
   `GenerationConstraintError.unsupportedBackend`.
@@ -44,7 +48,7 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   0.6B: 0.46–0.61 s against 1.44–1.80 s). The cache stays in memory until `unload()` or an eviction. A greedy
   reply can differ from a full prefill's after a few dozen tokens, as with any change of prefill split; on a hit
   `lastGenerationStats.promptTime` covers only the tokens prefilled, so `prefillTokensPerSecond` overstates
-  prefill speed, and AuraExample's model evaluation no longer shows it. MLX stats are timed by AuraLocal around
+  prefill speed, and AuraExample's model evaluation no longer shows it. MLX stats are timed by TONAMOX around
   mlx-swift-lm's token iterator instead of read from `GenerateResult`.
 - **Behaviour change (GGUF tools):** calls a model makes after `maxToolRounds` rounds (default 1, as many rounds as
   before) are reported as `ToolEvent.roundLimitReached` and in `ToolTurnSummary.skipped` instead of being dropped
@@ -58,13 +62,13 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   after a result the tool instructions are sent again while another round may run (before, only the first reply's
   prompt carried them, so on a template without tool support a later round had no list of the tools).
 - **Behaviour change (GGUF tools):** models asked to write calls as `<tool_call>` JSON (templates without tool
-  support, and templates that write calls that way, such as Qwen2.5's) run on AuraLocal's own llama.cpp context and
+  support, and templates that write calls that way, such as Qwen2.5's) run on TONAMOX's own llama.cpp context and
   tool-call parser instead of LocalLLMClient's `LlamaClient`: every call in a reply runs (LocalLLMClient kept only
   the first per tool name); a `<tool_call>` block that is not a JSON object with a `name` stays in the reply text
   instead of vanishing; arguments reach the tool as JSON with sorted keys; a round goes back to the model as the
   reply it wrote, `<tool_call>` text included; `maxTokens` counts the calls' tokens too; and a reply cut short no
   longer makes the next turn wait for its decode to finish. Other call formats keep the `LlamaClient` path.
-- **Behaviour change (GGUF):** when a chat template ends with a newline, the prompt no longer does: AuraLocal drops
+- **Behaviour change (GGUF):** when a chat template ends with a newline, the prompt no longer does: TONAMOX drops
   one trailing newline from the template, as Python Jinja (Hugging Face's and llama.cpp's renderers) does, so
   Qwen2.5's prompt ends `<|im_start|>assistant\n` instead of `<|im_start|>assistant\n\n`. Replies at temperature 0
   can differ from before.
@@ -86,7 +90,7 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   structure by construction, with required properties in `required` order and optional ones by name; objects
   carry only their declared properties, even when `additionalProperties` allows more; each generation pays a
   client build and grammar sampling (1.0–1.35 s against 0.41–0.60 s per reply on Qwen2.5-0.5B, M1 Pro; see
-  [Schema grammars](docs/guide/backends.md#schema-grammars)). This includes `aura receipt extract|eval --model`
+  [Schema grammars](docs/guide/backends.md#schema-grammars)). This includes `tonamox receipt extract|eval --model`
   with such a model. MLX and layer-streaming keep validation only. `usesSchemaGrammar = false` restores the
   previous path.
 
@@ -102,7 +106,7 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 - On-device ML tools: Vision OCR (`VisionOCRTool`, `recognizeLines`), image classification, barcodes and faces;
   language identification, entities and sentiment; sound classification; Core ML models; text classifiers and
   Create ML training; `CoreMLTextEmbeddingTool` and opt-in multilingual-e5-small embeddings in `AuraDocs`.
-- The `aura` CLI: `providers`, `tools`, `ask`, `ocr`, `ml`, `models search|check|devices` and `imagegen`.
+- The `tonamox` CLI: `providers`, `tools`, `ask`, `ocr`, `ml`, `models search|check|devices` and `imagegen`.
 - `ModelCompatibilityChecker`: whether a Hugging Face repo runs on the pinned runtimes, and why not; Hugging Face
   search with a device-fit filter; the Model Finder example app; the AuraUI Hugging Face browser.
 - `ModelDownloads`: resumable GGUF and MLX downloads, gated and private repos, one folder of a repo pinned by
@@ -120,19 +124,19 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 - `AuraSession` enforces an `OutputSchema` by validation and repair.
 - On a GGUF model loaded in full, `AuraSession` decodes `OutputSchema` replies under a GBNF grammar built from the
   schema (profiles without tools); `AuraSession.usesSchemaGrammar` turns it off.
-- `temperature:` and `topP:` on `ModelManager.load` and `AuraLocal.text`, `.vision` and `.specialized`.
+- `temperature:` and `topP:` on `ModelManager.load` and `Tonamox.text`, `.vision` and `.specialized`.
 - `PrivacyInfo.xcprivacy` manifests for `AuraCore`, `AuraImageGen` and the AuraExample app.
 - `VisionDocumentTool` (`system.vision.document`, iOS 26 / macOS 26): Vision's `RecognizeDocumentsRequest` with
   paragraphs, tables and lines with boxes, and the money amounts (as `Decimal` plus currency), dates, contacts and
-  links Data Detection finds; `aura ml document <image>` prints them.
-- `aura receipt extract|eval`: receipt fields (merchant, date, total, tax, currency) read from a photo by a
+  links Data Detection finds; `tonamox ml document <image>` prints them.
+- `tonamox receipt extract|eval`: receipt fields (merchant, date, total, tax, currency) read from a photo by a
   rule-based baseline and, with `--model`, by a local model at temperature 0 under a JSON Schema. Model values are
   checked against the OCR text, and `eval` scores both against a labelled CSV with pass/fail thresholds (exit
   status 1 on a failed gate, 2 when the run cannot finish or an image cannot be read). Currency is reported but not
   scored or checked. The deterministic part lives in the `ReceiptSpike` target, which is not a library product.
 - `Model.license`, the license the model's Hugging Face card states, and `Model.hasPermissiveLicense` (Apache-2.0
   or MIT; an unrecorded license is not permissive). The catalog's `license` key is checked and written by
-  `scripts/verify_catalog.py`, and `aura models check --entry` fills it in. 46 of the 53 entries record one; the
+  `scripts/verify_catalog.py`, and `tonamox models check --entry` fills it in. 46 of the 53 entries record one; the
   other seven model cards declare none. `Model.listedModels` is the catalog
   without its uncensored entries.
 - Continuous integration (`.github/workflows/ci.yml`) and a weekly canary that resolves without the lockfile.
@@ -141,8 +145,8 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   Retry, and an `onReady` callback once the files are there. `RequiredModel`, `[RequiredModel].notDownloaded`,
   `OnDemandDownloads` (one transfer at a time through `ModelDownloads`, tracked by file) and
   `Model.approximateSizeBytes` go with it; `DocsTab.neededModels` lists what `DocsTab` loads.
-- GGUF tool loop controls: `ToolLoopOptions` (`maxToolRounds`, `toolErrors`) on `AuraLocal.toolLoop` and
-  `AuraProfile.toolLoop`, `ToolEvent` through `AuraLocal.onToolEvent` and `AuraSession.onToolEvent`, and
+- GGUF tool loop controls: `ToolLoopOptions` (`maxToolRounds`, `toolErrors`) on `Tonamox.toolLoop` and
+  `AuraProfile.toolLoop`, `ToolEvent` through `Tonamox.onToolEvent` and `AuraSession.onToolEvent`, and
   `ToolTurnSummary` in `lastToolTurn`.
 - Tool calling on MLX text models, with the same controls. `ModelManager.load(_:tools:)` runs an MLX tool instance
   on the weights of a cached instance of the same model instead of loading a second copy.
@@ -155,7 +159,7 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 - LocalLLMClient is pinned by revision `edc39ef` (tag 0.5.0, llama.cpp b8851); mlx-swift-lm from 3.31.3;
   ml-stable-diffusion exact 1.1.1; mlx-swift `0.31.3..<0.31.5`.
 - Toolchain floor: Swift 6.1 / Xcode 16.3; Xcode 26 for `AuraAppleIntelligence` and `AuraAgents`; Xcode 26.4 for
-  `AuraImageGen` and the `aura` CLI.
+  `AuraImageGen` and the `tonamox` CLI.
 - The model catalog is verified against Hugging Face (`scripts/verify_catalog.py`); several entries moved repo
   (Dolphin 8B to `dphn/`, so it downloads again).
 - The context window follows the model's KV cost and the memory left after its weights, capped at what the
@@ -169,7 +173,7 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   and as llama.cpp computed them one at a time; a full prefill re-tokenizes the reply text (usually, not always, to
   the same tokens) and computes it in one batch, so at temperature 0 a reused turn can now and then pick a different
   token.
-- `aura ask` uses a local llama-server or Ollama by default, or OpenAI, Anthropic or a custom endpoint when named.
+- `tonamox ask` uses a local llama-server or Ollama by default, or OpenAI, Anthropic or a custom endpoint when named.
 
 ### Fixed
 
@@ -177,7 +181,7 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
   generating, set the state back to `.thinking` and was still spoken after either call.
 - `ModelManager.state(for:)` no longer returns to `.downloading` after `.loading`: load messages such as
   "… ready" keep `.loading`, and only download progress shows as `.downloading`.
-- AuraLocal resolves for integrators (the swift-syntax conflict between LocalLLMClient and mlx-swift-lm).
+- TONAMOX resolves for integrators (the swift-syntax conflict between LocalLLMClient and mlx-swift-lm).
 - AuraCore builds for the iOS Simulator, and GGUF runs there.
 - Conversation search after deletes, turns stored in the same millisecond, one reply per prompt when a generation
   stops, and `stream(_:in:)` and Apple Intelligence streams cancelling when the consumer stops.
@@ -187,7 +191,7 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 - Two downloads of one model no longer write the same `.partial` files at once, which failed one of them with
   "`<file>.partial` doesn't exist". `ModelDownloads.download` and `downloadFolder`, `GGUFModelDownloader`, the MLX
   load path and `ChunkedDownloader` wait for each other per file or per Hugging Face snapshot, in one process and,
-  through a `flock` on a lock file next to the destination, across processes sharing the storage root (the `aura`
+  through a `flock` on a lock file next to the destination, across processes sharing the storage root (the `tonamox`
   CLI and AuraExample on a Mac). The later call returns the finished model without a transfer.
 - `ChunkedDownloader` replaces a file already at the destination instead of failing with "an item with the same
   name already exists" on a single-stream download, and keeps it without a transfer when it hashes to the
@@ -197,7 +201,7 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 - RAG document IDs survive relaunches, and vectors from a provider the index no longer matches are never stored.
 - The memory safeguards that were documented but inert (`evictAllButMostRecent`, the iOS OOM guards).
 - `scripts/package-cli.sh` finds the build products of newer SwiftPM (`.build/out/Products/Release`), and the
-  `aura` tarball now carries the SwiftPM resource bundles and the license texts.
+  `tonamox` tarball now carries the SwiftPM resource bundles and the license texts.
 - GGUF tool turns: a resumed prompt that outgrew the context failed the turn; every round's prompt now drops the
   oldest exchanges, as the first one does.
 - GGUF tool instructions listed the tools as JSON with its keys in a different order on every render; the keys are
@@ -220,4 +224,4 @@ same history, so it already contains the first hybrid, SystemTool and `aura` CLI
 First public release, MIT licensed: the `aura` CLI tarball for Homebrew, the hybrid MVP, the SystemTool layer and
 the LocalLLMClient revision pin.
 
-[0.1.0]: https://github.com/iOSDevC/AuraLocal/releases/tag/v0.1.0
+[0.1.0]: https://github.com/iOSDevC/Tonamox/releases/tag/v0.1.0

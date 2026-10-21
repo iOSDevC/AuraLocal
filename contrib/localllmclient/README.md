@@ -1,7 +1,7 @@
 # Upstream patches for LocalLLMClient
 
 Four patches against [tattn/LocalLLMClient](https://github.com/tattn/LocalLLMClient), the package
-that gives AuraLocal its GGUF/llama.cpp backend on **every** Apple platform (the xcframework ships
+that gives TONAMOX its GGUF/llama.cpp backend on **every** Apple platform (the xcframework ships
 `ios-arm64`, `ios-simulator`, `macos`, `xros`, `tvos` slices — this is not a Mac-only dependency).
 
 **Status: prepared, verified, NOT submitted.** They live here so they don't get lost, and so the
@@ -14,13 +14,13 @@ work is reviewable before anything is pushed anywhere public.
 | Verified | built against upstream with llama.cpp from source; 7 tests in 4 suites pass, including upstream's own pre-existing `ContextTests` | built the same way; all 45 Llama tests pass with both upstream test models (SmolVLM-256M as on CI, gemma-4-E4B locally); its 3 new tests fail without the fix | upstream's CI setup (`xcodebuild`, `TEST_RUNNER_GITHUB_ACTIONS_TEST=Llama`): 49/49 in Debug (42 + 7 new); 47/49 in Release, where the 2 failures are image tests that fail the same way on unpatched `main`; without the fix 5 of its 7 new tests fail in Debug (the hybrid-model one crashes on the `assert`) and 6 of 7 in Release |
 
 All four apply cleanly, in order, on `main @ b68f712`, and `0004` also applies on its own (re-checked with
-`git apply --check` on 2026-10-14). **`0004` does not apply to `edc39ef` (0.5.0), the revision AuraLocal
+`git apply --check` on 2026-10-14). **`0004` does not apply to `edc39ef` (0.5.0), the revision TONAMOX
 pins:** its `clear()` hunk sits on `discardPendingTokens()`, which upstream added after 0.5.0 in #101
 (`d92cb1f`).
 
 ## Why these exist
 
-llama.cpp supports all three capabilities `0001` and `0002` add. AuraLocal cannot reach any of
+llama.cpp supports all three capabilities `0001` and `0002` add. TONAMOX cannot reach any of
 them, because `Context.context` — the `llama_context` pointer — is declared `package` in
 LocalLLMClient, the `llama` C module is imported `@_implementationOnly`, and no product vends the
 binary target. There is no way in from outside the package. Hence: patch upstream, not us.
@@ -101,7 +101,7 @@ Reproduced on one client with Qwen2.5-0.5B-Instruct Q4_K_M, two different prompt
 Answer quality is the 0.5B model's; what matters is that the second answer exists and is valid.
 
 What it unlocks: a constrained client can be kept and reused. Until a release carries the reset,
-AuraLocal has to build a dedicated client (model load plus context allocation) for every
+TONAMOX has to build a dedicated client (model load plus context allocation) for every
 constrained call. Unconstrained sessions also stop carrying penalty history between turns.
 
 **Behaviour change to flag when submitting:** with a fixed `Parameter.seed`, the same input on
@@ -127,19 +127,19 @@ no longer part of the conversation:
 - **`lastCacheIndex`** stops at the first chunk that diverges (it could report a later image as a match
   after a different text chunk) and puts the uncached rest of a text chunk before the chunks after it.
 
-Reproduced with Qwen2.5-0.5B-Instruct Q4_K_M, the flattened-transcript pattern AuraLocal used, at a
+Reproduced with Qwen2.5-0.5B-Instruct Q4_K_M, the flattened-transcript pattern TONAMOX used, at a
 2048 context: KV position after turn 10 was 1586 before the fix and 270 (fresh prompt + reply) after; at a
 1024 context turn 8 failed with `context size exceeded[1024 < 1082]` before the fix and ran clean after.
 A stopped generation left 19 stale positions in Release before the fix and none after.
 
 What it unlocks: `LLMSession` and `.chat` input become safe for multi-turn chat, unrelated prompts and cut
-replies on one client, in release builds too. That is what AuraLocal would need to go back to
+replies on one client, in release builds too. That is what TONAMOX would need to go back to
 `LLMSession` and reuse the cached prefix across turns. Two more things stand in the way of that reuse: the
 pin has to move past 0.5.0 (to `d92cb1f` or later, which also makes `clear()` drop tokens a cut generation
 left queued in the batch), and `JinjaChatTemplateRenderer` sets `lstripBlocks`/`trimBlocks` on the
 `Environment`, which swift-jinja ignores (it reads them only from `Template(_:with:)`), so Qwen-style
 templates end the generation prompt with an extra newline and the prefix never matches (candidate
-`0005`; fixing it changes the rendered prompt for every model). Until all three land, AuraLocal's GGUF
+`0005`; fixing it changes the rendered prompt for every model). Until all three land, TONAMOX's GGUF
 backends own the context, clear the KV cache and batch before every turn, and prefill the whole history.
 
 Found while doing this, **not** fixed by `0003` or `0004` (candidates for separate patches):
@@ -153,7 +153,7 @@ Found while doing this, **not** fixed by `0003` or `0004` (candidates for separa
   returns, so a cancelled `LLMSession.streamResponse` keeps prefilling in its detached task. Either
   way the next generation on the same context overlaps a running decode. A candidate patch:
   `onTermination { task.cancel() }` in `responseStream`, plus a cancellation check between prefill
-  batches. AuraLocal's tool turns wait for that decode before the next turn, which is why a cut tool turn
+  batches. TONAMOX's tool turns wait for that decode before the next turn, which is why a cut tool turn
   delays the one after it.
 - **With `extraEOSTokens`,** the stop token's text is added to the prompt cache but never decoded.
 - **Sampler order** (read, not measured): penalties run after temperature and top-k/top-p, so at
@@ -169,10 +169,10 @@ On a fork of LocalLLMClient:
 
 ```bash
 git checkout -b feature/session-state-persistence
-git am /path/to/AuraLocal/contrib/localllmclient/0001-*.patch
-git am /path/to/AuraLocal/contrib/localllmclient/0002-*.patch
-git am /path/to/AuraLocal/contrib/localllmclient/0003-*.patch
-git am /path/to/AuraLocal/contrib/localllmclient/0004-*.patch
+git am /path/to/Tonamox/contrib/localllmclient/0001-*.patch
+git am /path/to/Tonamox/contrib/localllmclient/0002-*.patch
+git am /path/to/Tonamox/contrib/localllmclient/0003-*.patch
+git am /path/to/Tonamox/contrib/localllmclient/0004-*.patch
 ```
 
 `0003` and `0004` do not depend on the others and apply on their own as well.
@@ -186,13 +186,13 @@ Building upstream from source needs its submodule (llama.cpp):
 git submodule update --init --recursive --depth 1
 ```
 
-## Do not point AuraLocal at a fork
+## Do not point TONAMOX at a fork
 
 Tempting, but it re-introduces exactly the failure fixed in `4dfcbb6`: SwiftPM honours only the
 **root** package's `Package.resolved`, so a fragile dependency graph that resolves here breaks for
 every downstream integrator. Wait for these to land upstream in a tagged release.
 
-Nothing in AuraLocal depends on these patches. The iOS work that shipped without them —
+Nothing in TONAMOX depends on these patches. The iOS work that shipped without them —
 jetsam fail-safe, the `extended-virtual-addressing` entitlement and prefill batch sizing — is
 already in the repo and stands on its own. The context-window anchor is in the repo too, but it
 saves nothing while GGUF turns prefill the whole history; it matters again only once they reuse a
@@ -215,7 +215,7 @@ first shipped in **b9180** (2026-05-16); PR #24031 (b9488, 2026-06-03) also read
 
 Until LocalLLMClient bumps `llamaVersion` to b9180 or later, that whole family is MLX-only here — see
 `swift15_qwen38_27b_mlx` in `models.json`. Standalone llama.cpp and LM Studio at a current build run
-the GGUFs today; AuraLocal cannot, and forking to fix it is ruled out above.
+the GGUFs today; TONAMOX cannot, and forking to fix it is ruled out above.
 
 ### MLX conversions of that family: check the weight prefix first
 

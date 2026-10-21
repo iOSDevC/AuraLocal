@@ -4,11 +4,11 @@
 
 # TONAMOX
 
-> TONAMOX is the selected project identity. Repository URLs and persistent identifiers still use `AuraLocal` until the planned migration is implemented.
+> TONAMOX was published as AuraLocal until October 2026. On-disk folders keep the `AuraLocal` name (`<Application Support>/AuraLocal/…`, `Caches/AuraLocal/…`) so models, conversations and caches downloaded by earlier builds stay readable.
 
 Lightweight on-device LLM & VLM Swift package for iOS/macOS/visionOS. Run Qwen3, Llama 3, Mistral, Gemma, SmolVLM and more — locally and privately by default (no API keys unless you opt into cloud escalation). Supports both MLX (Apple Silicon GPU) and llama.cpp/GGUF (up to 70B, including layer-streaming for memory-constrained devices).
 
-**Documentation:** [TONAMOX documentation](https://iosdevc.github.io/AuraLocal/) — installation, hybrid inference, RAG, the CLI and the other guides.
+**Documentation:** [TONAMOX documentation](https://iosdevc.github.io/Tonamox/) — installation, hybrid inference, RAG, the CLI and the other guides.
 Research notes, not a shipped feature: [Distributed inference](docs/guide/distributed.md).
 
 ---
@@ -54,14 +54,14 @@ Research notes, not a shipped feature: [Distributed inference](docs/guide/distri
 Add via Swift Package Manager (in Xcode's **Add Package** dialog, choose a commit or branch rule, not a version rule):
 
 ```
-https://github.com/iOSDevC/AuraLocal
+https://github.com/iOSDevC/Tonamox
 ```
 
 Or in `Package.swift`, pinned to a commit on `main`:
 
 ```swift
 // swift-tools-version: 6.0
-.package(url: "https://github.com/iOSDevC/AuraLocal", revision: "<commit SHA from main>")
+.package(url: "https://github.com/iOSDevC/Tonamox", revision: "<commit SHA from development>")
 ```
 
 > A version requirement (`from:` / `exact:`) cannot resolve. Tonamox depends on LocalLLMClient by
@@ -758,7 +758,7 @@ llm.deviceGuard = DeviceConditions()
 ```
 
 Nothing is cancelled on macOS, where apps are not suspended. See the
-[memory guide](https://iosdevc.github.io/AuraLocal/guide/memory#background-lifecycle-ios).
+[memory guide](https://iosdevc.github.io/Tonamox/guide/memory#background-lifecycle-ios).
 
 ---
 

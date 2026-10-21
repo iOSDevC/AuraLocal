@@ -40,7 +40,7 @@ nonisolated enum MLSamples {
         guard let canvas = CGContext(
             data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
-              let code = qrCode("https://github.com/iOSDevC/AuraLocal") else { return nil }
+              let code = qrCode("https://github.com/iOSDevC/Tonamox") else { return nil }
         canvas.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
         canvas.fill(CGRect(origin: .zero, size: size))
         draw("CAFÉ CENTRAL  4,50 EUR", in: canvas, at: CGPoint(x: 40, y: 300))

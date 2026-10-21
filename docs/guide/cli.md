@@ -234,7 +234,7 @@ brew install tonamox
 tonamox tools
 ```
 
-See [`docs/HOMEBREW.md`](https://github.com/iOSDevC/AuraLocal/blob/main/docs/HOMEBREW.md)
+See [`docs/HOMEBREW.md`](https://github.com/iOSDevC/Tonamox/blob/development/docs/HOMEBREW.md)
 for the release + tap runbook (`scripts/package-cli.sh` builds the tarball).
 
 {: .note }

@@ -23,14 +23,14 @@ Get on-device LLM inference running in your app in under 5 minutes.
 
 You need Xcode 16.3 or later (Swift 6.1).
 
-In Xcode: **File → Add Package Dependencies** → enter `https://github.com/iOSDevC/AuraLocal`, set **Dependency Rule** to **Commit** and paste a commit SHA from `main`. Then, in your app target's **Build Settings**, set **C++ and Objective-C Interoperability** to **C++ / Objective-C++** (`SWIFT_OBJC_INTEROP_MODE = objcxx`). Every target that imports `TonamoxCore`, or a module built on it, needs it.
+In Xcode: **File → Add Package Dependencies** → enter `https://github.com/iOSDevC/Tonamox`, set **Dependency Rule** to **Commit** and paste a commit SHA from `main`. Then, in your app target's **Build Settings**, set **C++ and Objective-C Interoperability** to **C++ / Objective-C++** (`SWIFT_OBJC_INTEROP_MODE = objcxx`). Every target that imports `TonamoxCore`, or a module built on it, needs it.
 
 In `Package.swift`:
 ```swift
 // swift-tools-version: 6.0
 platforms: [.iOS(.v18), .macOS(.v15)],   // Tonamox's minimums (visionOS: .v2)
 dependencies: [
-    .package(url: "https://github.com/iOSDevC/AuraLocal", revision: "<commit SHA from main>"),
+    .package(url: "https://github.com/iOSDevC/Tonamox", revision: "<commit SHA from development>"),
 ],
 targets: [
     .target(

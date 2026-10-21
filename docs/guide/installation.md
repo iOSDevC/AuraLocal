@@ -50,7 +50,7 @@ description: "Add Tonamox to your iOS, macOS, or visionOS project via Swift Pack
 2. **File → Add Package Dependencies…**
 3. Enter the repository URL:
    ```
-   https://github.com/iOSDevC/AuraLocal
+   https://github.com/iOSDevC/Tonamox
    ```
 4. Under **Dependency Rule** choose **Commit** and paste a commit SHA from `main` (or choose **Branch** `main` to follow it). Version rules do not resolve; see [Pin a commit](#pin-a-commit).
 5. Add the modules you need to your target
@@ -69,7 +69,7 @@ let package = Package(
         .macOS(.v15),
     ],
     dependencies: [
-        .package(url: "https://github.com/iOSDevC/AuraLocal", revision: "<commit SHA from main>"),
+        .package(url: "https://github.com/iOSDevC/Tonamox", revision: "<commit SHA from development>"),
     ],
     targets: [
         .target(

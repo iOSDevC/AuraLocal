@@ -60,7 +60,7 @@ struct IntegrateView: View {
         NavigationStack {
             Form {
                 Section {
-                    row("Swift Package", ".package(url: \"https://github.com/iOSDevC/AuraLocal\", revision: \"<commit SHA>\")")
+                    row("Swift Package", ".package(url: \"https://github.com/iOSDevC/Tonamox\", revision: \"<commit SHA>\")")
                     row("CLI · detect providers", "tonamox providers")
                     row("CLI · ask a bigger model", "tonamox ask \"…\" [--provider openai|anthropic]")
                     row("CLI · native OCR", "tonamox ocr image.png")

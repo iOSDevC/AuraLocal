@@ -9,8 +9,8 @@ description: "Tonamox is dual-licensed: AGPL-3.0-or-later, or a commercial licen
 {: .no_toc }
 
 Tonamox is dual-licensed: under the GNU Affero General Public License, or under a commercial license from the
-copyright holder. This page follows the [License](https://github.com/iOSDevC/AuraLocal#license) section of the
-README; the AGPL text is in [LICENSE](https://github.com/iOSDevC/AuraLocal/blob/main/LICENSE).
+copyright holder. This page follows the [License](https://github.com/iOSDevC/Tonamox#license) section of the
+README; the AGPL text is in [LICENSE](https://github.com/iOSDevC/Tonamox/blob/development/LICENSE).
 
 ## Table of contents
 {: .no_toc .text-delta }
@@ -23,7 +23,7 @@ README; the AGPL text is in [LICENSE](https://github.com/iOSDevC/AuraLocal/blob/
 ## Two options
 
 **AGPL-3.0-or-later.** Tonamox is free software: you can redistribute it and/or modify it under the terms of the
-[GNU Affero General Public License](https://github.com/iOSDevC/AuraLocal/blob/main/LICENSE) as published by the
+[GNU Affero General Public License](https://github.com/iOSDevC/Tonamox/blob/development/LICENSE) as published by the
 Free Software Foundation, either version 3 of the License, or (at your option) any later version.
 
 Copyright (C) 2026 iOSDevC
@@ -52,13 +52,13 @@ Contact [iOSDevC](https://github.com/iOSDevC), the copyright holder, on GitHub.
 ## Earlier MIT versions
 
 Commits published before the license change (up to `1647874`, including the
-[`v0.1.0`](https://github.com/iOSDevC/AuraLocal/releases/tag/v0.1.0) tag) remain available under the MIT License
+[`v0.1.0`](https://github.com/iOSDevC/Tonamox/releases/tag/v0.1.0) tag) remain available under the MIT License
 they shipped with.
 
 ## Contributions
 
 Contributions are accepted under the terms in
-[CONTRIBUTING.md](https://github.com/iOSDevC/AuraLocal/blob/main/CONTRIBUTING.md), which keep the commercial
+[CONTRIBUTING.md](https://github.com/iOSDevC/Tonamox/blob/development/CONTRIBUTING.md), which keep the commercial
 license possible. By submitting a contribution (a pull request, a patch, or any code, documentation or asset), you
 confirm that:
 
@@ -77,7 +77,7 @@ contributed. A dependency on such code needs discussion in an issue first.
 ## Dependencies
 
 Dependencies keep their own licenses (MIT, Apache-2.0, BSD); all are compatible with AGPL-3.0 and with the
-commercial license. [THIRD_PARTY_NOTICES.md](https://github.com/iOSDevC/AuraLocal/blob/main/THIRD_PARTY_NOTICES.md)
+commercial license. [THIRD_PARTY_NOTICES.md](https://github.com/iOSDevC/Tonamox/blob/development/THIRD_PARTY_NOTICES.md)
 lists each Swift package resolved from `Package.resolved`, with its pinned version and license. Binaries built from
 Tonamox (the `tonamox` CLI, the example apps) include code from these packages, so their license texts and NOTICE
 files must ship with those binaries.

@@ -10,7 +10,7 @@
 #     "numpy==2.2.6",
 # ]
 # ///
-"""Convert intfloat/multilingual-e5-small into an AuraLocal text-embedding bundle.
+"""Convert intfloat/multilingual-e5-small into an TONAMOX text-embedding bundle.
 
 The bundle is what `CoreMLTextEmbeddingTool(bundleAt:)` loads:
 

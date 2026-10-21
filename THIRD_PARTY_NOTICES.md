@@ -1,9 +1,9 @@
 # Third-party notices
 
-AuraLocal is licensed under AGPL-3.0-or-later (see [LICENSE](LICENSE)) or a commercial license (see
+TONAMOX is licensed under AGPL-3.0-or-later (see [LICENSE](LICENSE)) or a commercial license (see
 [License](README.md#license)). It depends on the Swift packages below, resolved by Swift Package Manager from
 [`Package.resolved`](Package.resolved). Each keeps its own license; all are compatible with AGPL-3.0, and their
-permissive terms also allow proprietary use under the commercial license. Binaries built from AuraLocal (the `aura` CLI, the example apps) include code from
+permissive terms also allow proprietary use under the commercial license. Binaries built from TONAMOX (the `tonamox` CLI, the example apps) include code from
 these packages, so their license texts and NOTICE files must ship with those binaries.
 
 | Package | Version | License |
@@ -30,5 +30,5 @@ these packages, so their license texts and NOTICE files must ship with those bin
 Versions are the ones pinned in `Package.resolved` when this file was written; check that file for the current
 pins. The full license and NOTICE texts are in each package's repository at the pinned version.
 
-Models (GGUF, MLX, Core ML) are downloaded at run time from Hugging Face and are not part of AuraLocal. Each
+Models (GGUF, MLX, Core ML) are downloaded at run time from Hugging Face and are not part of TONAMOX. Each
 carries its own license, shown on its model card.

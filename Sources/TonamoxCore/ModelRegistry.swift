@@ -25,7 +25,7 @@ struct ModelCatalog: Codable, Sendable {
 ///
 /// // Trigger remote update
 /// try await ModelRegistry.shared.refreshFromRemote(
-///     url: URL(string: "https://raw.githubusercontent.com/user/AuraLocal/main/models.json")!
+///     url: URL(string: "https://raw.githubusercontent.com/user/Tonamox/main/models.json")!
 /// )
 /// ```
 public final class ModelRegistry: @unchecked Sendable {

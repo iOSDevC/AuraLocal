@@ -554,7 +554,7 @@ finished). A gated repo shows **Add a token**, which opens the token form in pla
     free. Delete is disabled while a download writes the files or a model loads from them, including the
     downloads Library and Agents start from their placeholder. Badges appear only on files that a download
     record or `ModelRegistry` identifies.
-- **[ModelFinder](https://github.com/iOSDevC/AuraLocal/blob/main/Examples/ModelFinder/README.md)** (iOS 18 and
+- **[ModelFinder](https://github.com/iOSDevC/Tonamox/blob/development/Examples/ModelFinder/README.md)** (iOS 18 and
   macOS 15): the same views in a split view with a device picker (this device, iPhone classes, Macs), a Downloads
   tab and a Settings tab. Its README explains how to generate and open the project.
 

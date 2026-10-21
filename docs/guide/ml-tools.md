@@ -168,7 +168,7 @@ print(reader.supportedSymbologies().count)   // 24 on macOS 26
 
 ```sh
 $ tonamox ml barcodes qr.png
-QR  "https://github.com/iOSDevC/AuraLocal"  box x 0.15 y 0.15 w 0.71 h 0.71
+QR  "https://github.com/iOSDevC/Tonamox"  box x 0.15 y 0.15 w 0.71 h 0.71
 $ tonamox ml barcodes qr.png --symbology EAN13
 (no barcode found)
 $ tonamox ml barcodes --list        # the 24 symbologies this OS supports

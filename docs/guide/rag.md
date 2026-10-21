@@ -190,7 +190,7 @@ uv run scripts/embeddings/convert_e5_coreml.py --out /path/to/multilingual-e5-sm
 
 It downloads the pinned model revision, converts it for the Neural Engine, refuses to write the
 bundle unless Core ML matches sentence-transformers (cosine ≥ 0.999 on `CPU_ONLY` and
-`CPU_AND_NE`), and cleans up its downloads. Details: [`scripts/embeddings/README.md`](https://github.com/iOSDevC/AuraLocal/blob/main/scripts/embeddings/README.md).
+`CPU_AND_NE`), and cleans up its downloads. Details: [`scripts/embeddings/README.md`](https://github.com/iOSDevC/Tonamox/blob/development/scripts/embeddings/README.md).
 
 **Install it** by copying the folder to `AutoEmbeddingProvider.defaultModelBundleURL`
 (`Application Support/AuraLocal/embeddings/multilingual-e5-small`), or with **Import embedding
